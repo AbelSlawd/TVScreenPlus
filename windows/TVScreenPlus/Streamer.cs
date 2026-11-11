@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
 
 namespace TVScreenPlus
 {
@@ -12,16 +13,21 @@ namespace TVScreenPlus
     {
         public string Name, Codec, Filter;
         public bool Hardware;
+        /// <summary>In-house pipeline (Desktop Duplication + Media Foundation encoder), no ffmpeg.</summary>
+        public bool Native;
         readonly Func<bool, int, string> args; // (quality tier, kbps) -> encoder args
 
         Encoder(string name, string codec, string filter, bool hw, Func<bool, int, string> args)
         { Name = name; Codec = codec; Filter = filter; Hardware = hw; this.args = args; }
 
         /// <summary>Candidates from fastest (hardware, zero-copy GPU) to slowest (CPU).</summary>
-        public static IEnumerable<Encoder> Candidates(bool hevc)
+        /// <param name="native">In-house encoder allowed (it does not draw the cursor: the TV must).</param>
+        public static IEnumerable<Encoder> Candidates(bool hevc, bool native)
         {
             foreach (var c in hevc ? new[] { "hevc", "h264" } : new[] { "h264" })
             {
+                // No pipelining: each image is encoded as soon as it is captured, at a steady frame rate.
+                if (native) yield return new Encoder(c + "_mf", c, "", true, null) { Native = true };
                 int cq = c == "hevc" ? 21 : 20;
                 // Constant-quality VBR capped by maxrate: razor-sharp static desktop, bounded bitrate in motion.
                 // -delay 0 (game mode) encodes each frame synchronously: lowest latency, but capture misses
@@ -60,7 +66,8 @@ namespace TVScreenPlus
     sealed class EncodePlan
     {
         public Encoder Enc; public bool Quality; public int Fps;
-        public override string ToString() => Settings.GameMode && Enc.Name.Contains("nvenc") ? $"{Enc.Name} p1 {Fps} i/s mode jeu"
+        public override string ToString() => Enc.Native ? $"{Enc.Name} {Fps} i/s {(Settings.GameMode ? "mode jeu" : "fluide")}"
+                                           : Settings.GameMode && Enc.Name.Contains("nvenc") ? $"{Enc.Name} p1 {Fps} i/s mode jeu"
                                                                                              : $"{Enc.Name} {(Quality ? "qualité" : "rapide")} {Fps} i/s {(Settings.GameMode ? "mode jeu" : "fluide")}";
     }
 
@@ -73,10 +80,11 @@ namespace TVScreenPlus
         public volatile bool Done;
 
         /// <summary>Find a working encoder for this display (result cached per GPU/codec).</summary>
-        public static Encoder Pick(DisplayTarget t, bool hevc)
+        /// <param name="native">The in-house encoder may be used (chosen in the tray menu, and the TV draws the cursor).</param>
+        public static Encoder Pick(DisplayTarget t, bool hevc, bool native)
         {
-            var all = Encoder.Candidates(hevc).ToList();
-            string key = "enc_" + t.Adapter + "_" + (hevc ? "hevc" : "h264");
+            var all = Encoder.Candidates(hevc, native).ToList();
+            string key = "enc_" + t.Adapter + "_" + (hevc ? "hevc" : "h264") + (native ? "_mf" : "");
             var cached = all.FirstOrDefault(e => e.Name == Settings.Get(key, ""));
             if (cached != null) return cached;
             foreach (var e in all)
@@ -91,7 +99,7 @@ namespace TVScreenPlus
 
         public static void Forget(DisplayTarget t)
         {
-            foreach (var c in new[] { "hevc", "h264" }) Settings.Set("enc_" + t.Adapter + "_" + c, null);
+            foreach (var c in new[] { "hevc", "h264", "hevc_mf", "h264_mf" }) Settings.Set("enc_" + t.Adapter + "_" + c, null);
         }
 
         /// <summary>
@@ -121,6 +129,7 @@ namespace TVScreenPlus
         /// </summary>
         static double RunTest(Encoder e, DisplayTarget t, int fps, bool quality, int frames)
         {
+            if (e.Native) return NativeTest(e, t, fps, frames);
             try
             {
                 int kbps = (int)(t.Width * (double)t.Height * fps * 0.12 / 1000);
@@ -153,12 +162,80 @@ namespace TVScreenPlus
         }
 
         /// <summary>
+        /// In-house encoder throughput: ~0.5 s warm-up then up to 2 s measured. A static desktop is re-encoded at
+        /// the frame rate, so this measures real encodes even when nothing moves.
+        /// </summary>
+        static double NativeTest(Encoder e, DisplayTarget t, int fps, int frames)
+        {
+            try
+            {
+                int kbps = (int)(t.Width * (double)t.Height * fps * 0.12 / 1000);
+                using (var s = new NativeSession(t.Adapter, t.Output, e.Codec == "hevc", fps, kbps, Settings.GameMode ? 0u : 50u))
+                {
+                    long freq = Stopwatch.Frequency, start = Stopwatch.GetTimestamp(), from = start + freq / 2;
+                    long end = from + (long)(Math.Min(2.0, Math.Max(1.0, frames / (double)fps)) * freq);
+                    int n = 0;
+                    s.OnPacket = (b, len, key, acq, sub, fresh) => { if (sub >= from) Interlocked.Increment(ref n); };
+                    s.Run(end);
+                    Thread.Sleep(50);
+                    double got = n / ((end - from) / (double)freq);
+                    Log.W(FormattableString.Invariant($"  native test {e.Name} [{s.Enc.Name}, {s.Cap.AdapterName}]: {got:0.0} fps ({s.NewFrames} new, {s.Dropped} dropped)"));
+                    return Math.Min(fps, got);
+                }
+            }
+            catch (Exception ex) { Log.W($"native test {e.Name} error: {ex.Message}"); return -1; }
+        }
+
+        /// <summary>Changes the bitrate without restarting (in-house encoder only). false: start a new encoder.</summary>
+        public bool SetBitrate(int kbps)
+        {
+            var s = native;
+            if (s == null) return false;
+            s.SetBitrate(kbps);
+            return true;
+        }
+
+        /// <summary>Next frame becomes a keyframe (in-house encoder only).</summary>
+        public bool ForceKeyFrame()
+        {
+            var s = native;
+            if (s == null) return false;
+            s.ForceKeyFrame();
+            return true;
+        }
+
+        volatile NativeSession native;
+        volatile bool disposed;
+
+        void RunNative(EncodePlan plan, DisplayTarget t, int kbps, Action<byte[], int, int, uint> onFrame)
+        {
+            using (var s = new NativeSession(t.Adapter, t.Output, plan.Enc.Codec == "hevc", plan.Fps, kbps, Settings.GameMode ? 0u : 50u))
+            {
+                Log.W($"native encoder: {s.Enc.Name} on {s.Cap.AdapterName} {s.Cap.OutputName} {s.Cap.Width}x{s.Cap.Height} {kbps} kb/s | {s.Enc.Diag()} | GPU {s.Cap.GpuPriority}");
+                bool first = true;
+                s.OnPacket = (b, len, key, acq, sub, fresh) =>
+                {
+                    // [u32 BE length][flags][Annex-B AU]: the encoder left 5 free bytes before the AU.
+                    b[0] = (byte)(len >> 24); b[1] = (byte)(len >> 16); b[2] = (byte)(len >> 8); b[3] = (byte)len;
+                    b[4] = (byte)((key ? 1 : 0) | (first ? 2 : 0));
+                    first = false;
+                    onFrame(b, 0, len + 5, WallClock.Ms(acq));
+                };
+                native = s;
+                Started = DateTime.UtcNow;
+                try { if (!disposed) s.Run(); }
+                finally { native = null; }
+            }
+        }
+
+        /// <summary>
         /// Streams until ffmpeg exits or onFrame throws. onFrame(buffer, offset, length) receives a ready-to-send
         /// packet: [u32 BE payload length][u8 flags][Annex-B access unit]. flags: 1 = keyframe, 2 = new stream.
         /// </summary>
         /// <param name="onFrame">(buffer, offset, length, capture time in ms since 1970 mod 2^31)</param>
         public void Run(EncodePlan plan, DisplayTarget t, int kbps, Action<byte[], int, int, uint> onFrame, bool drawMouse = true)
         {
+            if (plan.Enc.Native) { RunNative(plan, t, kbps, onFrame); return; }
             // -fps_mode passthrough: ddagrab sometimes stamps two frames with the same time; FLV's default (vfr)
             // drops those, losing 3-5 fps (measured 55.5 -> 60.1 fps at 4K). The TV ignores timestamps anyway.
             string args = plan.Enc.CommandLine(t, plan.Fps, kbps, plan.Quality,
@@ -240,6 +317,8 @@ namespace TVScreenPlus
 
         public void Dispose()
         {
+            disposed = true;
+            native?.Stop(); // the encoding thread releases everything when Run returns
             try { if (proc != null && !proc.HasExited) proc.Kill(); } catch { }
             try { proc?.Dispose(); } catch { }
         }

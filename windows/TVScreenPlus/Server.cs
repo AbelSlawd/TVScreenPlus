@@ -207,7 +207,8 @@ namespace TVScreenPlus
         }
 
         /// <summary>Wall clock shared with ffmpeg's frame stamps and the sound (ms since 1970 mod 2^31).</summary>
-        static uint NowMs() => (uint)(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() & 0x7FFFFFFF);
+        // Same precise clock as the capture timestamps (DateTime.UtcNow ticks in up to 16 ms steps on .NET Framework).
+        static uint NowMs() => WallClock.Ms(Stopwatch.GetTimestamp());
         /// <summary>Difference of two 31-bit clock values, as a small signed number.</summary>
         static long Wrap31(long x) { x &= 0x7FFFFFFF; return x >= 0x40000000 ? x - 0x80000000L : x; }
 
@@ -370,7 +371,7 @@ namespace TVScreenPlus
                 // ---- 3. Virtual display + encoder + live calibration ----
                 TvStatus("screen");
                 target = VirtualDisplay.Attach(W(heights[0]), heights[0], fps);
-                var enc = Streamer.Pick(target, hevcTv);
+                var enc = Streamer.Pick(target, hevcTv, tvCursor && Settings.NativeEncoder);
                 if (!enc.Hardware) heights.RemoveAll(hh => hh > 1080 && heights.Count > 1);
                 EncodePlan plan = null;
                 for (int i = 0; i < heights.Count && plan == null; i++)
@@ -427,7 +428,7 @@ namespace TVScreenPlus
                 // mode= tells the TV which mode is active (its up/down keys switch it).
                 string Features()
                 {
-                    int vpc = (plan.Enc.Name.Contains("nvenc") ? (Settings.GameMode ? 0 : 2) : 1) * 1000 / plan.Fps + 8 + 15;
+                    int vpc = (plan.Enc.Native ? 0 : plan.Enc.Name.Contains("nvenc") ? (Settings.GameMode ? 0 : 2) : 1) * 1000 / plan.Fps + 8 + 15;
                     Stats.PcVideoMs = vpc;
                     return $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)};vpc={vpc};apc=5;avsync={(Settings.GameMode ? 0 : 1)};mode={(Settings.GameMode ? "game" : "fluid")}" +
                            (tvStamp ? ";ts=1;lpc=15" : "") + (tvCursor ? ";cursor=1" : "");
@@ -578,7 +579,10 @@ namespace TVScreenPlus
                     {
                         Stats.TargetKbps = kbps;
                         status($"Diffusion vers {tv} – {target.Width}x{target.Height} {kbps / 1000} Mb/s");
-                        StartNext(kbps, false);
+                        // In-house encoder: new bitrate applied live, no new encoder (no keyframe, no switch).
+                        Streamer live;
+                        lock (genLock) live = nextSt == null ? activeSt : null;
+                        if (live == null || !live.SetBitrate(kbps)) StartNext(kbps, false);
                     }
                 }
 
@@ -614,7 +618,7 @@ namespace TVScreenPlus
                         Log.W("Encoder keeps failing, re-probing");
                         Streamer.Forget(target);
                         target = Dxgi.Find(target.GdiName) ?? VirtualDisplay.Attach(target.Width, target.Height, plan.Fps);
-                        var e2 = Streamer.Pick(target, hevcTv);
+                        var e2 = Streamer.Pick(target, hevcTv, tvCursor && Settings.NativeEncoder);
                         plan = new EncodePlan { Enc = e2, Quality = false, Fps = plan.Fps };
                         quickFails = 0;
                         lock (genLock) { activeSt = null; activeGen = 0; }
@@ -709,6 +713,9 @@ namespace TVScreenPlus
                             if (d.ContainsKey("e2e")) Stats.OnTvLatency(Int(d, "e2e", -1), Int(d, "e2emax", -1));
                             Stats.OnTvStats(Int(d, "fps", 0), Int(d, "kbps", 0), Int(d, "drop", 0),
                                             Int(d, "dec", -1), Int(d, "decmax", -1), Int(d, "wait", -1));
+                            // Frames dropped before decoding break the following ones until the next keyframe:
+                            // ask for one at once (in-house encoder; ffmpeg only makes one when restarted).
+                            if (Stats.TvDropsDelta > 0 && streamer?.ForceKeyFrame() == true) Log.W($"TV dropped {Stats.TvDropsDelta} frames -> keyframe");
                             if (d.ContainsKey("alat")) Stats.OnTvAudio(Int(d, "alat", -1), Int(d, "aund", 0), Int(d, "adrop", 0), Int(d, "ajit", -1));
                             if (d.ContainsKey("vdel")) Stats.OnTvSync(Int(d, "aout", -1), Int(d, "abuf", -1), Int(d, "aext", 0), Int(d, "vdel", 0), Int(d, "avoff", 0));
                         }

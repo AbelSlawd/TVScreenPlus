@@ -50,7 +50,16 @@ namespace TVScreenPlus
         public static int SetCodec(void* codecApi, Guid k, uint v, bool asBool = false)
         {
             var x = new Variant { vt = (ushort)(asBool ? 11 : 19), v = asBool ? (v != 0 ? 0xFFFFUL : 0) : v };
-            return C(codecApi, 9, (nint)(&k), (nint)(&x));
+            int hr = C(codecApi, 9, (nint)(&k), (nint)(&x));
+            if (hr < 0) CodecErrors += $" {k.ToString().Substring(0, 8)}={hr:X8}";
+            return hr;
+        }
+        /// <summary>ICodecAPI values the encoder refused (diagnostics).</summary>
+        public static string CodecErrors = "";
+        public static uint GetCodec(void* codecApi, Guid k)
+        {
+            var x = new Variant();
+            return C(codecApi, 8, (nint)(&k), (nint)(&x)) >= 0 ? (uint)x.v : 0xFFFFFFFF;
         }
     }
 
@@ -368,6 +377,12 @@ namespace TVScreenPlus
         public string Name;
         /// <summary>0 = fastest .. 100 = best quality (CODECAPI_AVEncCommonQualityVsSpeed).</summary>
         public static uint QualityVsSpeed = 50;
+        /// <summary>
+        /// eAVEncCommonRateControlMode: 0 CBR, 1 peak-constrained VBR, 4 low-delay VBR. CBR: measured on the NVIDIA
+        /// MFT, it is the only mode that applies live bitrate changes and stays under the cap (the VBR modes ignored
+        /// a halved target and overshot the peak by 10-15 %). It does not pad: a static desktop costs little.
+        /// </summary>
+        public static uint RateControl = 0;
         public readonly bool Hevc;
         readonly int width, height, fps;
         void* activate, mft, events, codec, manager;
@@ -386,7 +401,7 @@ namespace TVScreenPlus
         [StructLayout(LayoutKind.Sequential)]
         struct OutputBuffer { public uint StreamId; public void* Sample; public uint Status; public void* Events; }
 
-        public MfEncoder(DesktopCapture cap, bool hevc, int fps, int kbps, int gop)
+        public MfEncoder(DesktopCapture cap, bool hevc, int fps, int kbps, int gop, uint? qualityVsSpeed = null)
         {
             Native.StartMF();
             Hevc = hevc; width = cap.Width; height = cap.Height; this.fps = fps;
@@ -429,8 +444,8 @@ namespace TVScreenPlus
             Com.SetCodec(codec, CODECAPI_AVLowLatencyMode, 1, true);
             Com.SetCodec(codec, CODECAPI_AVEncMPVDefaultBPictureCount, 0);
             Com.SetCodec(codec, CODECAPI_AVEncMPVGOPSize, (uint)gop);
-            Com.SetCodec(codec, CODECAPI_AVEncCommonRateControlMode, 1 /*PeakConstrainedVBR*/);
-            Com.SetCodec(codec, CODECAPI_AVEncCommonQualityVsSpeed, QualityVsSpeed);
+            Com.SetCodec(codec, CODECAPI_AVEncCommonRateControlMode, RateControl);
+            Com.SetCodec(codec, CODECAPI_AVEncCommonQualityVsSpeed, qualityVsSpeed ?? QualityVsSpeed);
             SetBitrate(kbps);
 
             void* ot = null;
@@ -478,13 +493,15 @@ namespace TVScreenPlus
             Com.SetU32(t, MF_MT_VIDEO_NOMINAL_RANGE, 2); // 16-235
         }
 
-        /// <summary>Live bitrate change (no restart): mean = 3/4 of the cap, VBV of 1/6 s at the cap.</summary>
+        /// <summary>Live bitrate change (no restart): CBR at 90 % of the cap, VBV of 1/6 s (frame-size peaks).</summary>
         public void SetBitrate(int kbps)
         {
-            Com.SetCodec(codec, CODECAPI_AVEncCommonMeanBitRate, (uint)kbps * 750);
+            Com.SetCodec(codec, CODECAPI_AVEncCommonMeanBitRate, (uint)kbps * (RateControl == 0 ? 900u : 750u));
             Com.SetCodec(codec, CODECAPI_AVEncCommonMaxBitRate, (uint)kbps * 1000);
             Com.SetCodec(codec, CODECAPI_AVEncCommonBufferSize, (uint)kbps * 1000 / 6);
         }
+
+        public string Diag() => $"rc={Com.GetCodec(codec, CODECAPI_AVEncCommonRateControlMode)} mean={Com.GetCodec(codec, CODECAPI_AVEncCommonMeanBitRate)} max={Com.GetCodec(codec, CODECAPI_AVEncCommonMaxBitRate)} buf={Com.GetCodec(codec, CODECAPI_AVEncCommonBufferSize)} lowlat={Com.GetCodec(codec, CODECAPI_AVLowLatencyMode)} refus:{(Com.CodecErrors == "" ? " aucun" : Com.CodecErrors)}";
 
         /// <summary>The next submitted frame becomes an IDR.</summary>
         public void ForceKeyFrame() => Com.SetCodec(codec, CODECAPI_AVEncVideoForceKeyFrame, 1);
@@ -590,6 +607,92 @@ namespace TVScreenPlus
             Com.Release(ref codec); Com.Release(ref events); Com.Release(ref mft);
             if (activate != null) { Com.C(activate, 34); Com.Release(ref activate); }
             Com.Release(ref manager);
+        }
+    }
+
+    /// <summary>
+    /// Capture + encode loop shared by the streamer and the bench. A new desktop image is encoded as soon as it
+    /// arrives (no pipelining: that was ffmpeg's -delay 2), at most once per frame period: faster sources keep only
+    /// the latest image. Without a new image the last one is encoded again at the frame rate, like ddagrab:
+    /// steady fps for the TV and a static desktop that keeps sharpening.
+    /// </summary>
+    sealed unsafe class NativeSession : IDisposable
+    {
+        public readonly DesktopCapture Cap;
+        public readonly MfEncoder Enc;
+        readonly int fps;
+        readonly System.Collections.Concurrent.ConcurrentDictionary<long, long[]> inflight = new System.Collections.Concurrent.ConcurrentDictionary<long, long[]>();
+        volatile bool stop, keyRequested;
+        volatile int newKbps;
+        Exception error;
+        public int NewFrames, Repeats, Dropped;
+
+        /// <summary>(buffer, Annex-B length at offset 5, keyframe, acquired QPC, submitted QPC, new image?)</summary>
+        public Action<byte[], int, bool, long, long, bool> OnPacket;
+
+        public NativeSession(int adapter, int output, bool hevc, int fps, int kbps, uint? qualityVsSpeed = null)
+        {
+            Native.CoInitializeEx(0, 0); // MTA (already-initialised threads just keep their apartment)
+            Cap = new DesktopCapture(adapter, output);
+            try { Enc = new MfEncoder(Cap, hevc, fps, kbps, fps * 120, qualityVsSpeed); }
+            catch { Cap.Dispose(); throw; }
+            this.fps = fps;
+            Enc.OnOutput = (b, len, key, t) =>
+            {
+                if (inflight.TryRemove(t, out var i)) OnPacket?.Invoke(b, len, key, i[0], i[1], i[2] == 1);
+            };
+            Enc.OnError = e => { error = e; stop = true; };
+        }
+
+        /// <summary>Thread-safe: applied by the capture loop before its next frame.</summary>
+        public void SetBitrate(int kbps) => newKbps = kbps;
+        public void ForceKeyFrame() => keyRequested = true;
+        public void Stop() => stop = true;
+
+        /// <summary>Runs until Stop(), the deadline (QPC) or an error (thrown).</summary>
+        public void Run(long untilQpc = long.MaxValue)
+        {
+            long freq = Stopwatch.Frequency, period = freq / fps;
+            int periodMs = (int)Math.Max(1, period * 1000 / freq);
+            long start = Stopwatch.GetTimestamp();
+            int slot = 0;
+            bool have = false, held = false;
+            long lastReal = 0, lastAny = 0, heldAcq = 0;
+            while (!stop && Stopwatch.GetTimestamp() < untilQpc)
+            {
+                long now = Stopwatch.GetTimestamp();
+                int wait = !have ? 100 : (int)Math.Max(0, (lastAny + period - now) * 1000 / freq);
+                int writeSlot = held ? slot : (slot + 1) % Cap.RingSize;
+                if (Cap.Next(wait, writeSlot, out long acq, out _))
+                {
+                    slot = writeSlot; held = true; heldAcq = acq; have = true;
+                    NewFrames++;
+                }
+                now = Stopwatch.GetTimestamp();
+                bool due = now >= lastAny + period;
+                bool fresh = held && (now - lastReal >= period * 85 / 100 || due);
+                if (!fresh && !(have && due)) continue;
+                if (!Enc.WaitInput(periodMs)) { Dropped++; held = false; continue; }
+                int k = newKbps;
+                if (k != 0) { newKbps = 0; Enc.SetBitrate(k); }
+                if (keyRequested) { keyRequested = false; Enc.ForceKeyFrame(); }
+                now = Stopwatch.GetTimestamp();
+                long t100 = (now - start) * 10000000L / freq;
+                inflight[t100] = new[] { fresh ? heldAcq : now, now, fresh ? 1L : 0L };
+                Enc.Submit(Cap.Ring[slot], t100);
+                if (fresh) { held = false; lastReal = now; } else Repeats++;
+                lastAny = now;
+            }
+            if (error is System.IO.IOException || error is ObjectDisposedException)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw(); // the TV is gone
+            if (error != null) throw new Exception("encodeur : " + error.Message, error);
+        }
+
+        public void Dispose()
+        {
+            stop = true;
+            Enc?.Dispose();
+            Cap.Dispose();
         }
     }
 }

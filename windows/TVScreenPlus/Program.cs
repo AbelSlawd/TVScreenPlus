@@ -95,6 +95,8 @@ namespace TVScreenPlus
         }
         /// <summary>Raised when the mode changes (tray menu or TV remote).</summary>
         public static event Action GameModeChanged;
+        /// <summary>In-house encoder (Desktop Duplication + Media Foundation) instead of ffmpeg.</summary>
+        public static bool NativeEncoder { get => Get("encoder", "native") == "native"; set => Set("encoder", value ? "native" : "ffmpeg"); }
         /// <summary>PC sound played by the TV while streaming.</summary>
         public static bool Audio { get => Get("audio", "1") == "1"; set => Set("audio", value ? "1" : "0"); }
         /// <summary>Mute the PC's own speakers while the TV plays the sound.</summary>
@@ -143,6 +145,16 @@ namespace TVScreenPlus
             // The TV remote (up / down) can switch the mode too: keep the tick in sync.
             Settings.GameModeChanged += () => ui.Post(_ => game.Checked = Settings.GameMode, null);
             menu.Items.Add(game);
+            var encoder = new ToolStripMenuItem("Encodeur vidéo");
+            foreach (var (label, v) in new[] { ("TVScreenPlus (latence minimale, 60 i/s)", true), ("ffmpeg (version 1.0, secours)", false) })
+                encoder.DropDownItems.Add(Radio(label, () => Settings.NativeEncoder == v, () =>
+                {
+                    if (Settings.NativeEncoder == v) return;
+                    Settings.NativeEncoder = v;
+                    Log.W("Encoder: " + (v ? "in-house" : "ffmpeg"));
+                    if (server != null && server.Busy) Task.Run(RestartConnection); // applied by reconnecting
+                }));
+            menu.Items.Add(encoder);
             menu.Items.Add(new ToolStripSeparator());
             var sound = new ToolStripMenuItem("Son sur la TV") { Checked = Settings.Audio, CheckOnClick = true };
             sound.CheckedChanged += (s, e) => { Settings.Audio = sound.Checked; server?.SetAudio(sound.Checked); };

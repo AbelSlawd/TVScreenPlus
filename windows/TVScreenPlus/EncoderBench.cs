@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -45,23 +44,24 @@ namespace TVScreenPlus
             {
                 if (a.StartsWith("prio=")) int.TryParse(a.Substring(5), out DesktopCapture.GpuPriorityLevel);
                 if (a.StartsWith("class=")) int.TryParse(a.Substring(6), out DesktopCapture.GpuClass);
+                if (a.StartsWith("rc=")) uint.TryParse(a.Substring(3), out MfEncoder.RateControl);
             }
             bool[] codecs = args.Contains("hevc") ? new[] { true } : args.Contains("h264") ? new[] { false } : new[] { true, false };
             Out("TVScreenPlus " + Program.Version + " banc d'essai encodeur maison");
             foreach (var o in DesktopCapture.ListOutputs()) Out("  sortie " + o);
 
             Form anim = null;
+            bool animate = !args.Contains("static");
             var ready = new ManualResetEventSlim();
             var ui = new Thread(() =>
             {
-                anim = new AnimForm();
+                anim = new AnimForm(args.Contains("heavy"));
                 anim.Shown += (s, e) => ready.Set();
                 Application.Run(anim);
             });
             ui.SetApartmentState(ApartmentState.STA);
             ui.IsBackground = true;
-            ui.Start();
-            ready.Wait(5000);
+            if (animate) { ui.Start(); ready.Wait(5000); }
             try
             {
                 foreach (bool hevc in codecs)
@@ -76,75 +76,46 @@ namespace TVScreenPlus
         static void Bench(int adapter, int output, bool hevc, int seconds, int kbps, Form anim)
         {
             const int fps = 60;
-            using (var cap = new DesktopCapture(adapter, output))
+            using (var s = new NativeSession(adapter, output, hevc, fps, kbps))
             {
+                var cap = s.Cap; var enc = s.Enc;
                 anim?.BeginInvoke(new Action(() => anim.Location = new Point(cap.Left + 40, cap.Top + 40)));
-                using (var enc = new MfEncoder(cap, hevc, fps, kbps, fps * 120))
+                long freq = Stopwatch.Frequency, start = Stopwatch.GetTimestamp();
+                long measureFrom = start + freq, half = start + (seconds + 1) * freq / 2, end = start + seconds * freq;
+                var lat = new List<double>(); var encT = new List<double>(); var evT = new List<double>();
+                long[] bytes = new long[2]; int outFrames = 0, keys = 0, fresh = 0, repeats = 0; string idrNals = null;
+                s.OnPacket = (b, len, key, acq, sub, isNew) =>
                 {
-                    long freq = Stopwatch.Frequency, period = freq / fps;
-                    long start = Stopwatch.GetTimestamp();
-                    var pending = new ConcurrentDictionary<long, long[]>(); // sample time -> {acquired, submitted, new?}
-                    var lat = new List<double>(); var encT = new List<double>(); var evT = new List<double>();
-                    long bytes = 0; int outFrames = 0, keys = 0; string idrNals = null;
-                    long measureFrom = start + freq; // skip the first second (encoder warm-up)
-                    var done = new ManualResetEventSlim();
-                    Exception err = null;
-                    enc.OnError = e => { err = e; done.Set(); };
-                    enc.OnOutput = (b, len, key, t) =>
-                    {
-                        long now = Stopwatch.GetTimestamp();
-                        if (!pending.TryRemove(t, out var info)) return;
-                        if (key) { keys++; if (idrNals == null) idrNals = NalTypes(b, 5, len, hevc); }
-                        if (info[1] < measureFrom) return;
-                        outFrames++; bytes += len;
-                        encT.Add((now - info[1]) * 1000.0 / freq);
-                        evT.Add((enc.EventQpc - info[1]) * 1000.0 / freq);
-                        if (info[2] == 1) lat.Add((now - info[0]) * 1000.0 / freq);
-                    };
-
-                    int slot = 0, newFrames = 0, repeats = 0, dropped = 0, newMeasured = 0, repMeasured = 0;
-                    bool have = false, held = false;
-                    long lastReal = 0, lastAny = 0, heldAcq = 0;
-                    long end = start + seconds * freq;
-                    while (Stopwatch.GetTimestamp() < end && !done.IsSet)
-                    {
-                        long now = Stopwatch.GetTimestamp();
-                        long due = lastAny + period;
-                        int wait = !have ? 100 : (int)Math.Max(0, (due - now) * 1000 / freq);
-                        int writeSlot = held ? slot : (slot + 1) % cap.RingSize;
-                        if (cap.Next(wait, writeSlot, out long acq, out _))
-                        {
-                            slot = writeSlot; held = true; heldAcq = acq; have = true;
-                            newFrames++;
-                        }
-                        now = Stopwatch.GetTimestamp();
-                        bool submitNew = held && now - lastReal >= period * 85 / 100;
-                        bool repeat = !held && have && now >= lastAny + period;
-                        if (held && !submitNew && now >= lastAny + period) submitNew = true; // held frame is due
-                        if (!submitNew && !repeat) continue;
-                        if (!enc.WaitInput(period * 1000 / freq > 0 ? (int)(period * 1000 / freq) : 16)) { dropped++; held = false; continue; }
-                        now = Stopwatch.GetTimestamp();
-                        long t100 = (now - start) * 10000000L / freq;
-                        pending[t100] = new[] { submitNew ? heldAcq : now, now, submitNew ? 1L : 0L };
-                        enc.Submit(cap.Ring[slot], t100);
-                        if (now >= measureFrom) { if (submitNew) newMeasured++; else repMeasured++; }
-                        if (submitNew) { held = false; lastReal = now; } else repeats++;
-                        lastAny = now;
-                    }
-                    Thread.Sleep(100);
-                    if (err != null) throw err;
-                    double secs = (Stopwatch.GetTimestamp() - 100 * freq / 1000 - measureFrom) / (double)freq;
-                    lat.Sort(); encT.Sort(); evT.Sort();
-                    string H(List<double> l) => string.Join(" ", Enumerable.Range(0, 9).Select(i => l.Count(x => x >= i * 2 && (i == 8 || x < i * 2 + 2))));
-                    string P(List<double> l, double q) => l.Count == 0 ? "-" : l[Math.Min(l.Count - 1, (int)(l.Count * q))].ToString("0.0", CultureInfo.InvariantCulture);
-                    Out(string.Format(CultureInfo.InvariantCulture,
-                        "{0} [{1}] q{18} {2}x{3} sur {4} : {5:0.0} i/s encodées (nouvelles {6:0.0}/s, répétées {7:0.0}/s, perdues {8}) | " +
-                        "capture->paquet moy {9:0.0} ms p50 {10} p95 {11} max {12} | encodage moy {13:0.0} ms p95 {14} (événement p50 {19} p95 {20}) | {15:0.0} Mb/s | IDR {16}, NAL {17}\n  histo capture->paquet par 2 ms : {21} | GPU {22}",
-                        hevc ? "HEVC" : "H.264", enc.Name, cap.Width, cap.Height, cap.OutputName,
-                        outFrames / secs, newMeasured / secs, repMeasured / secs, dropped,
-                        lat.Count > 0 ? lat.Average() : 0, P(lat, 0.5), P(lat, 0.95), P(lat, 1),
-                        encT.Count > 0 ? encT.Average() : 0, P(encT, 0.95), bytes * 8 / secs / 1e6, keys, idrNals ?? "?", MfEncoder.QualityVsSpeed, P(evT, 0.5), P(evT, 0.95), H(lat), cap.GpuPriority));
-                }
+                    long now = Stopwatch.GetTimestamp();
+                    if (key) { keys++; if (idrNals == null) idrNals = NalTypes(b, 5, len, hevc); }
+                    if (sub < measureFrom) return;
+                    outFrames++; bytes[sub < half ? 0 : 1] += len;
+                    if (isNew) fresh++; else repeats++;
+                    encT.Add((now - sub) * 1000.0 / freq);
+                    evT.Add((enc.EventQpc - sub) * 1000.0 / freq);
+                    if (isNew) lat.Add((now - acq) * 1000.0 / freq);
+                };
+                // Live controls, checked half-way: bitrate halved and one forced IDR, without restarting.
+                Out("  ICodecAPI : " + enc.Diag());
+                s.Run(half);
+                s.SetBitrate(kbps / 2); s.ForceKeyFrame();
+                s.Run(end);
+                Out("  ICodecAPI après : " + enc.Diag());
+                Thread.Sleep(100);
+                double secs = (end - measureFrom) / (double)freq, h1 = (half - measureFrom) / (double)freq, h2 = (end - half) / (double)freq;
+                lat.Sort(); encT.Sort(); evT.Sort();
+                string H(List<double> l) => string.Join(" ", Enumerable.Range(0, 9).Select(i => l.Count(x => x >= i * 2 && (i == 8 || x < i * 2 + 2))));
+                string P(List<double> l, double q) => l.Count == 0 ? "-" : l[Math.Min(l.Count - 1, (int)(l.Count * q))].ToString("0.0", CultureInfo.InvariantCulture);
+                Out(string.Format(CultureInfo.InvariantCulture,
+                    "{0} [{1}] q{2} {3}x{4} sur {5} : {6:0.0} i/s encodées (nouvelles {7:0.0}/s, répétées {8:0.0}/s, perdues {9})\n" +
+                    "  capture->paquet moy {10:0.0} ms p50 {11} p95 {12} max {13} | encodage moy {14:0.0} ms p95 {15} (événement p50 {16} p95 {17})\n" +
+                    "  histo capture->paquet par 2 ms : {18} | GPU {19}\n" +
+                    "  débit {20:0.0} Mb/s puis {21:0.0} Mb/s (consigne {22} puis {23} Mb/s) | IDR {24} (attendu 2), NAL {25}",
+                    hevc ? "HEVC" : "H.264", enc.Name, MfEncoder.QualityVsSpeed, cap.Width, cap.Height, cap.OutputName,
+                    outFrames / secs, fresh / secs, repeats / secs, s.Dropped,
+                    lat.Count > 0 ? lat.Average() : 0, P(lat, 0.5), P(lat, 0.95), P(lat, 1),
+                    encT.Count > 0 ? encT.Average() : 0, P(encT, 0.95), P(evT, 0.5), P(evT, 0.95),
+                    H(lat), cap.GpuPriority, bytes[0] * 8 / h1 / 1e6, bytes[1] * 8 / h2 / 1e6, kbps / 1000, kbps / 2000, keys, idrNals ?? "?"));
             }
         }
 
@@ -166,11 +137,28 @@ namespace TVScreenPlus
         {
             readonly Stopwatch sw = Stopwatch.StartNew();
             int frame;
-            public AnimForm()
+            readonly Bitmap[] noise;
+            public AnimForm(bool heavy)
             {
+                if (heavy)
+                {
+                    // Unpredictable full-HD images: the encoder needs every bit it is allowed.
+                    var rnd = new Random(1);
+                    noise = new Bitmap[8];
+                    for (int n = 0; n < noise.Length; n++)
+                    {
+                        var bmp = new Bitmap(1920, 1080, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+                        var d = bmp.LockBits(new Rectangle(0, 0, 1920, 1080), System.Drawing.Imaging.ImageLockMode.WriteOnly, bmp.PixelFormat);
+                        var px = new byte[d.Stride * 1080];
+                        rnd.NextBytes(px);
+                        Marshal.Copy(px, 0, d.Scan0, px.Length);
+                        bmp.UnlockBits(d);
+                        noise[n] = bmp;
+                    }
+                }
                 FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.Manual;
                 TopMost = true; ShowInTaskbar = false; DoubleBuffered = true;
-                Size = new Size(960, 540); Location = new Point(40, 40);
+                Size = heavy ? new Size(1920, 1080) : new Size(960, 540); Location = new Point(40, 40);
                 var t = new Thread(() =>
                 {
                     while (!IsDisposed)
@@ -184,6 +172,7 @@ namespace TVScreenPlus
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
+                if (noise != null) { g.DrawImageUnscaled(noise[frame++ % noise.Length], 0, 0); return; }
                 double s = sw.Elapsed.TotalSeconds;
                 int w = ClientSize.Width, h = ClientSize.Height, off = (int)(s * 480) % 120;
                 g.Clear(Color.FromArgb(20, 20, 30));
