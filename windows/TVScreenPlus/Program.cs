@@ -86,6 +86,8 @@ namespace TVScreenPlus
             Set("_", null);
         }
         public static bool AutoStart { get => Get("autostart", "1") == "1"; set => Set("autostart", value ? "1" : "0"); }
+        /// <summary>Game mode: minimum latency (synchronous encoding) at the cost of a few lost frames; off = fluid 60 fps.</summary>
+        public static bool GameMode { get => Get("gamemode", "0") == "1"; set => Set("gamemode", value ? "1" : "0"); }
     }
 
     sealed class TrayApp : ApplicationContext
@@ -113,6 +115,19 @@ namespace TVScreenPlus
             foreach (var (label, v) in new[] { ("Automatique selon le réseau (recommandé)", 0.0), ("Wi-Fi faible", 0.6), ("Haute", 1.0), ("Maximale (Ethernet / Wi-Fi 6)", 2.0) })
                 q.DropDownItems.Add(Radio(label, () => Math.Abs(Settings.Quality - v) < 0.01, () => Settings.Quality = v));
             menu.Items.Add(q);
+
+            var game = new ToolStripMenuItem("Mode jeu (latence minimale)") { Checked = Settings.GameMode, CheckOnClick = true };
+            game.CheckedChanged += (s, e) =>
+            {
+                Settings.GameMode = game.Checked;
+                Log.W("Game mode " + (game.Checked ? "on" : "off"));
+                // Applied to the running stream by reconnecting the TV (it reconnects by itself).
+                if (server != null && server.Busy) Task.Run(RestartConnection);
+                else Notify("TVScreenPlus", game.Checked ? "Mode jeu activé : latence minimale, quelques images peuvent être sautées."
+                                                         : "Mode fluide : 60 images/s régulières, latence légèrement plus élevée.");
+            };
+            menu.Items.Add(game);
+            menu.Items.Add(new ToolStripSeparator());
 
             var auto = new ToolStripMenuItem("Lancer au démarrage de Windows") { Checked = Settings.AutoStart, CheckOnClick = true };
             auto.CheckedChanged += (s, e) => { Settings.AutoStart = auto.Checked; Setup.SetAutoStart(auto.Checked); };

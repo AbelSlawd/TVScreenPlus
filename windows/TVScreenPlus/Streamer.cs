@@ -24,8 +24,11 @@ namespace TVScreenPlus
             {
                 int cq = c == "hevc" ? 21 : 20;
                 // Constant-quality VBR capped by maxrate: razor-sharp static desktop, bounded bitrate in motion.
+                // -delay 0 (game mode) encodes each frame synchronously: lowest latency, but capture misses
+                // ~5-10 % of the refreshes (measured 53-58 fps at 4K on an RTX 5080). -delay 2 pipelines two frames:
+                // steady 60 fps for up to ~2 frames of extra latency.
                 Func<bool, int, string> nv = (q, k) => $"-c:v {c}_nvenc " + (q ? "-preset p5 -spatial-aq 1 -aq-strength 6 " : "-preset p2 ") +
-                    $"-tune ull -rc vbr -cq {cq} -b:v {k}k -maxrate {k}k -bufsize {k / 6}k -zerolatency 1 -delay 0 -bf 0 -forced-idr 1";
+                    $"-tune ull -rc vbr -cq {cq} -b:v {k}k -maxrate {k}k -bufsize {k / 6}k -zerolatency 1 -delay {(Settings.GameMode ? 0 : 2)} -bf 0 -forced-idr 1";
                 Func<bool, int, string> amf = (q, k) => $"-c:v {c}_amf -usage ultralowlatency " + (q ? "-quality balanced -vbaq true " : "-quality speed ") +
                     $"-rc vbr_peak -b:v {k * 3 / 4}k -maxrate {k}k -bufsize {k / 6}k -bf 0";
                 Func<bool, int, string> qsv = (q, k) => $"-c:v {c}_qsv " + (q ? "-preset medium " : "-preset veryfast ") +
@@ -53,7 +56,7 @@ namespace TVScreenPlus
     sealed class EncodePlan
     {
         public Encoder Enc; public bool Quality; public int Fps;
-        public override string ToString() => $"{Enc.Name} {(Quality ? "qualité" : "rapide")} {Fps} i/s";
+        public override string ToString() => $"{Enc.Name} {(Quality ? "qualité" : "rapide")} {Fps} i/s {(Settings.GameMode ? "mode jeu" : "fluide")}";
     }
 
     /// <summary>Runs ffmpeg and turns its FLV output into Annex-B access units (one per frame).</summary>
@@ -94,7 +97,7 @@ namespace TVScreenPlus
                 foreach (bool q in new[] { true, false })
                 {
                     // "v2": measured after the encoder start-up (older results underestimated fast GPUs).
-                    string key = $"bench_v2_{e.Name}_{t.Width}x{t.Height}_{fps}_{(q ? "q" : "f")}";
+                    string key = $"bench_v2_{e.Name}_{t.Width}x{t.Height}_{fps}_{(q ? "q" : "f")}{(Settings.GameMode ? "_game" : "")}";
                     string cached = Settings.Get(key, "");
                     double got = cached != "" ? double.Parse(cached, CultureInfo.InvariantCulture) : RunTest(e, t, fps, q, fps * 4);
                     if (cached == "" && got >= 0) Settings.Set(key, got.ToString(CultureInfo.InvariantCulture));

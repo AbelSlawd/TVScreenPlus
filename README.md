@@ -80,7 +80,12 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 | **OK** ou **Menu** | Afficher / masquer les statistiques (résolution, débit, images/s) |
 | **Retour** | Se déconnecter. L'écran disparaît de Windows |
 
-**Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, démarrage avec Windows, mises à jour, recalibrage, **mode debug**, journal.
+**Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, **mode jeu**, démarrage avec Windows, mises à jour, recalibrage, **mode debug**, journal.
+
+### Mode fluide ou mode jeu (PC)
+Par défaut, TVScreenPlus est en **mode fluide** : l'encodeur garde une ou deux images d'avance pour tenir **60 images/s régulières**, ce qui ajoute au plus une trentaine de millisecondes de latence. Idéal pour le bureau, la navigation et la vidéo.
+
+Clic droit sur l'icône › *Mode jeu (latence minimale)* : chaque image est envoyée dès qu'elle est encodée. La latence est la plus faible possible, mais quelques images peuvent être sautées (environ 55 à 58 i/s en 4K). Utile pour jouer. Le changement s'applique tout de suite : la TV se reconnecte en quelques secondes.
 
 ### Paramètres de la TV (⚙ en haut à droite, ou touche Menu)
 | Paramètre | Rôle |
