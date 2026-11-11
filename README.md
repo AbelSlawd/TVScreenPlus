@@ -100,7 +100,7 @@ Activé par défaut. Pendant la diffusion, tout ce que joue Windows (jeux, vidé
 - Pour désactiver le son sur la TV : clic droit › *Son sur la TV*, ou dans les paramètres de la TV.
 - Le son voyage sur son propre canal (UDP, environ 1,5 Mb/s, pris en compte dans le réglage du débit) : il n'attend jamais derrière une grosse image. La TV garde un tampon d'environ 30 ms, agrandi automatiquement si le réseau est irrégulier, puis réduit lentement quand il redevient stable (sans descendre sous 25 ms, pour éviter les coupures).
 - L'application demande à la TV son mode « jeu » (faible latence, ALLM) quand elle le prend en charge : moins de traitements, donc moins de retard de l'image et du son.
-- **Synchronisation automatique** : la TV mesure le vrai délai de sa sortie son (haut-parleurs ou barre de son compris) et le compare au délai de l'image. Si le son arrive après l'image, l'image est légèrement retardée ; s'il arrive avant, c'est le son. Les changements sont progressifs et invisibles. En **mode jeu** (PC), l'image n'est jamais retardée pour attendre le son : la réactivité passe en premier.
+- **Synchronisation automatique** : la TV mesure le délai réel du son (capture → haut-parleurs ou barre de son) et celui de l'image (capture → écran), et les compare. Si le son arrive après l'image, l'image est légèrement retardée ; s'il arrive avant, c'est le son. Les changements sont progressifs et invisibles. En **mode jeu** (PC), l'image n'est jamais retardée pour attendre le son : la réactivité passe en premier.
 - **Réglage à l'oreille** : pendant la diffusion, les touches **◀ ▶** de la télécommande avancent ou retardent le son de 10 ms (mémorisé). *Paramètres de la TV › Synchronisation du son* le remet à 0. Pratique avec une vidéo de test de synchronisation labiale.
 
 ### Manettes
@@ -129,6 +129,9 @@ Activées par défaut. Connectez vos manettes à la TV (*Paramètres de la TV �
 
 La version de l'application est affichée en haut de l'écran d'accueil.
 
+### Curseur de la souris
+Le curseur n'est plus incrusté dans la vidéo : le PC envoie sa position (plusieurs centaines de fois par seconde) et sa forme, et la TV le dessine elle-même par-dessus l'image. Il suit la souris presque instantanément, sans attendre l'encodage et le décodage de la vidéo. Avec une ancienne application TV, le curseur reste dans la vidéo.
+
 ### Mode debug (PC)
 Clic droit sur l'icône › *Mode debug* : une fenêtre affiche en direct
 - la **stabilité du signal** (score sur 100, saturation du réseau, gigue de latence, images perdues par la TV, baisses de débit) ;
@@ -136,6 +139,7 @@ Clic droit sur l'icône › *Mode debug* : une fenêtre affiche en direct
 - la **résolution**, le codec, l'encodeur et le débit ;
 - la **latence** : aller-retour réseau mesuré chaque seconde, latence de décodage **mesurée en direct sur la TV** (moyenne et maximum) et estimation de la latence totale PC → écran ;
 - la **saturation du décodeur de la TV** : part du temps où la puce vidéo ne suit plus le flux ;
+- la **latence mesurée capture → écran** : chaque image porte son heure de capture, et la TV note quand elle s'affiche (horloges du PC et de la TV recalées en continu grâce aux pings). Le traitement d'image propre à la TV n'est pas inclus : mettez la TV en mode d'image « Jeu » pour le réduire ;
 - le **son** : format capturé, débit, tampon de la TV, coupures, paquets jetés pour rattraper le retard, gigue ;
 - les **manettes** connectées sur la TV et leur manette Xbox virtuelle.
 
@@ -212,7 +216,7 @@ PC Windows                                                   TV Google TV
 - **Flux** : paquets `[u32 taille][u8 flags][données]`. Flags : `0x80` remplissage (test de débit), `0x40` ping (la TV répond `ACK`), `0x20` configuration, `0x10` message d'état, sinon une image vidéo Annex-B (`1` = image clé).
 - **Retour TV → PC** : `STAT;fps=…;kbps=…;drop=…;dec=…;decmax=…;wait=…` toutes les 2 secondes (`dec`/`decmax` : latence du décodeur en ms, `wait` : % du temps où son entrée est pleine), `LOG;…` (diagnostic écrit dans le journal du PC), et `ACK` en réponse aux pings envoyés chaque seconde pour mesurer la latence.
 - **Champs supplémentaires de la connexion** : `lang`, `tested`, `lat` (latence de décodage en ms), `net`/`band`/`link` (réseau), `pref` (priorité), `maxh` (résolution max), `audio=0|1` (la TV joue le son), `pads=0|1` (la TV envoie ses manettes).
-- **Fonctions optionnelles** : le PC ne les utilise que si la TV les annonce dans sa ligne de connexion, et confirme ce qu'il accepte dans son paquet de configuration (`…;audio=0|1;pads=0|1`). La TV indique aussi `audioudp=<port>` : le PC lui envoie alors le son en datagrammes UDP de 5 ms (même contenu que les paquets 0x08), sinon dans le flux TCP. `avsync=0` (mode jeu) interdit de retarder l'image ; `mode=fluid|game` indique le mode actif, et la TV demande un changement avec la ligne `MODE;fluid|game` (touches ▲ ▼). Une ancienne application TV ou un ancien programme PC continuent donc de fonctionner (sans son ni manettes).
+- **Fonctions optionnelles** : le PC ne les utilise que si la TV les annonce dans sa ligne de connexion, et confirme ce qu'il accepte dans son paquet de configuration (`…;audio=0|1;pads=0|1`). La TV indique aussi `audioudp=<port>` : le PC lui envoie alors le son en datagrammes UDP de 5 ms (même contenu que les paquets 0x08), sinon dans le flux TCP. `avsync=0` (mode jeu) interdit de retarder l'image ; `mode=fluid|game` indique le mode actif, et la TV demande un changement avec la ligne `MODE;fluid|game` (touches ▲ ▼). `ts=1` : chaque image vidéo porte le drapeau `0x04` et commence par son heure de capture (u32, ms depuis 1970 modulo 2³¹) ; les pings portent l'heure du PC ; la TV renvoie `e2e`/`e2emax` (capture → écran) dans `STAT`. `cursor=1` : la TV dessine le curseur ; le PC envoie sa position (`[3][visible][u16 x][u16 y][u32 heure]`, en UDP) et sa forme (`[4][u16 l][u16 h][u16 point chaud x][u16 y][BGRA]`, paquet 0x08). Une ancienne application TV ou un ancien programme PC continuent donc de fonctionner (sans son ni manettes).
 - **Paquets `0x08` (extension)** : le premier octet donne le type. Une ancienne TV ne les reçoit jamais (ils seraient pris pour de la vidéo).
   - `1` = son : `[1][format 1 = PCM 16 bits LE][voies][0][fréquence u32][horodatage PC en ms u32][échantillons]`, 10 à 20 ms par paquet.
   - `2` = vibrations : `[2][emplacement 0-3][moteur gros 0-255][moteur petit 0-255]`.

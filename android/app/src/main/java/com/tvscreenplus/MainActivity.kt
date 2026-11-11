@@ -22,6 +22,7 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -42,6 +43,19 @@ class MainActivity : Activity() {
     private lateinit var surfaceView: SurfaceView
     private lateinit var overlay: FrameLayout
     private lateinit var stats: TextView
+    /** Mouse cursor drawn by the TV over the video (positions straight from the PC: no video latency). */
+    private lateinit var cursorView: ImageView
+    @Volatile private var curX = 0
+    @Volatile private var curY = 0
+    @Volatile private var curVisible = false
+    @Volatile private var curStreamW = 1920
+    @Volatile private var curStreamH = 1080
+    private var curHotX = 0
+    private var curHotY = 0
+    private var curBmpW = 0
+    private var curBmpH = 0
+    private val cursorPending = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val cursorTick = Runnable { cursorPending.set(false); applyCursor() }
     // Main page widgets (rebuilt when the language changes).
     private var status: TextView? = null
     private var list: LinearLayout? = null
@@ -77,6 +91,8 @@ class MainActivity : Activity() {
             override fun surfaceDestroyed(h: SurfaceHolder) { surfaceReady = false; disconnect(null) }
         })
         root.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
+        cursorView = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_XY; visibility = View.GONE }
+        root.addView(cursorView, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
         overlay = FrameLayout(this).apply { setBackgroundColor(BG) }
         root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         // Live statistics, toggled with OK / Menu while streaming.
@@ -431,6 +447,7 @@ class MainActivity : Activity() {
             "device ${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE}) Android ${Build.VERSION.RELEASE} SDK ${Build.VERSION.SDK_INT}$soc app $versionName",
             "panel ${panelSize().let { "${it.first}x${it.second}" }} @${refreshHz()} Hz, declared HEVC ${Codecs.declaredMaxHeight(MediaFormat.MIMETYPE_VIDEO_HEVC)}p60, H.264 ${Codecs.declaredMaxHeight(MediaFormat.MIMETYPE_VIDEO_AVC)}p60",
         )
+        lines += DisplayCaps.report(this) // display modes + 120 fps decoding: is 120 Hz streaming possible?
         if (Build.VERSION.SDK_INT >= 30) lines += "display minimal post-processing (game mode) supported: ${try { windowManager.defaultDisplay.isMinimalPostProcessingSupported } catch (_: Exception) { "?" }}"
         val hwVer = prefs.getInt("hw_ver", 0)
         if (hwVer == 0) lines += "hwtest never run"
@@ -473,6 +490,20 @@ class MainActivity : Activity() {
 
             override fun onRumble(slot: Int, large: Int, small: Int) {
                 if (client === c) gamepads?.rumble(slot, large, small)
+            }
+
+            override fun onCursorShape(bitmap: android.graphics.Bitmap, hotX: Int, hotY: Int) {
+                ui.post {
+                    if (client !== c) return@post
+                    cursorView.setImageBitmap(bitmap)
+                    curHotX = hotX; curHotY = hotY; curBmpW = bitmap.width; curBmpH = bitmap.height
+                    applyCursor()
+                }
+            }
+
+            override fun onCursorMove(x: Int, y: Int, visible: Boolean, streamW: Int, streamH: Int) {
+                curX = x; curY = y; curVisible = visible && client === c; curStreamW = streamW; curStreamH = streamH
+                if (cursorPending.compareAndSet(false, true)) ui.post(cursorTick) // latest position only
             }
 
             override fun onEnded(error: String?) {
@@ -559,6 +590,22 @@ class MainActivity : Activity() {
         }
         if (client == null && keyCode == KeyEvent.KEYCODE_MENU && !inSettings) { showSettings(); return true }
         return super.onKeyDown(keyCode, event)
+    }
+
+    /** Places the cursor over the video: stream pixels -> view pixels, hotspot on the pointed spot. */
+    private fun applyCursor() {
+        if (!curVisible || client == null || overlay.visibility == View.VISIBLE || curBmpW == 0 || surfaceView.width == 0) {
+            cursorView.visibility = View.GONE; return
+        }
+        val sx = surfaceView.width.toFloat() / curStreamW.coerceAtLeast(1)
+        val sy = surfaceView.height.toFloat() / curStreamH.coerceAtLeast(1)
+        val w = Math.round(curBmpW * sx).coerceAtLeast(1)
+        val h = Math.round(curBmpH * sy).coerceAtLeast(1)
+        val lp = cursorView.layoutParams
+        if (lp.width != w || lp.height != h) { lp.width = w; lp.height = h; cursorView.layoutParams = lp }
+        cursorView.translationX = (curX - curHotX) * sx
+        cursorView.translationY = (curY - curHotY) * sy
+        cursorView.visibility = View.VISIBLE
     }
 
     // ---------------- helpers ----------------

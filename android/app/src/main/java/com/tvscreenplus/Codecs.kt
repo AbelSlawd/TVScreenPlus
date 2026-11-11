@@ -11,36 +11,53 @@ object Codecs {
     /** Name and settings of the last decoder created (for the PC log). */
     @Volatile var lastDecoder = ""
 
-    /** Hardware decoder configured for minimum latency (vendor switches tried first, plain config as fallback). */
+    private class Variant(val label: String, val std: Boolean, val priority: Boolean, val rate: Boolean, val vendor: Boolean)
+
+    private val VARIANTS = listOf(
+        Variant("all options", true, true, true, true),
+        Variant("no operating-rate", true, true, false, true),
+        Variant("no operating-rate/priority", true, false, false, true),
+        Variant("vendor keys only", false, false, false, true),
+        Variant("plain", true, false, false, false),
+    )
+
+    /** Hardware decoder configured for minimum latency (richest config first, progressively plainer fallbacks). */
     fun lowLatencyDecoder(mime: String, w: Int, h: Int, surface: Surface?): MediaCodec {
-        fun format(extended: Boolean) = MediaFormat.createVideoFormat(mime, w, h).apply {
+        fun format(v: Variant) = MediaFormat.createVideoFormat(mime, w, h).apply {
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, maxOf(w * h, 2 shl 20))
-            if (Build.VERSION.SDK_INT >= 30) setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
-            if (extended) {
-                if (Build.VERSION.SDK_INT >= 23) {
-                    setInteger(MediaFormat.KEY_PRIORITY, 0) // realtime
-                    setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE.toInt())
-                }
+            if (v.std && Build.VERSION.SDK_INT >= 30) setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            if (Build.VERSION.SDK_INT >= 23) {
+                if (v.priority) setInteger(MediaFormat.KEY_PRIORITY, 0) // realtime
+                if (v.rate) setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE.toInt())
+            }
+            if (v.vendor) {
                 // Vendor low-latency switches (Qualcomm, MediaTek, HiSilicon, Amlogic/others).
                 setInteger("vendor.qti-ext-dec-low-latency.enable", 1)
                 setInteger("vendor.qti-ext-dec-picture-order.enable", 1)
                 setInteger("vendor.rtc-ext-dec-low-latency.enable", 1)
                 setInteger("vendor.low-latency.enable", 1)
+                setInteger("vendor.mtk.ext.dec.low-latency.enable", 1)
+                setInteger("vendor.mtk.vdec.lowlatency", 1)
                 setInteger("vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-req", 1)
                 setInteger("vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-rdy", -1)
             }
         }
-        for (extended in listOf(true, false)) {
-            val dec = MediaCodec.createDecoderByType(mime)
+        for ((i, v) in VARIANTS.withIndex()) {
+            val dec = try {
+                MediaCodec.createDecoderByType(mime)
+            } catch (e: Exception) {
+                Log.w(StreamClient.TAG, "createDecoderByType failed", e)
+                break
+            }
             try {
-                dec.configure(format(extended), surface, null, 0)
+                dec.configure(format(v), surface, null, 0)
                 dec.start()
-                lastDecoder = "${dec.name} ${w}x$h low-latency=${if (extended) "vendor+standard" else "standard"}"
+                lastDecoder = "${dec.name} ${w}x$h low-latency=variant ${i + 1}/${VARIANTS.size} (${v.label})"
                 Log.i(StreamClient.TAG, "decoder $lastDecoder")
                 return dec
             } catch (e: Exception) {
-                Log.w(StreamClient.TAG, "configure extended=$extended failed", e)
-                dec.release()
+                Log.w(StreamClient.TAG, "configure variant ${i + 1}/${VARIANTS.size} (${v.label}) failed", e)
+                try { dec.release() } catch (_: Exception) {}
             }
         }
         throw Exception(L.t("no_decoder"))

@@ -27,7 +27,8 @@ namespace TVScreenPlus
                 // -delay 0 (game mode) encodes each frame synchronously: lowest latency, but capture misses
                 // ~5-10 % of the refreshes (measured 53-58 fps at 4K on an RTX 5080). -delay 2 pipelines two frames:
                 // steady 60 fps for up to ~2 frames of extra latency.
-                Func<bool, int, string> nv = (q, k) => $"-c:v {c}_nvenc " + (q ? "-preset p5 -spatial-aq 1 -aq-strength 6 " : "-preset p2 ") +
+                // Game mode uses p1 without spatial AQ: the shortest encode lets -delay 0 keep up (59.2 fps measured).
+                Func<bool, int, string> nv = (q, k) => $"-c:v {c}_nvenc " + (Settings.GameMode ? "-preset p1 " : q ? "-preset p5 -spatial-aq 1 -aq-strength 6 " : "-preset p2 ") +
                     $"-tune ull -rc vbr -cq {cq} -b:v {k}k -maxrate {k}k -bufsize {k / 6}k -zerolatency 1 -delay {(Settings.GameMode ? 0 : 2)} -bf 0 -forced-idr 1";
                 Func<bool, int, string> amf = (q, k) => $"-c:v {c}_amf -usage ultralowlatency " + (q ? "-quality balanced -vbaq true " : "-quality speed ") +
                     $"-rc vbr_peak -b:v {k * 3 / 4}k -maxrate {k}k -bufsize {k / 6}k -bf 0";
@@ -45,18 +46,22 @@ namespace TVScreenPlus
                           $"-tune zerolatency -bf 0 -b:v {k}k -maxrate {k}k -bufsize {k / 6}k -colorspace bt709 -color_primaries bt709 -color_trc bt709");
         }
 
-        public string CommandLine(DisplayTarget t, int fps, int kbps, bool quality, string output) =>
+        /// <param name="drawMouse">false when the TV draws the cursor itself (overlay: much lower cursor latency).</param>
+        /// <param name="stamp">Timestamps = wall-clock time right after capture (ms since 1970 mod 2^31 in the FLV
+        /// output, with -copyts): lets the PC and the TV measure the real capture -> screen latency.</param>
+        public string CommandLine(DisplayTarget t, int fps, int kbps, bool quality, string output, bool drawMouse = true, bool stamp = false) =>
             "-hide_banner -loglevel error -nostdin " +
             $"-init_hw_device d3d11va=d3d:{t.Adapter} -filter_hw_device d3d " +
-            $"-f lavfi -i \"ddagrab=output_idx={t.Output}:framerate={fps}:draw_mouse=1{Filter}\" -an " +
-            args(quality, kbps) + $" -g {fps * 120} " + output;
+            $"-f lavfi -i \"ddagrab=output_idx={t.Output}:framerate={fps}:draw_mouse={(drawMouse ? 1 : 0)}{(stamp ? ",setpts=RTCTIME/1000000/TB" : "")}{Filter}\" -an " +
+            (stamp ? "-copyts " : "") + args(quality, kbps) + $" -g {fps * 120} " + output;
     }
 
     /// <summary>Encoder choice for one session: pipeline + tier + fps, validated by a live benchmark.</summary>
     sealed class EncodePlan
     {
         public Encoder Enc; public bool Quality; public int Fps;
-        public override string ToString() => $"{Enc.Name} {(Quality ? "qualité" : "rapide")} {Fps} i/s {(Settings.GameMode ? "mode jeu" : "fluide")}";
+        public override string ToString() => Settings.GameMode && Enc.Name.Contains("nvenc") ? $"{Enc.Name} p1 {Fps} i/s mode jeu"
+                                                                                             : $"{Enc.Name} {(Quality ? "qualité" : "rapide")} {Fps} i/s {(Settings.GameMode ? "mode jeu" : "fluide")}";
     }
 
     /// <summary>Runs ffmpeg and turns its FLV output into Annex-B access units (one per frame).</summary>
@@ -149,12 +154,13 @@ namespace TVScreenPlus
         /// Streams until ffmpeg exits or onFrame throws. onFrame(buffer, offset, length) receives a ready-to-send
         /// packet: [u32 BE payload length][u8 flags][Annex-B access unit]. flags: 1 = keyframe, 2 = new stream.
         /// </summary>
-        public void Run(EncodePlan plan, DisplayTarget t, int kbps, Action<byte[], int, int> onFrame)
+        /// <param name="onFrame">(buffer, offset, length, capture time in ms since 1970 mod 2^31)</param>
+        public void Run(EncodePlan plan, DisplayTarget t, int kbps, Action<byte[], int, int, uint> onFrame, bool drawMouse = true)
         {
             // -fps_mode passthrough: ddagrab sometimes stamps two frames with the same time; FLV's default (vfr)
             // drops those, losing 3-5 fps (measured 55.5 -> 60.1 fps at 4K). The TV ignores timestamps anyway.
             string args = plan.Enc.CommandLine(t, plan.Fps, kbps, plan.Quality,
-                "-fps_mode passthrough -bsf:v dump_extra=freq=keyframe -flush_packets 1 -f flv -flvflags no_duration_filesize pipe:1");
+                "-fps_mode passthrough -bsf:v dump_extra=freq=keyframe -flush_packets 1 -f flv -flvflags no_duration_filesize pipe:1", drawMouse, true);
             Log.W("ffmpeg " + args);
             var psi = new ProcessStartInfo(Setup.FFmpeg, args)
             { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -166,7 +172,7 @@ namespace TVScreenPlus
             Pump(proc.StandardOutput.BaseStream, onFrame);
         }
 
-        static void Pump(Stream s, Action<byte[], int, int> onFrame)
+        static void Pump(Stream s, Action<byte[], int, int, uint> onFrame)
         {
             var hdr = new byte[15];
             if (!Read(s, hdr, 9)) return;                       // "FLV" header
@@ -177,6 +183,7 @@ namespace TVScreenPlus
             while (Read(s, hdr, 15))                            // PreviousTagSize(4) + tag header(11)
             {
                 int type = hdr[4], size = hdr[5] << 16 | hdr[6] << 8 | hdr[7];
+                uint ts = (uint)(hdr[11] << 24 | hdr[8] << 16 | hdr[9] << 8 | hdr[10]) & 0x7FFFFFFF; // capture time (see CommandLine)
                 if (size > buf.Length) buf = new byte[size * 2];
                 if (!Read(s, buf, size)) return;
                 if (type != 9 || size < 6) continue;            // video only
@@ -214,7 +221,7 @@ namespace TVScreenPlus
                 buf[h] = (byte)(plen >> 24); buf[h + 1] = (byte)(plen >> 16); buf[h + 2] = (byte)(plen >> 8); buf[h + 3] = (byte)plen;
                 buf[h + 4] = (byte)((key ? 1 : 0) | (first ? 2 : 0));
                 first = false;
-                onFrame(buf, h, plen + 5);
+                onFrame(buf, h, plen + 5, ts);
             }
         }
 

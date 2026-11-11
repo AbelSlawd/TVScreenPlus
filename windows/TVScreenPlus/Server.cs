@@ -170,6 +170,9 @@ namespace TVScreenPlus
         AudioLoopback audio;          // PC sound -> TV
         readonly object audioLock = new object();
         volatile bool modeSwitch;     // fluid <-> game mode asked while streaming
+        bool tvStamp;                 // the TV wants each frame's capture time (ts=1): measured capture -> screen latency
+        bool tvCursor;                // the TV draws the cursor itself (cursor=1)
+        CursorSender cursor;          // cursor position/shape -> TV
         IPEndPoint audioUdp;          // TV's UDP port for the sound (audioudp=), null = sound in the TCP stream
         UdpClient udpOut;
         volatile PadHub pads;         // TV gamepads -> virtual Xbox 360 controllers
@@ -186,8 +189,26 @@ namespace TVScreenPlus
             try { streamer?.Dispose(); } catch { }
             SetAudio(false);
             try { pads?.Dispose(); } catch { }
+            try { cursor?.Dispose(); } catch { }
             try { udpOut?.Close(); } catch { }
         }
+
+        UdpClient Udp()
+        {
+            lock (audioLock)
+            {
+                if (udpOut == null) { udpOut = new UdpClient(AddressFamily.InterNetwork); Server.NoInheritPublic(udpOut.Client); }
+                return udpOut;
+            }
+        }
+
+        /// <summary>Wall clock shared with ffmpeg's frame stamps and the sound (ms since 1970 mod 2^31).</summary>
+        static uint NowMs() => (uint)(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() & 0x7FFFFFFF);
+        /// <summary>Difference of two 31-bit clock values, as a small signed number.</summary>
+        static long Wrap31(long x) { x &= 0x7FFFFFFF; return x >= 0x40000000 ? x - 0x80000000L : x; }
+
+        /// <summary>Ping payload: PC time, so that the TV can relate both clocks (older TVs ignore it).</summary>
+        static byte[] PingPayload() { uint t = NowMs(); return new[] { (byte)(t >> 24), (byte)(t >> 16), (byte)(t >> 8), (byte)t }; }
 
         /// <summary>Restart the encoder with the current mode (fluid / game) and tell the TV.</summary>
         public void SwitchMode()
@@ -209,8 +230,7 @@ namespace TVScreenPlus
                         // Own UDP channel: sound never waits behind a large video frame in the TCP stream
                         // (measured: up to 177 ms of arrival jitter when YouTube pushed the video to 40-58 Mb/s).
                         // 5 ms packets (~1 kB) fit in one Ethernet frame.
-                        if (udpOut == null) { udpOut = new UdpClient(AddressFamily.InterNetwork); Server.NoInheritPublic(udpOut.Client); }
-                        var ep = audioUdp; var u = udpOut;
+                        var ep = audioUdp; var u = Udp();
                         audio = new AudioLoopback(p => { if (!closed) try { u.Send(p, p.Length, ep); } catch { } }, Stats, 5);
                         Log.W($"Audio to TV: on (UDP {ep})");
                     }
@@ -291,9 +311,11 @@ namespace TVScreenPlus
                 // Optional features: only what this TV announced (older TV apps announce nothing).
                 int helloAudio = Int(hello, "audio", -1), helloPads = Int(hello, "pads", -1);
                 tvAudio = v2 && helloAudio == 1;
-                int udpPort = Int(hello, "audioudp", 0);
-                if (tvAudio && udpPort > 0 && udpPort < 65536 && client.Client.RemoteEndPoint is IPEndPoint tvEp)
+                int udpPort = Int(hello, "audioudp", 0); // UDP port of the TV: sound and cursor positions
+                if (v2 && udpPort > 0 && udpPort < 65536 && client.Client.RemoteEndPoint is IPEndPoint tvEp)
                     audioUdp = new IPEndPoint(tvEp.Address, udpPort);
+                tvStamp = v2 && Int(hello, "ts", 0) == 1;
+                tvCursor = v2 && Int(hello, "cursor", 0) == 1;
                 bool padsOn = v2 && helloPads == 1 && Settings.Pads;
                 Stats.Audio = helloAudio < 0 ? "non pris en charge par l'app TV" : !tvAudio ? "désactivé sur la TV" : Settings.Audio ? "en attente de la diffusion" : "désactivé sur le PC";
                 Stats.Pads = helloPads < 0 ? "non prises en charge par l'app TV" : helloPads == 0 ? "désactivées sur la TV" : padsOn ? "aucune manette détectée sur la TV" : "désactivées sur le PC";
@@ -370,7 +392,7 @@ namespace TVScreenPlus
                     if (kbps > netCap) { capped = $", capped to network {netCap}"; kbps = netCap; }
                 }
                 int maxKbps = kbps;
-                client.SendBufferSize = Math.Max(64 << 10, kbps * 1000 / 8 / 25); // ~40 ms of video: low latency
+                client.SendBufferSize = Math.Max(64 << 10, kbps * 1000 / 8 / 50); // ~20 ms of video: little hidden queue
                 Log.W($"Plan: {target.Width}x{target.Height} {plan} {kbps} kb/s (budget {budget:0}, ideal {ideal:0}{capped})");
                 Stats.Width = target.Width; Stats.Height = target.Height; Stats.Codec = enc.Codec.ToUpper();
                 Stats.Encoder = plan.ToString(); Stats.TargetFps = plan.Fps; Stats.TargetKbps = kbps;
@@ -386,7 +408,8 @@ namespace TVScreenPlus
                 {
                     int vpc = (plan.Enc.Name.Contains("nvenc") ? (Settings.GameMode ? 0 : 2) : 1) * 1000 / plan.Fps + 8 + 15;
                     Stats.PcVideoMs = vpc;
-                    return $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)};vpc={vpc};apc=5;avsync={(Settings.GameMode ? 0 : 1)};mode={(Settings.GameMode ? "game" : "fluid")}";
+                    return $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)};vpc={vpc};apc=5;avsync={(Settings.GameMode ? 0 : 1)};mode={(Settings.GameMode ? "game" : "fluid")}" +
+                           (tvStamp ? ";ts=1;lpc=15" : "") + (tvCursor ? ";cursor=1" : "");
                 }
                 if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}" + Features()));
                 else { var ok = Encoding.ASCII.GetBytes($"OK;codec={enc.Codec};w={target.Width};h={target.Height}\n"); ns.Write(ok, 0, ok.Length); }
@@ -395,6 +418,14 @@ namespace TVScreenPlus
                 notify("TVScreenPlus", $"{tv} connectée : {info}");
                 streaming = true;
                 SetAudio(Settings.Audio);
+                if (tvCursor)
+                {
+                    // The TV draws the cursor: positions over UDP (or TCP), shapes over TCP; not drawn in the video.
+                    var ep = audioUdp;
+                    cursor = new CursorSender(target,
+                        p => { if (closed) return; try { if (ep != null) Udp().Send(p, p.Length, ep); else Send(0x08, p); } catch { } },
+                        p => { if (closed) return; try { Send(0x08, p); } catch { } });
+                }
 
                 // ---- 4. Stream with congestion control ----
                 int quickFails = 0, congested = 0;
@@ -411,10 +442,21 @@ namespace TVScreenPlus
                         streamer = st;
                         try
                         {
-                            st.Run(plan, target, kbpsNow, (buf, o, l) =>
+                            st.Run(plan, target, kbpsNow, (buf, o, l, cap) =>
                             {
                                 long t0 = Stopwatch.GetTimestamp();
-                                lock (sendLock) ns.Write(buf, o, l);
+                                Stats.AddPcCapture(Wrap31((long)NowMs() - cap));
+                                if (tvStamp)
+                                {
+                                    // [len+4][flags|0x04][u32 capture ms][payload]: the TV measures capture -> screen.
+                                    int plen = l - 5;
+                                    var h = new byte[9];
+                                    h[0] = (byte)((plen + 4) >> 24); h[1] = (byte)((plen + 4) >> 16); h[2] = (byte)((plen + 4) >> 8); h[3] = (byte)(plen + 4);
+                                    h[4] = (byte)(buf[o + 4] | 0x04);
+                                    h[5] = (byte)(cap >> 24); h[6] = (byte)(cap >> 16); h[7] = (byte)(cap >> 8); h[8] = (byte)cap;
+                                    lock (sendLock) { ns.Write(h, 0, 9); ns.Write(buf, o + 5, plen); }
+                                }
+                                else lock (sendLock) ns.Write(buf, o, l);
                                 blockedTicks += Stopwatch.GetTimestamp() - t0;
                                 frames++; bytes += l;
                                 if (window.ElapsedMilliseconds < 1000) return;
@@ -440,7 +482,7 @@ namespace TVScreenPlus
                                     Stats.TargetKbps = kbps;
                                     restart = true; cleanSince.Restart(); st.Dispose();
                                 }
-                            });
+                            }, cursor == null);
                         }
                         catch (IOException) { if (!restart && !modeSwitch) break; }
                         catch (ObjectDisposedException) { if (!restart && !modeSwitch) break; }
@@ -491,14 +533,14 @@ namespace TVScreenPlus
         double MeasureMbps(out double rttMs)
         {
             var sw = Stopwatch.StartNew();
-            Send(0x40, new byte[0]);
+            Send(0x40, PingPayload());
             if (!ack.WaitOne(3000)) throw new Exception("La TV ne répond pas");
             rttMs = sw.Elapsed.TotalMilliseconds;
             var filler = new byte[256 * 1024];
             long sent = 0;
             sw.Restart();
             while (sw.ElapsedMilliseconds < 1000 && sent < (96L << 20)) { Send(0x80, filler); sent += filler.Length + 5; }
-            Send(0x40, new byte[0]);
+            Send(0x40, PingPayload());
             if (!ack.WaitOne(10000)) throw new Exception("Réseau trop lent");
             double secs = Math.Max(0.05, sw.Elapsed.TotalSeconds - rttMs / 2000);
             return Math.Min(800, sent * 8 / secs / 1e6);
@@ -519,7 +561,7 @@ namespace TVScreenPlus
                     try
                     {
                         sw.Restart();
-                        Send(0x40, new byte[0]);
+                        Send(0x40, PingPayload());
                         if (ack.WaitOne(3000)) Stats.AddRtt(sw.Elapsed.TotalMilliseconds);
                         else Stats.AddRtt(3000);
                     }
@@ -548,6 +590,7 @@ namespace TVScreenPlus
                         else if (l.StartsWith("STAT"))
                         {
                             var d = Parse(l);
+                            if (d.ContainsKey("e2e")) Stats.OnTvLatency(Int(d, "e2e", -1), Int(d, "e2emax", -1));
                             Stats.OnTvStats(Int(d, "fps", 0), Int(d, "kbps", 0), Int(d, "drop", 0),
                                             Int(d, "dec", -1), Int(d, "decmax", -1), Int(d, "wait", -1));
                             if (d.ContainsKey("alat")) Stats.OnTvAudio(Int(d, "alat", -1), Int(d, "aund", 0), Int(d, "adrop", 0), Int(d, "ajit", -1));
@@ -630,6 +673,17 @@ namespace TVScreenPlus
         /// delay added to the image, user correction (ms). PcVideoMs = image delay estimated on the PC.</summary>
         public int TvAudioOutMs = -1, TvAudioBufMs = -1, TvAudioExtraMs, TvVideoDelayMs, TvAvOffsetMs, PcVideoMs = -1;
 
+        /// <summary>Measured capture -> screen latency from the TV (avg / max over 2 s, ms; TV picture processing not included),
+        /// and capture -> send on the PC (ms, smoothed).</summary>
+        public int TvE2eMs = -1, TvE2eMaxMs = -1;
+        public double PcCaptureMs = -1;
+        public void OnTvLatency(int avg, int max) { TvE2eMs = avg; TvE2eMaxMs = max; }
+        public void AddPcCapture(long ms)
+        {
+            if (ms < 0 || ms > 2000) return;
+            PcCaptureMs = PcCaptureMs < 0 ? ms : PcCaptureMs * 0.95 + ms * 0.05;
+        }
+
         public void OnTvSync(int outMs, int bufMs, int extraMs, int videoDelayMs, int offsetMs)
         {
             TvAudioOutMs = outMs; TvAudioBufMs = bufMs; TvAudioExtraMs = extraMs; TvVideoDelayMs = videoDelayMs; TvAvOffsetMs = offsetMs;
@@ -654,6 +708,7 @@ namespace TVScreenPlus
                 FormattableString.Invariant($"blocked {Blocked * 100:0}% RTT {RttMs:0.0} ms jitter {Jitter:0.0}"),
                 FormattableString.Invariant($"stability {Stability} | ~{EndToEndMs:0} ms PC->screen"),
                 FormattableString.Invariant($"audio {AudioKbps / 1000:0.0} Mb/s TV buffer {TvAudioMs} ms (target {TvAudioBufMs}) underruns {TvAudioUnderruns} drops {TvAudioDrops} jitter {TvAudioJitter} ms PC skips {AudioSkipped}"),
+                FormattableString.Invariant($"latency: capture->screen {TvE2eMs} ms (max {TvE2eMaxMs}), PC capture->send {PcCaptureMs:0} ms"),
                 FormattableString.Invariant($"sync: sound out {TvAudioOutMs} ms, image delayed {TvVideoDelayMs} ms, sound delayed {TvAudioExtraMs} ms, user {TvAvOffsetMs} ms, PC image {PcVideoMs} ms"));
         }
 
@@ -714,7 +769,8 @@ namespace TVScreenPlus
                 $"\r\n" +
                 $"Latence réseau (A/R)  {RttMs:0.0} ms\r\n" +
                 $"Latence décodage TV   {(TvDecMs >= 0 ? $"{TvDecMs} ms en direct (max {TvDecMaxMs} ms)" : TvLatencyMs >= 0 ? TvLatencyMs + " ms (test matériel)" : "inconnue (mettre à jour l'app TV)")}\r\n" +
-                $"Latence PC → écran    ≈ {EndToEndMs:0} ms (estimation)\r\n" +
+                (TvE2eMs >= 0 ? $"Latence capture → TV  {TvE2eMs} ms mesurés (max {TvE2eMaxMs} ms, PC {PcCaptureMs:0} ms), hors traitement d'image de la TV\r\n"
+                              : $"Latence PC → écran    ≈ {EndToEndMs:0} ms (estimation)\r\n") +
                 $"\r\n" +
                 $"Son sur la TV         {AudioLine}\r\n" +
                 $"Manettes              {Pads}\r\n" +

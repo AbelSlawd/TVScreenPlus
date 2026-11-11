@@ -1,8 +1,11 @@
 package com.tvscreenplus
 
+import android.graphics.Bitmap
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.Process
 import android.util.Log
 import android.view.Surface
@@ -38,6 +41,10 @@ class StreamClient(
         fun onEnded(error: String?)
         /** Network thread: a PC game set the rumble motors of the gamepad in this slot. */
         fun onRumble(slot: Int, large: Int, small: Int) {}
+        /** Cursor drawn by the TV (the PC leaves it out of the video): new shape, hotspot in bitmap pixels. */
+        fun onCursorShape(bitmap: Bitmap, hotX: Int, hotY: Int) {}
+        /** Cursor position in stream pixels (stream size given), or hidden. Called often, from network threads. */
+        fun onCursorMove(x: Int, y: Int, visible: Boolean, streamW: Int, streamH: Int) {}
     }
 
     @Volatile private var running = true
@@ -86,7 +93,83 @@ class StreamClient(
     @Volatile var videoDelayMs = 0
         private set
     @Volatile private var appliedDelayNs = 0L
-    private class VFrame(val data: ByteArray, val key: Boolean, val arrival: Long)
+    private class VFrame(val data: ByteArray, val key: Boolean, val arrival: Long, val cap: Long)
+
+    // ---- Measured latency (PC clock = ms since 1970 mod 2^31, from pings, frames and sound packets) ----
+    /** TV time (nanoTime ms) minus PC time, from the fastest recent pings: one-way network time included (< 1 ms on a LAN). */
+    @Volatile private var clockOffset = Long.MIN_VALUE
+    private val offsetSamples = ArrayDeque<Long>()
+    private val e2eLock = Any()
+    private var e2eSum = 0L
+    private var e2eCount = 0
+    private var e2eMax = 0L
+    /** Smoothed capture -> screen delay of the image (ms, video delay line included), -1 = unknown. */
+    @Volatile private var e2eAvg = -1.0
+    /** Smoothed capture -> arrival delay of the sound packets (ms), -1 = unknown. */
+    @Volatile private var audioTransit = -1.0
+    /** How much the PC's own sound output lags its loopback capture (the player syncs its video to that output). */
+    @Volatile private var pcPlaybackMs = 15
+    private val capMap = LinkedHashMap<Long, Long>()
+    private var renderThread: HandlerThread? = null
+    @Volatile private var streamW = 1920
+    @Volatile private var streamH = 1080
+
+    /** Ping from the PC carrying its clock: keep the smallest TV - PC difference of the last 30 s. */
+    private fun clockSample(pc: Long) {
+        val d = System.nanoTime() / 1_000_000 - pc
+        synchronized(offsetSamples) {
+            val ref = if (clockOffset == Long.MIN_VALUE) d else clockOffset
+            offsetSamples.addLast(ref + wrap31(d - ref))
+            while (offsetSamples.size > 30) offsetSamples.removeFirst()
+            clockOffset = offsetSamples.minOrNull() ?: d
+        }
+    }
+
+    /** PC time -> TV time (ms); null until the first ping. */
+    private fun ageMs(pcTime: Long, tvNowMs: Long): Long? {
+        val off = clockOffset
+        if (off == Long.MIN_VALUE) return null
+        return wrap31(tvNowMs - off - pcTime)
+    }
+
+    /** A frame reached the screen (TV compositor timestamp). */
+    private fun onRendered(ptsUs: Long, nanoTime: Long) {
+        val cap = synchronized(capMap) { capMap.remove(ptsUs) } ?: return
+        val e2e = ageMs(cap, nanoTime / 1_000_000) ?: return
+        if (e2e !in 0L..2000L) return
+        synchronized(e2eLock) { e2eSum += e2e; e2eCount++; e2eMax = maxOf(e2eMax, e2e) }
+        e2eAvg = if (e2eAvg < 0) e2e.toDouble() else e2eAvg * 0.95 + e2e * 0.05
+    }
+
+    /** Sound packet [1][fmt][ch][0][u32 rate][u32 PC capture ms]…: measure capture -> arrival, then play it. */
+    private fun audioPacket(b: ByteArray, len: Int) {
+        if (len > 12) ageMs(u32(b, 8), System.nanoTime() / 1_000_000)?.let { t ->
+            if (t in 0L..1000L) audioTransit = if (audioTransit < 0) t.toDouble() else audioTransit * 0.95 + t * 0.05
+        }
+        player().offer(b, len)
+    }
+
+    /** Cursor packets: 3 = position [3][visible][u16 x][u16 y][u32 PC ms], 4 = shape [4][u16 w][u16 h][u16 hx][u16 hy][BGRA]. */
+    private fun cursorPacket(b: ByteArray, len: Int) {
+        if (!cursorOn) return
+        if (b[0].toInt() == 3 && len >= 6) {
+            listener.onCursorMove(u16(b, 2), u16(b, 4), b[1].toInt() and 1 != 0, streamW, streamH)
+        } else if (b[0].toInt() == 4 && len >= 9) {
+            val w = u16(b, 1); val h = u16(b, 3)
+            if (w !in 1..256 || h !in 1..256 || len < 9 + w * h * 4) return
+            val px = IntArray(w * h)
+            var o = 9
+            for (i in px.indices) {
+                px[i] = ((b[o + 3].toInt() and 0xFF) shl 24) or ((b[o + 2].toInt() and 0xFF) shl 16) or
+                    ((b[o + 1].toInt() and 0xFF) shl 8) or (b[o].toInt() and 0xFF)
+                o += 4
+            }
+            listener.onCursorShape(Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888), u16(b, 5), u16(b, 7))
+        }
+    }
+
+    /** The PC leaves the cursor out of the video and sends it separately (cursor=1 in its config). */
+    @Volatile private var cursorOn = false
     private val vq = ArrayDeque<VFrame>()
     private val vLock = java.lang.Object()
     private var feeding = false
@@ -155,12 +238,14 @@ class StreamClient(
             val s = Socket()
             socket = s
             s.tcpNoDelay = true
-            s.receiveBufferSize = 4 shl 20
+            s.receiveBufferSize = 512 shl 10 // ~80 ms at 50 Mb/s: a stalled decoder can't hide seconds of video
             s.connect(InetSocketAddress(host, PORT), 4000)
             out = s.getOutputStream()
             Thread({ feedLoop() }, "video-delay").start()
             val port = startUdp()
-            send(if (port > 0) "$hello;audioudp=$port" else hello)
+            renderThread = HandlerThread("frame-rendered").apply { start() }
+            // ts=1: frames carry their capture time; cursor=1: we draw the cursor.
+            send((if (port > 0) "$hello;audioudp=$port" else hello) + ";ts=1;cursor=1")
             diagnostics.forEach { log(it) }
             val input = DataInputStream(BufferedInputStream(s.getInputStream(), 256 shl 10))
             startStats()
@@ -181,11 +266,18 @@ class StreamClient(
                 bytesWindow += len + 5
                 when {
                     flags and 0x80 != 0 -> {}                                   // bandwidth test filler
-                    flags and 0x40 != 0 -> send("ACK")
+                    flags and 0x40 != 0 -> { if (len >= 4) clockSample(u32(buf, 0)); send("ACK") }
                     flags and 0x20 != 0 -> configure(parse(String(buf, 0, len)))
                     flags and 0x10 != 0 -> String(buf, 0, len, Charsets.UTF_8).let { listener.onStatus(it) }
                     flags and 0x08 != 0 -> extension(buf, len)
-                    else -> video(buf, len, flags and 1 != 0)
+                    else -> {
+                        // 0x04: the payload starts with the frame's capture time (PC clock).
+                        if (flags and 0x04 != 0 && len > 4) {
+                            val cap = u32(buf, 0)
+                            System.arraycopy(buf, 4, buf, 0, len - 4)
+                            video(buf, len - 4, flags and 1 != 0, cap)
+                        } else video(buf, len, flags and 1 != 0, -1)
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -195,6 +287,8 @@ class StreamClient(
             running = false
             try { socket?.close() } catch (_: Exception) {}
             upstreamThread.shutdownNow()
+            try { renderThread?.quitSafely() } catch (_: Exception) {}
+            listener.onCursorMove(0, 0, false, streamW, streamH)
             decoder?.release()
             audio?.release()
             audio = null
@@ -209,15 +303,15 @@ class StreamClient(
      * then the compressed frame waits in [vq] (cheap: no decoder buffer is held) and the feeder thread
      * hands it over when due. The delay moves by at most 2 ms per frame, so changes are invisible.
      */
-    private fun video(buf: ByteArray, len: Int, key: Boolean) {
+    private fun video(buf: ByteArray, len: Int, key: Boolean, cap: Long) {
         synchronized(vLock) {
             if (videoDelayMs > 0 || appliedDelayNs > 0 || vq.isNotEmpty() || feeding) {
-                vq.addLast(VFrame(buf.copyOf(len), key, System.nanoTime()))
+                vq.addLast(VFrame(buf.copyOf(len), key, System.nanoTime(), cap))
                 vLock.notifyAll()
                 return
             }
         }
-        decoder?.feed(buf, len, key)
+        decoder?.feed(buf, len, key, cap)
     }
 
     private fun feedLoop() {
@@ -238,7 +332,7 @@ class StreamClient(
                 }
                 vq.removeFirst()
             } ?: continue
-            try { decoder?.feed(f.data, f.data.size, f.key) } catch (_: Exception) {} // decoder replaced meanwhile
+            try { decoder?.feed(f.data, f.data.size, f.key, f.cap) } catch (_: Exception) {} // decoder replaced meanwhile
             synchronized(vLock) { feeding = false }
         }
     }
@@ -265,7 +359,11 @@ class StreamClient(
                 while (running) {
                     pk.length = b.size // receive() shrinks it to the last datagram's size
                     u.receive(pk)
-                    if (pk.length > 12 && b[0].toInt() == 1 && audioOn && running) player().offer(b, pk.length)
+                    if (!running) break
+                    when (b[0].toInt()) {
+                        1 -> if (pk.length > 12 && audioOn) audioPacket(b, pk.length)
+                        3 -> cursorPacket(b, pk.length)
+                    }
                 }
             } catch (_: Exception) {}
         }, "audio-udp").start()
@@ -277,10 +375,21 @@ class StreamClient(
         val a = audio ?: return
         val out = a.outputMs
         if (out < 0) return
-        val pcVideo = pcVideoMs.coerceAtLeast(0)
-        val imageMs = pcVideo + (decAvgUs / 1000).toInt() + frameMs
-        val soundMs = pcAudioMs + (out - a.extraDelayMs).coerceAtLeast(0)
-        val late = soundMs - imageMs - userOffsetMs // > 0: sound behind the image
+        val late: Int
+        val e2e = e2eAvg; val transit = audioTransit
+        if (e2e >= 0 && transit >= 0) {
+            // Measured: capture -> screen for the image (without our own delay line), capture -> speaker for the
+            // sound (without our extra delay). The sound captured pcPlaybackMs before a frame belongs to it.
+            val imageMs = e2e - appliedDelayNs / 1_000_000.0
+            val soundMs = transit + (out - a.extraDelayMs).coerceAtLeast(0)
+            late = (soundMs - pcPlaybackMs - imageMs).toInt() - userOffsetMs
+        } else {
+            // Older PC: estimates (PC delays from its config).
+            val pcVideo = pcVideoMs.coerceAtLeast(0)
+            val imageMs = pcVideo + (decAvgUs / 1000).toInt() + frameMs
+            val soundMs = pcAudioMs + (out - a.extraDelayMs).coerceAtLeast(0)
+            late = soundMs - imageMs - userOffsetMs // > 0: sound behind the image
+        }
         val newVideo = if (syncImage) late.coerceIn(0, 250) else 0
         val newExtra = (-late).coerceIn(0, 200)
         if (Math.abs(newVideo - videoDelayMs) >= 4) videoDelayMs = newVideo
@@ -291,7 +400,8 @@ class StreamClient(
     private fun extension(b: ByteArray, len: Int) {
         if (len < 1) return
         when (b[0].toInt()) {
-            1 -> if (audioOn) player().offer(b, len)
+            1 -> if (audioOn) audioPacket(b, len)
+            3, 4 -> cursorPacket(b, len)
             2 -> if (len >= 4) listener.onRumble(b[1].toInt() and 0xFF, b[2].toInt() and 0xFF, b[3].toInt() and 0xFF)
         }
     }
@@ -315,6 +425,10 @@ class StreamClient(
         modeSupported = c.containsKey("mode")
         gameMode = c["mode"] == "game"
         frameMs = 1000 / (c["fps"]?.toIntOrNull()?.coerceIn(10, 240) ?: 60)
+        streamW = w; streamH = h
+        cursorOn = c["cursor"] == "1"
+        pcPlaybackMs = c["lpc"]?.toIntOrNull() ?: 15
+        if (!cursorOn) listener.onCursorMove(0, 0, false, w, h)
         synchronized(vLock) { vq.clear() } // frames of the previous stream must not reach the new decoder
         pads = c["pads"] == "1"
         listener.onStarted(info)
@@ -338,7 +452,12 @@ class StreamClient(
                 r
             }
             val a = (audio?.stats() ?: "") + ";vdel=$appliedVideoDelayMs;avoff=$userOffsetMs"
-            if (decoder != null) try { send("STAT;fps=$fps;kbps=$kbps;drop=$dropped;dec=$dec;decmax=$decMax;wait=$wait$a") } catch (_: Exception) {}
+            val e = synchronized(e2eLock) {
+                val r = if (e2eCount > 0) ";e2e=${e2eSum / e2eCount};e2emax=$e2eMax" else ""
+                e2eSum = 0; e2eCount = 0; e2eMax = 0
+                r
+            }
+            if (decoder != null) try { send("STAT;fps=$fps;kbps=$kbps;drop=$dropped;dec=$dec;decmax=$decMax;wait=$wait$a$e") } catch (_: Exception) {}
         }
     }, "stats").start()
 
@@ -348,8 +467,18 @@ class StreamClient(
         private val codec = Codecs.lowLatencyDecoder(mime, w, h, surface)
         private val render = Thread({ drain() }, "render").apply { start() }
         private var gotKey = false
+        private var cap = -1L
 
-        fun feed(buf: ByteArray, len: Int, key: Boolean) {
+        init {
+            // When each frame really reaches the screen (Android 6+): measured capture -> screen latency.
+            if (Build.VERSION.SDK_INT >= 23) try {
+                val l = renderThread?.looper
+                if (l != null) codec.setOnFrameRenderedListener({ _, ptsUs, nano -> onRendered(ptsUs, nano) }, Handler(l))
+            } catch (_: Exception) {}
+        }
+
+        fun feed(buf: ByteArray, len: Int, key: Boolean, captureMs: Long) {
+            cap = captureMs
             if (!gotKey) {
                 if (!key) return
                 gotKey = true
@@ -374,7 +503,13 @@ class StreamClient(
             b.clear()
             if (len > b.capacity()) { codec.queueInputBuffer(idx, 0, 0, 0, 0); dropped++; return }
             b.put(data, off, len)
-            codec.queueInputBuffer(idx, 0, len, System.nanoTime() / 1000, flags)
+            val pts = System.nanoTime() / 1000
+            codec.queueInputBuffer(idx, 0, len, pts, flags)
+            if (cap >= 0 && flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) synchronized(capMap) {
+                capMap[pts] = cap
+                if (capMap.size > 120) capMap.remove(capMap.keys.first())
+                Unit
+            }
         }
 
         /** Render every decoded frame immediately; SurfaceFlinger keeps only the newest per vsync. */
@@ -417,6 +552,12 @@ class StreamClient(
     }
 
     companion object {
+        /** 31-bit clock difference as a small signed number (the PC clock wraps every 24.8 days). */
+        fun wrap31(x: Long): Long { val v = x and 0x7FFFFFFF; return if (v >= 0x40000000) v - 0x80000000L else v }
+        fun u32(b: ByteArray, o: Int): Long =
+            ((b[o].toLong() and 0xFF) shl 24) or ((b[o + 1].toLong() and 0xFF) shl 16) or ((b[o + 2].toLong() and 0xFF) shl 8) or (b[o + 3].toLong() and 0xFF)
+        fun u16(b: ByteArray, o: Int): Int = ((b[o].toInt() and 0xFF) shl 8) or (b[o + 1].toInt() and 0xFF)
+
         const val TAG = "TVScreenPlus"
         const val PORT = 47800
 
