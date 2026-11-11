@@ -151,8 +151,10 @@ namespace TVScreenPlus
         /// </summary>
         public void Run(EncodePlan plan, DisplayTarget t, int kbps, Action<byte[], int, int> onFrame)
         {
+            // -fps_mode passthrough: ddagrab sometimes stamps two frames with the same time; FLV's default (vfr)
+            // drops those, losing 3-5 fps (measured 55.5 -> 60.1 fps at 4K). The TV ignores timestamps anyway.
             string args = plan.Enc.CommandLine(t, plan.Fps, kbps, plan.Quality,
-                "-bsf:v dump_extra=freq=keyframe -flush_packets 1 -f flv -flvflags no_duration_filesize pipe:1");
+                "-fps_mode passthrough -bsf:v dump_extra=freq=keyframe -flush_packets 1 -f flv -flvflags no_duration_filesize pipe:1");
             Log.W("ffmpeg " + args);
             var psi = new ProcessStartInfo(Setup.FFmpeg, args)
             { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
