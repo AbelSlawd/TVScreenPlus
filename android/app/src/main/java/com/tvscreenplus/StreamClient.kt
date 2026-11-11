@@ -11,14 +11,17 @@ import java.io.DataInputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.Executors
 
 /**
  * Connects to a PC, receives [u32 len][u8 flags][payload] packets and decodes the video with the
  * hardware decoder straight onto the Surface (zero copy, low-latency mode).
  * flags: 0x80 filler (bandwidth test), 0x40 ping (answer "ACK"), 0x20 config, 0x10 status text,
- * otherwise an Annex-B access unit (1 = keyframe).
- * Upstream: "ACK", "STAT;fps=;kbps=;drop=;dec=;decmax=;wait=" every 2 s, and "LOG;<text>" lines that the
- * PC writes to its log (diagnostics, decoder in use, errors).
+ * 0x08 extension (payload[0]: 1 = PC sound, 2 = gamepad rumble; only sent when the hello announced
+ * audio=1 / pads=1), otherwise an Annex-B access unit (1 = keyframe).
+ * Upstream: "ACK", "STAT;fps=;kbps=;drop=;dec=;decmax=;wait=[;alat=;aund=;adrop=;ajit=]" every 2 s,
+ * "LOG;<text>" lines that the PC writes to its log (diagnostics, decoder in use, errors),
+ * and "PADON / PADOFF / PAD" gamepad lines (see Gamepads).
  */
 class StreamClient(
     private val host: String,
@@ -31,12 +34,24 @@ class StreamClient(
         fun onStatus(text: String)
         fun onStarted(info: String)
         fun onEnded(error: String?)
+        /** Network thread: a PC game set the rumble motors of the gamepad in this slot. */
+        fun onRumble(slot: Int, large: Int, small: Int) {}
     }
 
     @Volatile private var running = true
     private var socket: Socket? = null
     private var out: OutputStream? = null
     @Volatile private var decoder: Decoder? = null
+    /** The PC accepted our gamepads / plays its sound here (from its config packet). */
+    @Volatile var pads = false
+    @Volatile var audioOn = false
+    @Volatile private var audio: AudioPlayer? = null
+    /** Upstream writes from the UI thread (gamepads) must not touch the socket there. */
+    private val upstreamThread = Executors.newSingleThreadExecutor()
+    private val padLines = arrayOfNulls<String>(Gamepads.MAX)
+    private var padFlushQueued = false
+    /** Delay of the TV audio buffer (ms), -1 when no sound is playing. */
+    val audioLatencyMs: Int get() = audio?.latencyMs ?: -1
 
     // Live statistics (overlay + reports to the PC).
     @Volatile var info = ""
@@ -67,6 +82,32 @@ class StreamClient(
 
     /** Line for the PC log (single line, short). */
     private fun log(text: String) = try { send("LOG;" + text.replace('\n', ' ').take(900)) } catch (_: Exception) {}
+
+    /** Any thread: send a line from the upstream thread, in order. */
+    fun post(line: String) = upstream { send(line) }
+
+    /** Any thread: latest state of a gamepad; states not yet sent are replaced (never a backlog of stale input). */
+    fun padState(slot: Int, line: String) {
+        synchronized(padLines) {
+            padLines[slot] = line
+            if (padFlushQueued) return
+            padFlushQueued = true
+        }
+        upstream {
+            val lines = synchronized(padLines) {
+                padFlushQueued = false
+                val l = padLines.filterNotNull()
+                padLines.fill(null)
+                l
+            }
+            if (lines.isNotEmpty()) send(lines.joinToString("\n")) // one write for all pads
+        }
+    }
+
+    private fun upstream(task: () -> Unit) {
+        if (!running) return
+        try { upstreamThread.execute { try { task() } catch (_: Exception) {} } } catch (_: Exception) {} // rejected after shutdown
+    }
 
     private fun run() {
         boost()
@@ -102,6 +143,7 @@ class StreamClient(
                     flags and 0x40 != 0 -> send("ACK")
                     flags and 0x20 != 0 -> configure(parse(String(buf, 0, len)))
                     flags and 0x10 != 0 -> String(buf, 0, len, Charsets.UTF_8).let { listener.onStatus(it) }
+                    flags and 0x08 != 0 -> extension(buf, len)
                     else -> decoder?.feed(buf, len, flags and 1 != 0)
                 }
             }
@@ -111,8 +153,20 @@ class StreamClient(
         } finally {
             running = false
             try { socket?.close() } catch (_: Exception) {}
+            upstreamThread.shutdownNow()
             decoder?.release()
+            audio?.release()
+            audio = null
             listener.onEnded(error)
+        }
+    }
+
+    /** Flag 0x08 packets: payload[0] = 1 PC sound, 2 gamepad rumble [slot][large motor][small motor]. */
+    private fun extension(b: ByteArray, len: Int) {
+        if (len < 1) return
+        when (b[0].toInt()) {
+            1 -> if (audioOn) (audio ?: AudioPlayer { log(it) }.also { audio = it }).offer(b, len)
+            2 -> if (len >= 4) listener.onRumble(b[1].toInt() and 0xFF, b[2].toInt() and 0xFF, b[3].toInt() and 0xFF)
         }
     }
 
@@ -127,6 +181,9 @@ class StreamClient(
         log("decoder ${Codecs.lastDecoder}")
         val rate = c["kbps"]?.toIntOrNull()?.let { " · ${L.t("target")} %.1f Mb/s".format(it / 1000.0) } ?: ""
         info = "${w}x$h ${c["fps"] ?: "60"} i/s ${if (hevc) "HEVC" else "H.264"}$rate · ${c["enc"] ?: ""}"
+        // Older PC versions don't send these keys: no sound, gamepads keep driving the TV.
+        audioOn = c["audio"] == "1"
+        pads = c["pads"] == "1"
         listener.onStarted(info)
     }
 
@@ -144,7 +201,8 @@ class StreamClient(
                 decSumUs = 0; decCount = 0; decMaxUs = 0; waitNs = 0
                 r
             }
-            if (decoder != null) try { send("STAT;fps=$fps;kbps=$kbps;drop=$dropped;dec=$dec;decmax=$decMax;wait=$wait") } catch (_: Exception) {}
+            val a = audio?.stats() ?: ""
+            if (decoder != null) try { send("STAT;fps=$fps;kbps=$kbps;drop=$dropped;dec=$dec;decmax=$decMax;wait=$wait$a") } catch (_: Exception) {}
         }
     }, "stats").start()
 

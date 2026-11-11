@@ -26,7 +26,7 @@ namespace TVScreenPlus
             FormBorderStyle = FormBorderStyle.SizableToolWindow;
             StartPosition = FormStartPosition.Manual;
             var wa = Screen.PrimaryScreen.WorkingArea;
-            Size = new Size(620, 470);
+            Size = new Size(680, 560);
             Location = new Point(wa.Right - Width - 16, wa.Bottom - Height - 16);
             TopMost = true;
             BackColor = Color.FromArgb(18, 24, 32);

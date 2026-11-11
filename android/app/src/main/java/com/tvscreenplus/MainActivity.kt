@@ -16,6 +16,7 @@ import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -47,6 +48,8 @@ class MainActivity : Activity() {
     private var inSettings = false
     private var surfaceReady = false
     @Volatile private var client: StreamClient? = null
+    /** Gamepads forwarded to the PC while streaming (null when the PC doesn't take them). */
+    @Volatile private var gamepads: Gamepads? = null
     private var autoConnect = true
     @Volatile private var discovering = false
     private var wifiLock: WifiManager.WifiLock? = null
@@ -195,6 +198,11 @@ class MainActivity : Activity() {
         toggle(L.t("autoconnect"), "autoconnect", true) { autoConnect = it }
         toggle(L.t("showstats"), "showstats", false)
 
+        section(L.t("audio_pads"))
+        toggle(L.t("audio"), "audio", true)
+        toggle(L.t("pads"), "pads", true)
+        note(L.t("pads_note"))
+
         section(L.t("hwtest"))
         val testNote = note(hwSummary())
         val testBtn = button(L.t("hwtest_run")) {}
@@ -287,7 +295,10 @@ class MainActivity : Activity() {
         override fun run() {
             val c = client
             if (c != null && stats.visibility == View.VISIBLE) {
-                stats.text = c.info + "\n" + L.t("stats", c.kbps / 1000.0, c.fps, c.dropped)
+                val alat = c.audioLatencyMs
+                val extra = (if (alat >= 0) "\n" + L.t("stats_audio", alat) else "") +
+                    (gamepads?.count?.takeIf { it > 0 }?.let { "\n" + L.t("stats_pads", it) } ?: "")
+                stats.text = c.info + "\n" + L.t("stats", c.kbps / 1000.0, c.fps, c.dropped) + extra
                 ui.postDelayed(this, 1000)
             }
         }
@@ -398,7 +409,8 @@ class MainActivity : Activity() {
         val (net, band, link) = network()
         return "TVSP1;v=2;app=$versionCode;lang=${L.lang};name=${Build.MODEL.replace(';', ' ')};w=$w;h=$h;hz=${refreshHz()}" +
             ";hevc=$hevc;avc=$avc;tested=${if (tested) 1 else 0};lat=${prefs.getInt("hw_lat", -1)}" +
-            ";net=$net;band=$band;link=$link;pref=${prefs.getString("pref", "auto")};maxh=${prefs.getString("maxh", "0")}"
+            ";net=$net;band=$band;link=$link;pref=${prefs.getString("pref", "auto")};maxh=${prefs.getString("maxh", "0")}" +
+            ";audio=${if (prefs.getBoolean("audio", true)) 1 else 0};pads=${if (prefs.getBoolean("pads", true)) 1 else 0}"
     }
 
     /** Diagnostic lines written to the PC log on every connection (no ADB needed to see what the TV does). */
@@ -441,14 +453,21 @@ class MainActivity : Activity() {
                     acquireWifiLock()
                     if (Build.VERSION.SDK_INT >= 30) try { surfaceView.holder.surface.setFrameRate(hz.toFloat(), android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) } catch (_: Exception) {}
                     if (prefs.getBoolean("showstats", false)) { stats.visibility = View.VISIBLE; ui.removeCallbacks(statsTick); statsTick.run() }
+                    // Gamepads go to the PC only if it takes them (older PC versions: they keep driving the TV).
+                    if (c.pads && gamepads == null) gamepads = Gamepads(this@MainActivity, c).also { it.start() }
                     android.util.Log.i(StreamClient.TAG, "streaming $info from $name")
                 }
+            }
+
+            override fun onRumble(slot: Int, large: Int, small: Int) {
+                if (client === c) gamepads?.rumble(slot, large, small)
             }
 
             override fun onEnded(error: String?) {
                 ui.post {
                     if (client !== c) return@post
                     client = null
+                    stopGamepads()
                     releaseWifiLock()
                     stats.visibility = View.GONE
                     overlay.visibility = View.VISIBLE
@@ -465,11 +484,27 @@ class MainActivity : Activity() {
     private fun disconnect(reason: String?) {
         val c = client ?: return
         client = null
+        stopGamepads()
         c.stop()
         releaseWifiLock()
         stats.visibility = View.GONE
         overlay.visibility = View.VISIBLE
         setStatus(reason ?: L.t("disconnected"))
+    }
+
+    private fun stopGamepads() { gamepads?.stop(); gamepads = null }
+
+    /** While streaming, gamepad input goes to the PC first; the remote keeps its keys (Back, OK, Menu). */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val g = gamepads
+        if (g != null && client != null && overlay.visibility == View.GONE && g.onKey(event)) return true
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        val g = gamepads
+        if (g != null && client != null && overlay.visibility == View.GONE && g.onMotion(event)) return true
+        return super.dispatchGenericMotionEvent(event)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
