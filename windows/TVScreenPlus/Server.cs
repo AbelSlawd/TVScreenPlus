@@ -378,7 +378,18 @@ namespace TVScreenPlus
                 {
                     if (target.Height != heights[i]) target = VirtualDisplay.Resize(target, W(heights[i]), heights[i], fps);
                     TvStatus("calib", heights[i]);
-                    plan = Streamer.Calibrate(enc, target, i == heights.Count - 1 ? new[] { fps, 30 } : new[] { fps });
+                    var fpsChoices = i == heights.Count - 1 ? new[] { fps, 30 } : new[] { fps };
+                    plan = Streamer.Calibrate(enc, target, fpsChoices);
+                    if (plan == null && enc.Native)
+                    {
+                        // The in-house encoder works but too slowly here: ffmpeg at this same resolution before
+                        // going lower (a lower resolution is a worse fallback than the 1.0 encoder). The slow result
+                        // is cached, so later connections switch at once.
+                        var ff = Streamer.Pick(target, hevcTv, false);
+                        Log.W($"In-house encoder too slow at {target.Width}x{target.Height}: trying {ff.Name}");
+                        enc = ff;
+                        plan = Streamer.Calibrate(enc, target, fpsChoices);
+                    }
                 }
                 if (plan == null) plan = new EncodePlan { Enc = enc, Quality = false, Fps = 30 };
                 bool hevc = enc.Codec == "hevc";
