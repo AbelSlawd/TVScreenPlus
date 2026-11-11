@@ -73,5 +73,11 @@ object L {
         "corrupt" to arrayOf("Flux corrompu", "Corrupted stream", "Flujo dañado", "Beschädigter Datenstrom"),
         "no_decoder" to arrayOf("Décodeur vidéo indisponible", "Video decoder unavailable", "Decodificador de vídeo no disponible", "Videodecoder nicht verfügbar"),
         "target" to arrayOf("cible", "target", "objetivo", "Ziel"),
+        "audio_pads" to arrayOf("Son et manettes", "Sound and gamepads", "Sonido y mandos", "Ton und Controller"),
+        "audio" to arrayOf("Son de l'ordinateur sur la TV", "Computer sound on the TV", "Sonido del ordenador en el TV", "Computerton auf dem TV"),
+        "pads" to arrayOf("Manettes de la TV utilisées par l'ordinateur", "TV gamepads used by the computer", "Mandos del TV usados por el ordenador", "TV-Controller vom Computer verwendet"),
+        "pads_note" to arrayOf("Les manettes Bluetooth ou USB connectées à la TV apparaissent sur l'ordinateur comme des manettes Xbox (4 au maximum), vibrations comprises. La télécommande garde ses touches : Retour = déconnecter.", "Bluetooth or USB gamepads connected to the TV appear on the computer as Xbox controllers (up to 4), rumble included. The remote keeps its keys: Back = disconnect.", "Los mandos Bluetooth o USB conectados al TV aparecen en el ordenador como mandos Xbox (4 como máximo), vibración incluida. El mando a distancia conserva sus teclas: Atrás = desconectar.", "Bluetooth- oder USB-Controller am TV erscheinen auf dem Computer als Xbox-Controller (maximal 4), inklusive Vibration. Die Fernbedienung behält ihre Tasten: Zurück = trennen."),
+        "stats_audio" to arrayOf("Son : tampon %d ms", "Sound: %d ms buffer", "Sonido: búfer de %d ms", "Ton: Puffer %d ms"),
+        "stats_pads" to arrayOf("Manettes : %d", "Gamepads: %d", "Mandos: %d", "Controller: %d"),
     )
 }
