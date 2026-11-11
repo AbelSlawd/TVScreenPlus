@@ -40,6 +40,7 @@ namespace TVScreenPlus
             int kbps = args.Length > 3 && int.TryParse(args[3], out int k) ? k : 40000;
             if (args.Length > 4 && uint.TryParse(args[4], out uint q)) MfEncoder.QualityVsSpeed = q;
             if (args.Contains("noflush")) DesktopCapture.FlushAfterConvert = false;
+            if (args.Contains("coarse")) NativeSession.FineTimer = false;
             foreach (var a in args)
             {
                 if (a.StartsWith("prio=")) int.TryParse(a.Substring(5), out DesktopCapture.GpuPriorityLevel);

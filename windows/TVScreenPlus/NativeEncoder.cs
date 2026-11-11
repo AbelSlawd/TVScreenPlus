@@ -51,7 +51,8 @@ namespace TVScreenPlus
         {
             var x = new Variant { vt = (ushort)(asBool ? 11 : 19), v = asBool ? (v != 0 ? 0xFFFFUL : 0) : v };
             int hr = C(codecApi, 9, (nint)(&k), (nint)(&x));
-            if (hr < 0) CodecErrors += $" {k.ToString().Substring(0, 8)}={hr:X8}";
+            string e = $" {k.ToString().Substring(0, 8)}={hr:X8}";
+            if (hr < 0 && !CodecErrors.Contains(e)) CodecErrors += e;
             return hr;
         }
         /// <summary>ICodecAPI values the encoder refused (diagnostics).</summary>
@@ -81,6 +82,8 @@ namespace TVScreenPlus
         [DllImport("mfplat.dll")]
         public static extern int MFTEnum2(Guid category, uint flags, RegType* input, RegType* output, void* attrs, void*** activates, uint* count);
         [DllImport("kernel32.dll")] public static extern void GetSystemTimePreciseAsFileTime(out long fileTime);
+        [DllImport("winmm.dll")] public static extern int timeBeginPeriod(uint ms);
+        [DllImport("winmm.dll")] public static extern int timeEndPeriod(uint ms);
 
         [StructLayout(LayoutKind.Sequential)] public struct RegType { public Guid Major, Sub; }
 
@@ -626,6 +629,7 @@ namespace TVScreenPlus
         volatile int newKbps;
         Exception error;
         public int NewFrames, Repeats, Dropped;
+        public static bool FineTimer = true;
 
         /// <summary>(buffer, Annex-B length at offset 5, keyframe, acquired QPC, submitted QPC, new image?)</summary>
         public Action<byte[], int, bool, long, long, bool> OnPacket;
@@ -633,9 +637,12 @@ namespace TVScreenPlus
         public NativeSession(int adapter, int output, bool hevc, int fps, int kbps, uint? qualityVsSpeed = null)
         {
             Native.CoInitializeEx(0, 0); // MTA (already-initialised threads just keep their apartment)
+            // AcquireNextFrame's timeout is rounded to the system timer tick (15.6 ms by default): the repeated
+            // images of a still desktop then came late (measured 46-55 fps instead of 60). ffmpeg does the same.
+            if (FineTimer) Native.timeBeginPeriod(1);
             Cap = new DesktopCapture(adapter, output);
             try { Enc = new MfEncoder(Cap, hevc, fps, kbps, fps * 120, qualityVsSpeed); }
-            catch { Cap.Dispose(); throw; }
+            catch { Cap.Dispose(); if (FineTimer) Native.timeEndPeriod(1); throw; }
             this.fps = fps;
             Enc.OnOutput = (b, len, key, t) =>
             {
@@ -649,29 +656,42 @@ namespace TVScreenPlus
         public void ForceKeyFrame() => keyRequested = true;
         public void Stop() => stop = true;
 
-        /// <summary>Runs until Stop(), the deadline (QPC) or an error (thrown).</summary>
+        /// <summary>
+        /// Runs until Stop(), the deadline (QPC) or an error (thrown). Time is cut into slots of one frame period,
+        /// each sending exactly one image: a new image goes out the moment it is captured if its slot is still
+        /// free (otherwise at the start of the next slot); a slot that ends without one sends the last image again.
+        /// </summary>
         public void Run(long untilQpc = long.MaxValue)
         {
             long freq = Stopwatch.Frequency, period = freq / fps;
             int periodMs = (int)Math.Max(1, period * 1000 / freq);
-            long start = Stopwatch.GetTimestamp();
+            long start = Stopwatch.GetTimestamp(), slotEnd = start + period;
             int slot = 0;
-            bool have = false, held = false;
-            long lastReal = 0, lastAny = 0, heldAcq = 0;
+            bool have = false, held = false, used = false;
+            long heldAcq = 0;
             while (!stop && Stopwatch.GetTimestamp() < untilQpc)
             {
                 long now = Stopwatch.GetTimestamp();
-                int wait = !have ? 100 : (int)Math.Max(0, (lastAny + period - now) * 1000 / freq);
+                int wait = (int)Math.Max(0, (slotEnd - now) * 1000 / freq);
                 int writeSlot = held ? slot : (slot + 1) % Cap.RingSize;
-                if (Cap.Next(wait, writeSlot, out long acq, out _))
+                bool got = Cap.Next(wait, writeSlot, out long acq, out _);
+                if (got)
                 {
                     slot = writeSlot; held = true; heldAcq = acq; have = true;
                     NewFrames++;
                 }
                 now = Stopwatch.GetTimestamp();
-                bool due = now >= lastAny + period;
-                bool fresh = held && (now - lastReal >= period * 85 / 100 || due);
-                if (!fresh && !(have && due)) continue;
+                bool send = false, fresh = false;
+                if (now >= slotEnd)
+                {
+                    bool repeat = !used && !held && have;     // the slot that just ended sent nothing
+                    slotEnd = now - slotEnd > period ? now + period : slotEnd + period; // resync after a stall
+                    used = false;
+                    if (held) { send = fresh = true; used = true; } // image held back: it opens the new slot
+                    else if (repeat) send = true;                   // belongs to the past slot: new one stays free
+                }
+                else if (held && !used) { send = fresh = true; used = true; }
+                if (!send) continue;
                 if (!Enc.WaitInput(periodMs)) { Dropped++; held = false; continue; }
                 int k = newKbps;
                 if (k != 0) { newKbps = 0; Enc.SetBitrate(k); }
@@ -680,8 +700,7 @@ namespace TVScreenPlus
                 long t100 = (now - start) * 10000000L / freq;
                 inflight[t100] = new[] { fresh ? heldAcq : now, now, fresh ? 1L : 0L };
                 Enc.Submit(Cap.Ring[slot], t100);
-                if (fresh) { held = false; lastReal = now; } else Repeats++;
-                lastAny = now;
+                if (fresh) held = false; else Repeats++;
             }
             if (error is System.IO.IOException || error is ObjectDisposedException)
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw(); // the TV is gone
@@ -693,6 +712,7 @@ namespace TVScreenPlus
             stop = true;
             Enc?.Dispose();
             Cap.Dispose();
+            if (FineTimer) Native.timeEndPeriod(1);
         }
     }
 }

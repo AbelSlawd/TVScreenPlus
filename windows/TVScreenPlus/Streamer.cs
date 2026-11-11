@@ -112,7 +112,8 @@ namespace TVScreenPlus
                 foreach (bool q in new[] { true, false })
                 {
                     // "v2": measured after the encoder start-up (older results underestimated fast GPUs).
-                    string key = $"bench_v2_{e.Name}_{t.Width}x{t.Height}_{fps}_{(q ? "q" : "f")}{(Settings.GameMode ? "_game" : "")}";
+                    // v3 for the in-house encoder: its first results (before the 1 ms timer) were too low.
+                    string key = $"bench_v{(e.Native ? 3 : 2)}_{e.Name}_{t.Width}x{t.Height}_{fps}_{(q ? "q" : "f")}{(Settings.GameMode ? "_game" : "")}";
                     string cached = Settings.Get(key, "");
                     double got = cached != "" ? double.Parse(cached, CultureInfo.InvariantCulture) : RunTest(e, t, fps, q, fps * 4);
                     if (cached == "" && got >= 0) Settings.Set(key, got.ToString(CultureInfo.InvariantCulture));
