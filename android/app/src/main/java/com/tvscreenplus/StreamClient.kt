@@ -344,7 +344,7 @@ class StreamClient(
      * Sound later -> delay the image; sound earlier -> delay the sound. Plus the user's correction.
      */
     /** The sound player, created on first use (TCP or UDP thread). */
-    private fun player(): AudioPlayer = synchronized(audioLock) { audio ?: AudioPlayer { log(it) }.also { audio = it } }
+    private fun player(): AudioPlayer = synchronized(audioLock) { audio ?: AudioPlayer { log(it) }.also { it.game = gameMode; audio = it } }
 
     /** UDP socket for the sound; returns its port (0 = unavailable: the PC then keeps the sound in TCP). */
     private fun startUdp(): Int = try {
@@ -424,6 +424,7 @@ class StreamClient(
         syncImage = c["avsync"] != "0"
         modeSupported = c.containsKey("mode")
         gameMode = c["mode"] == "game"
+        audio?.game = gameMode
         frameMs = 1000 / (c["fps"]?.toIntOrNull()?.coerceIn(10, 240) ?: 60)
         streamW = w; streamH = h
         cursorOn = c["cursor"] == "1"

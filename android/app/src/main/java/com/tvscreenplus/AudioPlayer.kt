@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
  *
  * - The amount of sound waiting in the AudioTrack is regulated to a target = jitter buffer + extra delay:
  *   the jitter buffer starts at 30 ms (getMinBufferSize is very conservative: 96 ms on a TCL/MediaTek TV),
- *   grows 10 ms after an underrun (max 80) and shrinks 2 ms after 15 s without trouble (never below 25 ms:
+ *   grows 10 ms after an underrun (max 80) and shrinks 2 ms after 15 s without trouble (never below 25 ms, 15 in game mode:
  *   going lower caused regular underruns on a busy 100 Mb/s link). Each underrun or trim is an audible click,
  *   so the buffer settles where it stops happening rather than chasing the smallest value. Sound piling up above the target
  *   is trimmed instead of being played late.
@@ -30,6 +30,9 @@ class AudioPlayer(private val log: (String) -> Unit) {
     @Volatile private var running = true
     @Volatile private var track: AudioTrack? = null
     private val thread = Thread({ loop() }, "audio").apply { start() }
+
+    /** Game mode: smallest jitter buffer and the TV's "game" audio path (USAGE_GAME), tried for less TV processing. */
+    @Volatile var game = false
 
     /** Delay added on purpose so that the sound matches the image (ms, set by the A/V sync). */
     @Volatile var extraDelayMs = 0
@@ -92,6 +95,7 @@ class AudioPlayer(private val log: (String) -> Unit) {
         var lastUnderruns = 0
         var steadySince = 0L
         var baseMs = 30            // jitter buffer target
+        var trackGame = false      // audio path of the current track
         var appliedTarget = -1     // frames: buffer size last given to the track
         var levelAvg = -1.0        // smoothed fill level after each write (frames)
         var lastTs = 0L
@@ -102,11 +106,13 @@ class AudioPlayer(private val log: (String) -> Unit) {
         try {
             while (running) {
                 val p = queue.poll(200, TimeUnit.MILLISECONDS) ?: continue
-                if (t == null || p.rate != rate || p.channels != channels) {
+                if (t == null || p.rate != rate || p.channels != channels || trackGame != game) {
                     t?.let { try { it.stop() } catch (_: Exception) {}; it.release() }
                     t = null; track = null
                     rate = p.rate; channels = p.channels; frameBytes = 2 * channels
-                    val n = try { create(rate, channels) } catch (e: Exception) {
+                    trackGame = game
+                    baseMs = if (trackGame) 20 else 30
+                    val n = try { create(rate, channels, trackGame) } catch (e: Exception) {
                         if (!failed) log("audio: AudioTrack ${rate} Hz ${channels} ch failed: ${e.javaClass.simpleName}: ${e.message}")
                         failed = true; null
                     } ?: continue
@@ -145,7 +151,7 @@ class AudioPlayer(private val log: (String) -> Unit) {
                     // Sound piling up (network burst, target lowered): trim it instead of playing it late.
                     val after = queued + pktFrames
                     levelAvg = if (levelAvg < 0) after.toDouble() else levelAvg * 0.9 + after * 0.1
-                    if (levelAvg > target + maxOf(rate * 40 / 1000, target / 2)) {
+                    if (levelAvg > target + rate * 20 / 1000) {
                         skip = minOf(pktFrames, (levelAvg - target).toInt())
                         levelAvg -= skip
                         synchronized(statLock) { drops++ }
@@ -170,9 +176,9 @@ class AudioPlayer(private val log: (String) -> Unit) {
                     synchronized(statLock) { underruns++ }
                     steadySince = lastWrite
                     baseMs = minOf(80, baseMs + 10)
-                } else if (lastWrite - steadySince > 15_000_000_000L && baseMs > 25) {
+                } else if (lastWrite - steadySince > 15_000_000_000L && baseMs > (if (trackGame) 15 else 25)) {
                     steadySince = lastWrite
-                    baseMs = maxOf(25, baseMs - 2)
+                    baseMs = maxOf(if (trackGame) 15 else 25, baseMs - 2)
                 }
                 latencyMs = ((written - tr.playbackHeadPosition).coerceAtLeast(0) * 1000L / rate).toInt()
 
@@ -197,7 +203,7 @@ class AudioPlayer(private val log: (String) -> Unit) {
     }
 
     /** (track, allocated frames). */
-    private fun create(rate: Int, channels: Int): Pair<AudioTrack, Int> {
+    private fun create(rate: Int, channels: Int, game: Boolean): Pair<AudioTrack, Int> {
         val mask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
         val frameBytes = 2 * channels
         val min = AudioTrack.getMinBufferSize(rate, mask, AudioFormat.ENCODING_PCM_16BIT)
@@ -205,8 +211,9 @@ class AudioPlayer(private val log: (String) -> Unit) {
         // Room for the jitter buffer (up to 80 ms) + an A/V sync delay (up to 200 ms) + margin.
         val bytes = maxOf(min * 2, rate * frameBytes * 320 / 1000)
         val attrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+            // Some TVs route game audio around their heavier sound processing (Dolby, virtualizers): try it in game mode.
+            .setUsage(if (game) AudioAttributes.USAGE_GAME else AudioAttributes.USAGE_MEDIA)
+            .setContentType(if (game) AudioAttributes.CONTENT_TYPE_MUSIC else AudioAttributes.CONTENT_TYPE_MOVIE)
             .build()
         val format = AudioFormat.Builder().setSampleRate(rate).setChannelMask(mask).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()
         val t = if (Build.VERSION.SDK_INT >= 26) {
@@ -224,7 +231,7 @@ class AudioPlayer(private val log: (String) -> Unit) {
         val alloc = bytes / frameBytes
         if (Build.VERSION.SDK_INT >= 24) t.setBufferSizeInFrames(rate * 50 / 1000) // the loop then follows its target
         val mode = if (Build.VERSION.SDK_INT >= 26) (if (t.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) " low-latency" else " normal") else ""
-        log("audio: AudioTrack $rate Hz ${channels} ch$mode, min ${min / frameBytes * 1000 / rate} ms, capacity ${alloc * 1000 / rate} ms")
+        log("audio: AudioTrack $rate Hz ${channels} ch$mode ${if (game) "game" else "media"} path, min ${min / frameBytes * 1000 / rate} ms, capacity ${alloc * 1000 / rate} ms")
         return t to alloc
     }
 
