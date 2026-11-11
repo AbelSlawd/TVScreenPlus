@@ -386,7 +386,12 @@ namespace TVScreenPlus
         /// a halved target and overshot the peak by 10-15 %). It does not pad: a static desktop costs little.
         /// </summary>
         public static uint RateControl = 0;
-        public static uint BufferDivisor = 1;
+        /// <summary>
+        /// CODECAPI_AVEncCommonBufferSize is in BYTES on the NVIDIA MFT: as bits, the 1/6 s VBV became 1.3 s and a
+        /// still desktop turning into motion burst at ~2x the target for a second (75 Mb/s sent at 35, congestion).
+        /// Measured with alternating still/noise content: 33.4 Mb/s peak at 18 (bits) vs 19.7 (bytes).
+        /// </summary>
+        public static uint BufferDivisor = 8;
         public readonly bool Hevc;
         readonly int width, height, fps;
         void* activate, mft, events, codec, manager;
@@ -497,7 +502,7 @@ namespace TVScreenPlus
             Com.SetU32(t, MF_MT_VIDEO_NOMINAL_RANGE, 2); // 16-235
         }
 
-        /// <summary>Live bitrate change (no restart): CBR at 90 % of the cap, VBV of 1/6 s (frame-size peaks).</summary>
+        /// <summary>Live bitrate change (no restart): CBR at 90 % of the cap, VBV of 1/6 s (largest frame).</summary>
         public void SetBitrate(int kbps)
         {
             Com.SetCodec(codec, CODECAPI_AVEncCommonMeanBitRate, (uint)kbps * (RateControl == 0 ? 900u : 750u));

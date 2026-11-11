@@ -41,7 +41,7 @@ namespace TVScreenPlus
             if (args.Length > 4 && uint.TryParse(args[4], out uint q)) MfEncoder.QualityVsSpeed = q;
             if (args.Contains("noflush")) DesktopCapture.FlushAfterConvert = false;
             if (args.Contains("coarse")) NativeSession.FineTimer = false;
-            if (args.Contains("buf8")) MfEncoder.BufferDivisor = 8;
+            if (args.Contains("bufbits")) MfEncoder.BufferDivisor = 1;
             foreach (var a in args)
             {
                 if (a.StartsWith("prio=")) int.TryParse(a.Substring(5), out DesktopCapture.GpuPriorityLevel);
@@ -57,7 +57,7 @@ namespace TVScreenPlus
             var ready = new ManualResetEventSlim();
             var ui = new Thread(() =>
             {
-                anim = new AnimForm(args.Contains("heavy"));
+                anim = new AnimForm(args.Contains("heavy") || args.Contains("bursty"), args.Contains("bursty"));
                 anim.Shown += (s, e) => ready.Set();
                 Application.Run(anim);
             });
@@ -142,8 +142,10 @@ namespace TVScreenPlus
             readonly Stopwatch sw = Stopwatch.StartNew();
             int frame;
             readonly Bitmap[] noise;
-            public AnimForm(bool heavy)
+            readonly bool bursty;
+            public AnimForm(bool heavy, bool bursty)
             {
+                this.bursty = bursty;
                 if (heavy)
                 {
                     // Unpredictable full-HD images: the encoder needs every bit it is allowed.
@@ -176,7 +178,8 @@ namespace TVScreenPlus
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                if (noise != null) { g.DrawImageUnscaled(noise[frame++ % noise.Length], 0, 0); return; }
+                // bursty: still image, then 0.5 s of noise every 2 s (desktop -> video -> desktop).
+                if (noise != null) { bool on = !bursty || sw.ElapsedMilliseconds % 2000 < 500; g.DrawImageUnscaled(noise[on ? frame++ % noise.Length : 0], 0, 0); return; }
                 double s = sw.Elapsed.TotalSeconds;
                 int w = ClientSize.Width, h = ClientSize.Height, off = (int)(s * 480) % 120;
                 g.Clear(Color.FromArgb(20, 20, 30));
