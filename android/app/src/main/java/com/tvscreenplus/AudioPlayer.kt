@@ -15,8 +15,10 @@ import java.util.concurrent.TimeUnit
  * Packets (flag 0x08, kind 1): [1][format 1 = s16le][channels][0][u32 rate][u32 PC time ms][PCM], ~5-20 ms each.
  *
  * - The amount of sound waiting in the AudioTrack is regulated to a target = jitter buffer + extra delay:
- *   the jitter buffer starts at 20 ms (getMinBufferSize is very conservative: 96 ms on a TCL/MediaTek TV),
- *   grows 5 ms after an underrun (max 60) and shrinks 5 ms after 5 s without trouble. Sound piling up above the target
+ *   the jitter buffer starts at 30 ms (getMinBufferSize is very conservative: 96 ms on a TCL/MediaTek TV),
+ *   grows 10 ms after an underrun (max 80) and shrinks 2 ms after 15 s without trouble (never below 25 ms:
+ *   going lower caused regular underruns on a busy 100 Mb/s link). Each underrun or trim is an audible click,
+ *   so the buffer settles where it stops happening rather than chasing the smallest value. Sound piling up above the target
  *   is trimmed instead of being played late.
  * - The extra delay is set by the A/V sync when the sound would otherwise be ahead of the image.
  * - [outputMs] is the real write -> speaker delay (AudioTrack.getTimestamp), TV audio hardware included.
@@ -89,7 +91,7 @@ class AudioPlayer(private val log: (String) -> Unit) {
         var lastWrite = 0L
         var lastUnderruns = 0
         var steadySince = 0L
-        var baseMs = 20            // jitter buffer target
+        var baseMs = 30            // jitter buffer target
         var appliedTarget = -1     // frames: buffer size last given to the track
         var levelAvg = -1.0        // smoothed fill level after each write (frames)
         var lastTs = 0L
@@ -143,7 +145,7 @@ class AudioPlayer(private val log: (String) -> Unit) {
                     // Sound piling up (network burst, target lowered): trim it instead of playing it late.
                     val after = queued + pktFrames
                     levelAvg = if (levelAvg < 0) after.toDouble() else levelAvg * 0.9 + after * 0.1
-                    if (levelAvg > target + rate * 15 / 1000) {
+                    if (levelAvg > target + maxOf(rate * 40 / 1000, target / 2)) {
                         skip = minOf(pktFrames, (levelAvg - target).toInt())
                         levelAvg -= skip
                         synchronized(statLock) { drops++ }
@@ -167,10 +169,10 @@ class AudioPlayer(private val log: (String) -> Unit) {
                 if (underrun && lastWrite - startedAt > 2_000_000_000L) {
                     synchronized(statLock) { underruns++ }
                     steadySince = lastWrite
-                    baseMs = minOf(60, baseMs + 5)
-                } else if (lastWrite - steadySince > 5_000_000_000L && baseMs > 10) {
+                    baseMs = minOf(80, baseMs + 10)
+                } else if (lastWrite - steadySince > 15_000_000_000L && baseMs > 25) {
                     steadySince = lastWrite
-                    baseMs = maxOf(10, baseMs - 5)
+                    baseMs = maxOf(25, baseMs - 2)
                 }
                 latencyMs = ((written - tr.playbackHeadPosition).coerceAtLeast(0) * 1000L / rate).toInt()
 

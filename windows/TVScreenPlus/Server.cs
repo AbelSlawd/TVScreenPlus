@@ -351,7 +351,11 @@ namespace TVScreenPlus
                 string capped = "";
                 if (v2)
                 {
-                    int netCap = (int)(mbps * 1000 * 0.85) - audioKbps;
+                    // A slow link (100 Mb/s TV port, Wi-Fi) saturates on the encoder's peaks (keyframes, scene changes):
+                    // measured on a 93 Mb/s TV link at 77 Mb/s: 43 % blocked, bitrate drops + encoder restarts (freezes)
+                    // and the sound queued behind the video (stutter). Keep more headroom there.
+                    double capShare = mbps < 150 ? 0.6 : 0.85;
+                    int netCap = (int)(mbps * 1000 * capShare) - audioKbps;
                     if (kbps > netCap) { capped = $", capped to network {netCap}"; kbps = netCap; }
                 }
                 int maxKbps = kbps;

@@ -369,10 +369,19 @@ class StreamClient(
         private fun drain() {
             boost()
             val info = MediaCodec.BufferInfo()
+            var lastShown = 0L
             try {
                 while (alive) {
                     val idx = codec.dequeueOutputBuffer(info, 50_000)
                     if (idx >= 0) {
+                        // Image freeze diagnosis: a gap of more than 250 ms between two displayed frames.
+                        val shownAt = System.nanoTime()
+                        val gap = (shownAt - lastShown) / 1_000_000
+                        if (lastShown != 0L && gap > 250) {
+                            val q = synchronized(vLock) { vq.size }
+                            upstream { log("video stall $gap ms (image delay $appliedVideoDelayMs ms, $q frames waiting, decoder ${(decAvgUs / 1000).toInt()} ms)") }
+                        }
+                        lastShown = shownAt
                         // presentationTimeUs = time the frame was queued: input -> output delay of the decoder.
                         val lat = System.nanoTime() / 1000 - info.presentationTimeUs
                         codec.releaseOutputBuffer(idx, System.nanoTime()); rendered++

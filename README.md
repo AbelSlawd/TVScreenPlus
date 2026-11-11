@@ -96,7 +96,7 @@ Activé par défaut. Pendant la diffusion, tout ce que joue Windows (jeux, vidé
 - Le son est capturé sur la **sortie audio par défaut de Windows** : si vous changez de sortie (casque…), la TV suit automatiquement.
 - Le PC continue aussi de jouer le son sur ses propres haut-parleurs. Pour ne l'entendre que sur la TV : clic droit sur l'icône › *Couper le son du PC pendant la diffusion* (le son du PC est rétabli à la déconnexion).
 - Pour désactiver le son sur la TV : clic droit › *Son sur la TV*, ou dans les paramètres de la TV.
-- Le son voyage sur son propre canal (UDP, environ 1,5 Mb/s, pris en compte dans le réglage du débit) : il n'attend jamais derrière une grosse image. La TV garde un tampon d'environ 20 ms, agrandi automatiquement si le réseau est irrégulier, puis réduit en quelques secondes quand il redevient stable.
+- Le son voyage sur son propre canal (UDP, environ 1,5 Mb/s, pris en compte dans le réglage du débit) : il n'attend jamais derrière une grosse image. La TV garde un tampon d'environ 30 ms, agrandi automatiquement si le réseau est irrégulier, puis réduit lentement quand il redevient stable (sans descendre sous 25 ms, pour éviter les coupures).
 - L'application demande à la TV son mode « jeu » (faible latence, ALLM) quand elle le prend en charge : moins de traitements, donc moins de retard de l'image et du son.
 - **Synchronisation automatique** : la TV mesure le vrai délai de sa sortie son (haut-parleurs ou barre de son compris) et le compare au délai de l'image. Si le son arrive après l'image, l'image est légèrement retardée ; s'il arrive avant, c'est le son. Les changements sont progressifs et invisibles. En **mode jeu** (PC), l'image n'est jamais retardée pour attendre le son : la réactivité passe en premier.
 - **Réglage à l'oreille** : pendant la diffusion, les touches **◀ ▶** de la télécommande avancent ou retardent le son de 10 ms (mémorisé). *Paramètres de la TV › Synchronisation du son* le remet à 0. Pratique avec une vidéo de test de synchronisation labiale.
@@ -150,7 +150,7 @@ Les mêmes chiffres sont écrits dans le journal toutes les 10 secondes (lignes 
 
 Pendant la diffusion, si le réseau sature (micro-ondes, autre appareil qui télécharge…), le débit **baisse automatiquement** pour éviter les saccades, puis **remonte** quand la connexion redevient stable.
 
-Pour forcer une valeur : clic droit sur l'icône › *Résolution* ou *Qualité / débit*. Même forcé, le débit ne dépasse jamais ce que le réseau mesuré peut transporter (85 %) : au-delà, l'image prendrait du retard. Si vous changez de carte graphique, utilisez *Recalibrer*.
+Pour forcer une valeur : clic droit sur l'icône › *Résolution* ou *Qualité / débit*. Même forcé, le débit ne dépasse jamais ce que le réseau mesuré peut transporter : 85 % sur un réseau rapide, 60 % sur un lien lent comme le port Ethernet 100 Mb/s de beaucoup de TV (les pics d'images saturaient le câble : saccades, image figée, son haché). Si vous changez de carte graphique, utilisez *Recalibrer*.
 
 ## Mises à jour
 - **PC** : le programme vérifie toutes les 6 heures et s'installe tout seul quand aucune TV n'est connectée. Vérification manuelle : clic droit › *Rechercher une mise à jour*.
