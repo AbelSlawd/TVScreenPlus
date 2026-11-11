@@ -132,19 +132,31 @@ class StreamClient(
         return wrap31(tvNowMs - off - pcTime)
     }
 
+    /** Last time (nanoTime) a frame's capture -> screen delay was measured, and rejected samples (diagnosis). */
+    @Volatile private var e2eAt = 0L
+    @Volatile private var audioAt = 0L
+    private var e2eRejected = 0
+
     /** A frame reached the screen (TV compositor timestamp). */
     private fun onRendered(ptsUs: Long, nanoTime: Long) {
         val cap = synchronized(capMap) { capMap.remove(ptsUs) } ?: return
         val e2e = ageMs(cap, nanoTime / 1_000_000) ?: return
-        if (e2e !in 0L..2000L) return
+        if (e2e !in 0L..2000L) {
+            if (e2eRejected++ % 300 == 0) upstream { log("latency sample rejected: $e2e ms (clock offset $clockOffset)") }
+            return
+        }
         synchronized(e2eLock) { e2eSum += e2e; e2eCount++; e2eMax = maxOf(e2eMax, e2e) }
-        e2eAvg = if (e2eAvg < 0) e2e.toDouble() else e2eAvg * 0.95 + e2e * 0.05
+        // Image delay WITHOUT our own delay line, frame by frame: the A/V sync must never feed on its own output
+        // (v1.0.21 on Wi-Fi: a stale average minus a growing delay ran the image delay up to 250 ms).
+        val base = e2e - appliedDelayNs / 1_000_000
+        e2eAvg = if (e2eAvg < 0) base.toDouble() else e2eAvg * 0.9 + base * 0.1
+        e2eAt = System.nanoTime()
     }
 
     /** Sound packet [1][fmt][ch][0][u32 rate][u32 PC capture ms]…: measure capture -> arrival, then play it. */
     private fun audioPacket(b: ByteArray, len: Int) {
         if (len > 12) ageMs(u32(b, 8), System.nanoTime() / 1_000_000)?.let { t ->
-            if (t in 0L..1000L) audioTransit = if (audioTransit < 0) t.toDouble() else audioTransit * 0.95 + t * 0.05
+            if (t in 0L..1000L) { audioTransit = if (audioTransit < 0) t.toDouble() else audioTransit * 0.95 + t * 0.05; audioAt = System.nanoTime() }
         }
         player().offer(b, len)
     }
@@ -377,10 +389,13 @@ class StreamClient(
         if (out < 0) return
         val late: Int
         val e2e = e2eAvg; val transit = audioTransit
-        if (e2e >= 0 && transit >= 0) {
+        val now = System.nanoTime()
+        val measured = e2e >= 0 && transit >= 0
+        if (measured && (now - e2eAt > 1_500_000_000L || now - audioAt > 1_500_000_000L)) return // stale: hold
+        if (measured) {
             // Measured: capture -> screen for the image (without our own delay line), capture -> speaker for the
             // sound (without our extra delay). The sound captured pcPlaybackMs before a frame belongs to it.
-            val imageMs = e2e - appliedDelayNs / 1_000_000.0
+            val imageMs = e2e
             val soundMs = transit + (out - a.extraDelayMs).coerceAtLeast(0)
             late = (soundMs - pcPlaybackMs - imageMs).toInt() - userOffsetMs
         } else {
@@ -390,7 +405,7 @@ class StreamClient(
             val soundMs = pcAudioMs + (out - a.extraDelayMs).coerceAtLeast(0)
             late = soundMs - imageMs - userOffsetMs // > 0: sound behind the image
         }
-        val newVideo = if (syncImage) late.coerceIn(0, 250) else 0
+        val newVideo = if (syncImage) late.coerceIn(0, 150) else 0
         val newExtra = (-late).coerceIn(0, 200)
         if (Math.abs(newVideo - videoDelayMs) >= 4) videoDelayMs = newVideo
         if (Math.abs(newExtra - a.extraDelayMs) >= 4) a.extraDelayMs = newExtra

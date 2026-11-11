@@ -387,8 +387,11 @@ namespace TVScreenPlus
                     // A slow link (100 Mb/s TV port, Wi-Fi) saturates on the encoder's peaks (keyframes, scene changes):
                     // measured on a 93 Mb/s TV link at 77 Mb/s: 43 % blocked, bitrate drops + encoder restarts (freezes)
                     // and the sound queued behind the video (stutter). Keep more headroom there.
-                    double capShare = mbps < 150 ? 0.6 : 0.85;
+                    // Wi-Fi delivers in bursts (50-70 ms of sound at once measured on 5 GHz Wi-Fi 6): big encoder
+                    // peaks make it worse, so half the measured rate and never above 80 Mb/s (plenty for 4K HEVC).
+                    double capShare = net == "wifi" ? 0.5 : mbps < 150 ? 0.6 : 0.85;
                     int netCap = (int)(mbps * 1000 * capShare) - audioKbps;
+                    if (net == "wifi") netCap = Math.Min(netCap, 80000);
                     if (kbps > netCap) { capped = $", capped to network {netCap}"; kbps = netCap; }
                 }
                 int maxKbps = kbps;

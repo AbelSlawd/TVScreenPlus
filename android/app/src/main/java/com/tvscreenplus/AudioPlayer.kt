@@ -97,7 +97,10 @@ class AudioPlayer(private val log: (String) -> Unit) {
         var baseMs = 30            // jitter buffer target
         var trackGame = false      // audio path of the current track
         var appliedTarget = -1     // frames: buffer size last given to the track
-        var levelAvg = -1.0        // smoothed fill level after each write (frames)
+        var levelAvg = -1.0        // (unused, kept for the reset lines)
+        var winStart = 0L          // 1 s windows: lowest fill level seen (frames) = sound really in excess
+        var winMin = Int.MAX_VALUE
+        var toSkip = 0             // excess frames still to drop, a packet at a time
         var lastTs = 0L
         var startedAt = 0L
         var reported = false
@@ -147,15 +150,20 @@ class AudioPlayer(private val log: (String) -> Unit) {
                         written += r; writtenTotal += r
                     }
                     levelAvg = -1.0
+                    winStart = now; winMin = Int.MAX_VALUE; toSkip = 0
                 } else {
-                    // Sound piling up (network burst, target lowered): trim it instead of playing it late.
-                    val after = queued + pktFrames
-                    levelAvg = if (levelAvg < 0) after.toDouble() else levelAvg * 0.9 + after * 0.1
-                    if (levelAvg > target + rate * 20 / 1000) {
-                        skip = minOf(pktFrames, (levelAvg - target).toInt())
-                        levelAvg -= skip
-                        synchronized(statLock) { drops++ }
+                    // Excess sound = the LOWEST fill level of the last second above the target. A network burst
+                    // (Wi-Fi delivers 50-70 ms at once) raises the level briefly but not its minimum: trimming
+                    // on it caused a cut right after each burst (v1.0.21 on Wi-Fi: 503 trims, 9 underruns).
+                    winMin = minOf(winMin, queued)
+                    if (now - winStart > 1_000_000_000L) {
+                        if (winMin != Int.MAX_VALUE && winMin > target + rate / 100) {
+                            toSkip += winMin - target
+                            synchronized(statLock) { drops++ }
+                        }
+                        winStart = now; winMin = Int.MAX_VALUE
                     }
+                    if (toSkip > 0) { skip = minOf(pktFrames, toSkip); toSkip -= skip }
                 }
                 if (skip < pktFrames) {
                     val r = tr.write(p.pcm, skip * frameBytes, (pktFrames - skip) * frameBytes)
