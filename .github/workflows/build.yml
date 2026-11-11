@@ -9,8 +9,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # VERSION (e.g. 1.1.0) is the name people see; the machine version 1.1.<run> always increases (auto-update).
       - name: Build PC app
-        run: dotnet build windows/TVScreenPlus/TVScreenPlus.csproj -c Release -o out -p:Version=1.1.${{ github.run_number }}
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim(); $mm = ($v -split '\.')[0..1] -join '.'
+          dotnet build windows/TVScreenPlus/TVScreenPlus.csproj -c Release -o out "-p:Version=$mm.${{ github.run_number }}" "-p:InformationalVersion=$v"
       - name: Package (app + ffmpeg + virtual display driver + gamepad driver setup)
         shell: pwsh
         run: |
@@ -50,7 +54,7 @@ jobs:
       - name: Build TV app
         working-directory: android
         env: { ANDROID_KEYSTORE_PASSWORD: "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" }
-        run: chmod +x gradlew && ./gradlew --no-daemon assembleRelease -PbuildNumber=${{ github.run_number }}
+        run: chmod +x gradlew && ./gradlew --no-daemon assembleRelease -PbuildNumber=${{ github.run_number }} -PversionName=$(tr -d '[:space:]' < ../VERSION)
       - run: cp android/app/build/outputs/apk/release/app-release.apk TVScreenPlus-TV.apk
       - uses: actions/upload-artifact@v4
         with:
@@ -64,14 +68,22 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
+      - uses: actions/checkout@v4
+        with: { sparse-checkout: VERSION, sparse-checkout-cone-mode: false, path: src }
+      - id: ver
+        run: |
+          v=$(tr -d '[:space:]' < src/VERSION)
+          echo "name=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$(echo "$v" | cut -d. -f1-2).${{ github.run_number }}" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
       - run: |
           cd TVScreenPlus-PC && zip -qr ../TVScreenPlus-PC.zip TVScreenPlus-PC && cd ..
           cp TVScreenPlus-TV/TVScreenPlus-TV.apk .
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.${{ github.run_number }}
-          name: TVScreenPlus 1.1.${{ github.run_number }}
+          # Tag v1.1.<run>: installed PCs and TVs compare it (the TV reads its last number as the update code).
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: TVScreenPlus ${{ steps.ver.outputs.name }}
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |

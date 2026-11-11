@@ -26,7 +26,9 @@ object Updater {
         val tag = Regex("\"tag_name\"\\s*:\\s*\"v?([0-9.]+)\"").find(json)?.groupValues?.get(1) ?: return null
         val apk = Regex("\"browser_download_url\"\\s*:\\s*\"([^\"]+/TVScreenPlus-TV\\.apk)\"").find(json)?.groupValues?.get(1) ?: return null
         val code = tag.substringAfterLast('.').toIntOrNull() ?: return null
-        return Release(code, tag, apk)
+        // Shown version: the release title "TVScreenPlus 1.1.0" (the tag's last number is only the update code).
+        val name = Regex("\"name\"\\s*:\\s*\"TVScreenPlus ([0-9.]+)\"").find(json)?.groupValues?.get(1) ?: tag
+        return Release(code, name, apk)
     }
 
     /** Streams the APK into a PackageInstaller session; the result comes back to MainActivity.onNewIntent. */

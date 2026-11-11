@@ -18,7 +18,16 @@ namespace TVScreenPlus
         public static readonly string DataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "TVScreenPlus");
 
+        /// <summary>Machine version 1.1.&lt;CI run&gt;: always increases, compared by the auto-updater.</summary>
         public static readonly Version Version = typeof(Program).Assembly.GetName().Version;
+        /// <summary>Version shown to people (VERSION file, e.g. "1.1.0").</summary>
+        public static readonly string DisplayVersion = DisplayOf(typeof(Program).Assembly);
+        static string DisplayOf(System.Reflection.Assembly a)
+        {
+            var v = (System.Reflection.AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(a, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
+            string s = v?.InformationalVersion?.Split('+')[0];
+            return string.IsNullOrEmpty(s) ? Version.ToString(3) : s;
+        }
         public const string QuitEvent = "Global\\TVScreenPlus_quit";
 
         [STAThread]
@@ -37,7 +46,7 @@ namespace TVScreenPlus
                 // A previous instance may still be shutting down (update/reinstall): wait for it.
                 try { if (!mtx.WaitOne(15000)) return; } catch (AbandonedMutexException) { }
                 Log.Init();
-                Log.W("TVScreenPlus " + Version + " in " + Dir);
+                Log.W("TVScreenPlus " + DisplayVersion + " (" + Version + ") in " + Dir);
                 Application.Run(new TrayApp());
             }
         }
@@ -177,7 +186,7 @@ namespace TVScreenPlus
             menu.Items.Add("Recalibrer (nouveau matériel)", null, (s, e) => { Settings.ResetCalibration(); Notify("TVScreenPlus", "Le calibrage sera refait à la prochaine connexion."); });
             menu.Items.Add("Mode debug (statistiques en direct)", null, (s, e) => DebugWindow.Toggle(() => server));
             menu.Items.Add("Ouvrir le journal", null, (s, e) => Process.Start("notepad.exe", Log.FilePath));
-            menu.Items.Add(new ToolStripMenuItem("Version " + Program.Version.ToString(3)) { Enabled = false });
+            menu.Items.Add(new ToolStripMenuItem("Version " + Program.DisplayVersion) { Enabled = false });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Quitter", null, (s, e) => Quit());
 
@@ -205,7 +214,7 @@ namespace TVScreenPlus
                 Log.W("Latest release: " + (latest?.Item1?.ToString() ?? "?"));
                 if (latest == null || !Updater.Newer(latest.Item1))
                 {
-                    if (manual) Notify("TVScreenPlus", "Vous avez la dernière version (" + Program.Version.ToString(3) + ").");
+                    if (manual) Notify("TVScreenPlus", "Vous avez la dernière version (" + Program.DisplayVersion + ").");
                     return;
                 }
                 if (server != null && server.Busy && !manual)

@@ -12,7 +12,8 @@ android {
         targetSdk = 35
         val build = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 1
         versionCode = build
-        versionName = "1.1.$build"
+        // Shown to people: the VERSION file (CI passes it); versionCode = CI run, compared by the updater.
+        versionName = (project.findProperty("versionName") as String?) ?: "1.1.$build"
     }
     // Fixed key (from CI secrets) so every release installs over the previous one; debug key otherwise.
     val ksFile = System.getenv("ANDROID_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }

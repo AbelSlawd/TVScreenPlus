@@ -57,7 +57,7 @@ namespace TVScreenPlus
             {
                 string exe = Path.Combine(InstallDir, "TVScreenPlus.exe");
                 k.SetValue("DisplayName", "TVScreenPlus");
-                k.SetValue("DisplayVersion", Program.Version.ToString(3));
+                k.SetValue("DisplayVersion", Program.DisplayVersion);
                 k.SetValue("Publisher", "TVScreenPlus");
                 k.SetValue("DisplayIcon", exe);
                 k.SetValue("InstallLocation", InstallDir);
