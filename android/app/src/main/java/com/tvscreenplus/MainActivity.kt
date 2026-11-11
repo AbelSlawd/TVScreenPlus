@@ -5,9 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -24,6 +24,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -37,24 +38,30 @@ class MainActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private val pcs = linkedMapOf<String, Pc>()
     private lateinit var surfaceView: SurfaceView
-    private lateinit var overlay: LinearLayout
-    private lateinit var status: TextView
-    private lateinit var list: LinearLayout
+    private lateinit var overlay: FrameLayout
+    private lateinit var stats: TextView
+    // Main page widgets (rebuilt when the language changes).
+    private var status: TextView? = null
+    private var list: LinearLayout? = null
+    private var updateButton: Button? = null
+    private var inSettings = false
     private var surfaceReady = false
     @Volatile private var client: StreamClient? = null
     private var autoConnect = true
     @Volatile private var discovering = false
     private var wifiLock: WifiManager.WifiLock? = null
     private val prefs by lazy { getSharedPreferences("tvsp", Context.MODE_PRIVATE) }
-    private lateinit var stats: TextView
-    private lateinit var updateButton: Button
     private var release: Updater.Release? = null
     private var lastUpdateCheck = 0L
+    @Volatile private var testing = false
     @Suppress("DEPRECATION")
     private val versionCode by lazy { packageManager.getPackageInfo(packageName, 0).versionCode }
+    private val versionName by lazy { try { packageManager.getPackageInfo(packageName, 0).versionName ?: "" } catch (_: Exception) { "" } }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        L.choice = prefs.getString("lang", "system") ?: "system"
+        autoConnect = prefs.getBoolean("autoconnect", true)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         preferBestDisplayMode()
 
@@ -66,33 +73,7 @@ class MainActivity : Activity() {
             override fun surfaceDestroyed(h: SurfaceHolder) { surfaceReady = false; disconnect(null) }
         })
         root.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
-
-        overlay = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(48), dp(40), dp(48), dp(24))
-            setBackgroundColor(Color.rgb(13, 27, 42))
-        }
-        overlay.addView(text("TVScreenPlus", 34f, Color.WHITE))
-        status = text("Recherche des ordinateurs sur le réseau…", 18f, Color.rgb(144, 202, 249))
-        overlay.addView(status)
-        updateButton = button("Mettre à jour") { startUpdate() }.apply { visibility = View.GONE }
-        overlay.addView(updateButton, LinearLayout.LayoutParams(dp(520), -2))
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(24), 0, dp(24)) }
-        overlay.addView(list, LinearLayout.LayoutParams(dp(520), -2))
-
-        val manual = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        val ipField = EditText(this).apply {
-            hint = "IP du PC (si non détecté)"; setSingleLine(); setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
-            setText(prefs.getString("manual", ""))
-        }
-        manual.addView(ipField, LinearLayout.LayoutParams(dp(300), -2))
-        manual.addView(button("Connecter") {
-            val ip = ipField.text.toString().trim()
-            if (ip.isNotEmpty()) { prefs.edit().putString("manual", ip).apply(); connect(ip, ip) }
-        })
-        overlay.addView(manual)
-        overlay.addView(text("Installez TVScreenPlus sur le PC Windows (même réseau). Retour = déconnecter.", 14f, Color.GRAY))
+        overlay = FrameLayout(this).apply { setBackgroundColor(BG) }
         root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         // Live statistics, toggled with OK / Menu while streaming.
         stats = TextView(this).apply {
@@ -101,8 +82,7 @@ class MainActivity : Activity() {
         }
         root.addView(stats, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(24), dp(24), 0, 0) })
         setContentView(root)
-        val vn = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (_: Exception) { "" }
-        overlay.addView(text("Version $vn", 12f, Color.DKGRAY))
+        showMain()
         handleInstallIntent(intent)
     }
 
@@ -113,7 +93,160 @@ class MainActivity : Activity() {
 
     private fun handleInstallIntent(i: Intent?) {
         if (i?.action != Updater.ACTION_STATUS) return
-        Updater.onStatus(this, i)?.let { status.text = it }
+        Updater.onStatus(this, i)?.let { setStatus(it) }
+    }
+
+    private fun setStatus(s: String) { status?.text = s }
+
+    // ---------------- pages ----------------
+    /** Header: title + version on the left, gear on the right. */
+    private fun header(page: LinearLayout, title: String, gear: Boolean) {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        row.addView(TextView(this).apply { text = title; textSize = 30f; setTextColor(Color.WHITE) })
+        row.addView(TextView(this).apply {
+            text = "  v$versionName"; textSize = 16f; setTextColor(Color.rgb(144, 202, 249))
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        if (gear) row.addView(button("⚙  " + L.t("settings"), wide = false) { showSettings() })
+        else row.addView(button("←  " + L.t("back"), wide = false) { showMain() })
+        page.addView(row, LinearLayout.LayoutParams(-1, -2))
+    }
+
+    private fun page(): LinearLayout {
+        overlay.removeAllViews()
+        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val p = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(48), dp(32), dp(48), dp(24))
+        }
+        scroll.addView(p)
+        overlay.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        return p
+    }
+
+    private fun showMain() {
+        inSettings = false
+        val p = page()
+        header(p, "TVScreenPlus", gear = true)
+        status = text(L.t("searching"), 18f, Color.rgb(144, 202, 249)).also { p.addView(it) }
+        updateButton = button(release?.let { L.t("update_to", it.name) } ?: "") { startUpdate() }.apply {
+            visibility = if (release != null && release!!.code > versionCode) View.VISIBLE else View.GONE
+        }
+        p.addView(updateButton, LinearLayout.LayoutParams(dp(560), -2))
+        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(16), 0, dp(16)) }
+        p.addView(list, LinearLayout.LayoutParams(dp(560), -2))
+
+        val manual = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        val ipField = EditText(this).apply {
+            hint = L.t("ip_hint"); setSingleLine(); setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
+            setText(prefs.getString("manual", ""))
+        }
+        manual.addView(ipField, LinearLayout.LayoutParams(dp(320), -2))
+        manual.addView(button(L.t("connect"), wide = false) {
+            val ip = ipField.text.toString().trim()
+            if (ip.isNotEmpty()) { prefs.edit().putString("manual", ip).apply(); autoConnect = true; connect(ip, ip) }
+        })
+        p.addView(manual)
+        p.addView(text(L.t("help"), 14f, Color.GRAY))
+        refreshList()
+    }
+
+    private fun showSettings() {
+        inSettings = true
+        status = null; list = null; updateButton = null
+        val p = page()
+        header(p, L.t("settings"), gear = false)
+        val w = dp(720)
+
+        fun section(title: String) = p.addView(text(title, 15f, Color.rgb(144, 202, 249)).apply { gravity = Gravity.START; setPadding(dp(4), dp(18), 0, dp(2)) }, LinearLayout.LayoutParams(w, -2))
+        fun note(s: String) = text(s, 14f, Color.LTGRAY).apply { gravity = Gravity.START; setPadding(dp(4), 0, 0, dp(4)) }.also { p.addView(it, LinearLayout.LayoutParams(w, -2)) }
+        /** A button that cycles through options; label shows "Setting : value". */
+        fun choice(label: String, values: List<String>, names: List<String>, key: String, def: String, onChange: (String) -> Unit = {}) {
+            var cur = values.indexOf(prefs.getString(key, def)).coerceAtLeast(0)
+            val b = button("$label :  ${names[cur]}") {}
+            b.setOnClickListener {
+                cur = (cur + 1) % values.size
+                prefs.edit().putString(key, values[cur]).apply()
+                b.text = "$label :  ${names[cur]}"
+                onChange(values[cur])
+            }
+            p.addView(b, LinearLayout.LayoutParams(w, -2))
+        }
+        fun toggle(label: String, key: String, def: Boolean, onChange: (Boolean) -> Unit = {}) {
+            fun lbl(v: Boolean) = "$label :  ${L.t(if (v) "on" else "off")}"
+            val b = button(lbl(prefs.getBoolean(key, def))) {}
+            b.setOnClickListener {
+                val v = !prefs.getBoolean(key, def)
+                prefs.edit().putBoolean(key, v).apply()
+                b.text = lbl(v); onChange(v)
+            }
+            p.addView(b, LinearLayout.LayoutParams(w, -2))
+        }
+
+        section(L.t("lang"))
+        choice(L.t("lang"), listOf("system") + L.CODES, listOf(L.t("lang_system")) + L.NAMES, "lang", "system") {
+            L.choice = it
+            ui.post { showSettings() } // rebuild in the new language
+        }
+
+        section(L.t("priority"))
+        choice(L.t("priority"), listOf("auto", "smooth", "quality"), listOf(L.t("prio_auto"), L.t("prio_smooth"), L.t("prio_quality")), "pref", "auto")
+        choice(L.t("maxres"), listOf("0", "720", "1080", "1440", "2160"), listOf(L.t("auto"), "720p", "1080p", "1440p", "4K"), "maxh", "0")
+        toggle(L.t("autoconnect"), "autoconnect", true) { autoConnect = it }
+        toggle(L.t("showstats"), "showstats", false)
+
+        section(L.t("hwtest"))
+        val testNote = note(hwSummary())
+        val testBtn = button(L.t("hwtest_run")) {}
+        testBtn.setOnClickListener {
+            if (testing) return@setOnClickListener
+            testing = true
+            disconnect(null)
+            Thread({
+                val r = try {
+                    HardwareTest.run { step -> ui.post { testNote.text = L.t("hwtest_running", step) } }
+                } catch (e: Exception) { null }
+                ui.post {
+                    testing = false
+                    if (r != null) prefs.edit().putInt("hw_hevc", r.hevc).putInt("hw_avc", r.avc)
+                        .putInt("hw_lat", r.latencyMs).putInt("hw_ver", versionCode).apply()
+                    testNote.text = (if (r != null) L.t("hwtest_done") + "\n" else "") + hwSummary()
+                }
+            }, "hwtest").start()
+        }
+        p.addView(testBtn, LinearLayout.LayoutParams(w, -2))
+
+        section(L.t("check_updates"))
+        val updNote = note("")
+        p.addView(button(L.t("check_updates")) {
+            updNote.text = L.t("checking")
+            Thread({
+                val r = try { Updater.latest() } catch (_: Exception) { null }
+                ui.post {
+                    when {
+                        r == null -> updNote.text = L.t("update_check_failed")
+                        r.code <= versionCode -> updNote.text = L.t("uptodate", versionName)
+                        else -> { release = r; showMain(); startUpdate() }
+                    }
+                }
+            }, "update-check").start()
+        }, LinearLayout.LayoutParams(w, -2))
+
+        section(L.t("about"))
+        p.addView(button(L.t("forget")) {
+            prefs.edit().remove("last").remove("manual").apply()
+            pcs.clear()
+            note(L.t("forgotten"))
+        }, LinearLayout.LayoutParams(w, -2))
+        note(L.t("about_text", versionName, Build.MODEL, Build.VERSION.RELEASE, localIp() ?: "?", networkLabel()))
+        overlay.post { p.getChildAt(2)?.requestFocus() } // first setting
+    }
+
+    private fun hwSummary(): String {
+        if (prefs.getInt("hw_ver", 0) == 0) return L.t("hwtest_never")
+        fun res(h: Int) = when (h) { 0 -> L.t("none"); 2160 -> "4K"; else -> "${h}p" } + if (h > 0) " 60 i/s" else ""
+        val lat = prefs.getInt("hw_lat", -1)
+        return L.t("hwtest_result", res(prefs.getInt("hw_hevc", 0)), res(prefs.getInt("hw_avc", 0)), if (lat >= 0) "$lat" else "?")
     }
 
     // ---------------- updates ----------------
@@ -125,10 +258,9 @@ class MainActivity : Activity() {
             if (r == null || r.code <= versionCode) return@Thread
             ui.post {
                 release = r
-                updateButton.text = "Mettre à jour vers la version ${r.name}"
-                updateButton.visibility = View.VISIBLE
+                updateButton?.apply { text = L.t("update_to", r.name); visibility = View.VISIBLE }
                 // Offer it once per version, only when not streaming.
-                if (client == null && prefs.getInt("offered", 0) < r.code) {
+                if (client == null && !inSettings && prefs.getInt("offered", 0) < r.code) {
                     prefs.edit().putInt("offered", r.code).apply()
                     startUpdate()
                 }
@@ -140,12 +272,12 @@ class MainActivity : Activity() {
         val r = release ?: return
         disconnect(null)
         autoConnect = false
-        status.text = "Téléchargement de la mise à jour…"
+        setStatus(L.t("dl_update", 0))
         Thread({
             try {
-                Updater.install(this, r) { p -> ui.post { status.text = "Téléchargement de la mise à jour… $p %" } }
+                Updater.install(this, r) { p -> ui.post { setStatus(L.t("dl_update", p)) } }
             } catch (e: Exception) {
-                ui.post { status.text = "Échec de la mise à jour : ${e.message}" }
+                ui.post { setStatus(L.t("update_failed", e.message ?: "?")) }
             }
         }, "update").start()
     }
@@ -154,7 +286,7 @@ class MainActivity : Activity() {
         override fun run() {
             val c = client
             if (c != null && stats.visibility == View.VISIBLE) {
-                stats.text = "${c.info}\nReçu : %.1f Mb/s · Affiché : ${c.fps} i/s · Pertes : ${c.dropped}".format(c.kbps / 1000.0)
+                stats.text = c.info + "\n" + L.t("stats", c.kbps / 1000.0, c.fps, c.dropped)
                 ui.postDelayed(this, 1000)
             }
         }
@@ -204,7 +336,7 @@ class MainActivity : Activity() {
                     }
                 }
             } catch (e: Exception) {
-                ui.post { status.text = "Erreur réseau : ${e.message}" }
+                ui.post { setStatus(L.t("net_error", e.message ?: "?")) }
                 discovering = false
             }
         }, "discovery").start()
@@ -214,6 +346,7 @@ class MainActivity : Activity() {
         val out = mutableListOf<InetAddress>(InetAddress.getByName("255.255.255.255"))
         try {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            @Suppress("DEPRECATION")
             val nets = if (Build.VERSION.SDK_INT >= 23) listOfNotNull(cm.activeNetwork) else cm.allNetworks.toList()
             for (n in nets) for (la in cm.getLinkProperties(n)?.linkAddresses.orEmpty()) {
                 val a = la.address as? Inet4Address ?: continue
@@ -239,34 +372,47 @@ class MainActivity : Activity() {
     }
 
     private fun refreshList() {
-        list.removeAllViews()
-        for (pc in pcs.values) list.addView(button("${pc.name}   (${pc.ip})${if (pc.busy) "  – occupé" else ""}") { autoConnect = true; connect(pc.ip, pc.name) })
-        if (client == null) status.text = if (pcs.isEmpty()) "Recherche des ordinateurs sur le réseau…" else "Choisissez un ordinateur :"
-        if (currentFocus == null || currentFocus?.parent === list) list.getChildAt(0)?.requestFocus()
+        val l = list ?: return
+        l.removeAllViews()
+        for (pc in pcs.values) l.addView(button("${pc.name}   (${pc.ip})${if (pc.busy) "  – " + L.t("busy") else ""}") { autoConnect = true; connect(pc.ip, pc.name) })
+        if (client == null) setStatus(L.t(if (pcs.isEmpty()) "searching" else "choose"))
+        if (currentFocus == null || currentFocus?.parent === l) l.getChildAt(0)?.requestFocus()
     }
 
     /** Plug & play: reconnect to the last PC, or to the only PC found. */
     private fun tryAutoConnect() {
-        if (!autoConnect || client != null || !surfaceReady) return
+        if (!autoConnect || client != null || !surfaceReady || inSettings || testing) return
         val last = prefs.getString("last", null)
         val target = pcs[last] ?: pcs.values.singleOrNull()?.takeIf { !it.busy && last == null }
         if (target != null) connect(target.ip, target.name)
     }
 
     // ---------------- streaming ----------------
-    private fun connect(ip: String, name: String) {
-        if (!surfaceReady) return
-        disconnect(null)
-        status.text = "Connexion à $name…"
+    /** Everything the PC needs to adapt: panel, refresh rate, decoder limits (tested or declared), network, preferences. */
+    private fun hello(): String {
         val (w, h) = panelSize()
-        @Suppress("DEPRECATION")
-        val hz = Math.round(windowManager.defaultDisplay.refreshRate)
-        val hello = "TVSP1;v=2;app=$versionCode;name=${Build.MODEL.replace(';', ' ')};w=$w;h=$h;hz=$hz" +
-            ";hevc=${maxDecodeHeight(MediaFormat.MIMETYPE_VIDEO_HEVC)};avc=${maxDecodeHeight(MediaFormat.MIMETYPE_VIDEO_AVC)}"
+        val tested = prefs.getInt("hw_ver", 0) > 0
+        val hevc = if (tested) prefs.getInt("hw_hevc", 0) else Codecs.declaredMaxHeight(MediaFormat.MIMETYPE_VIDEO_HEVC)
+        val avc = if (tested) prefs.getInt("hw_avc", 0) else Codecs.declaredMaxHeight(MediaFormat.MIMETYPE_VIDEO_AVC)
+        val (net, band, link) = network()
+        return "TVSP1;v=2;app=$versionCode;lang=${L.lang};name=${Build.MODEL.replace(';', ' ')};w=$w;h=$h;hz=${refreshHz()}" +
+            ";hevc=$hevc;avc=$avc;tested=${if (tested) 1 else 0};lat=${prefs.getInt("hw_lat", -1)}" +
+            ";net=$net;band=$band;link=$link;pref=${prefs.getString("pref", "auto")};maxh=${prefs.getString("maxh", "0")}"
+    }
+
+    @Suppress("DEPRECATION")
+    private fun refreshHz() = Math.round(windowManager.defaultDisplay.refreshRate)
+
+    private fun connect(ip: String, name: String) {
+        if (!surfaceReady || testing) return
+        if (inSettings) showMain()
+        disconnect(null)
+        setStatus(L.t("connecting", name))
+        val hz = refreshHz()
         lateinit var c: StreamClient
-        c = StreamClient(ip, hello, surfaceView.holder.surface, object : StreamClient.Listener {
+        c = StreamClient(ip, hello(), surfaceView.holder.surface, object : StreamClient.Listener {
             override fun onStatus(text: String) {
-                ui.post { if (client === c && overlay.visibility == View.VISIBLE) status.text = "$name : $text" }
+                ui.post { if (client === c && overlay.visibility == View.VISIBLE) setStatus("$name : $text") }
             }
 
             override fun onStarted(info: String) {
@@ -276,6 +422,7 @@ class MainActivity : Activity() {
                     overlay.visibility = View.GONE
                     acquireWifiLock()
                     if (Build.VERSION.SDK_INT >= 30) try { surfaceView.holder.surface.setFrameRate(hz.toFloat(), android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) } catch (_: Exception) {}
+                    if (prefs.getBoolean("showstats", false)) { stats.visibility = View.VISIBLE; ui.removeCallbacks(statsTick); statsTick.run() }
                     android.util.Log.i(StreamClient.TAG, "streaming $info from $name")
                 }
             }
@@ -287,8 +434,8 @@ class MainActivity : Activity() {
                     releaseWifiLock()
                     stats.visibility = View.GONE
                     overlay.visibility = View.VISIBLE
-                    status.text = if (error != null) "Déconnecté : $error" else "Déconnecté"
-                    list.getChildAt(0)?.requestFocus()
+                    setStatus(if (error != null) L.t("disconnected_err", error) else L.t("disconnected"))
+                    list?.getChildAt(0)?.requestFocus()
                     if (autoConnect) ui.postDelayed({ tryAutoConnect() }, 2000)
                 }
             }
@@ -304,16 +451,17 @@ class MainActivity : Activity() {
         releaseWifiLock()
         stats.visibility = View.GONE
         overlay.visibility = View.VISIBLE
-        status.text = reason ?: "Déconnecté"
+        setStatus(reason ?: L.t("disconnected"))
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK && client != null) {
             autoConnect = false // user wants out: no auto-reconnect until they pick a PC
-            disconnect("Déconnecté – choisissez un ordinateur pour reprendre")
-            list.getChildAt(0)?.requestFocus()
+            disconnect(L.t("disconnected_back"))
+            list?.getChildAt(0)?.requestFocus()
             return true
         }
+        if (keyCode == KeyEvent.KEYCODE_BACK && inSettings) { showMain(); return true }
         if (client != null && overlay.visibility == View.GONE &&
             (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_INFO)) {
             stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -321,6 +469,7 @@ class MainActivity : Activity() {
             statsTick.run()
             return true
         }
+        if (client == null && keyCode == KeyEvent.KEYCODE_MENU && !inSettings) { showSettings(); return true }
         return super.onKeyDown(keyCode, event)
     }
 
@@ -331,9 +480,37 @@ class MainActivity : Activity() {
             val m = d.mode
             return maxOf(m.physicalWidth, m.physicalHeight) to minOf(m.physicalWidth, m.physicalHeight)
         }
-        val p = android.graphics.Point(); d.getRealSize(p)
+        val p = android.graphics.Point()
+        d.getRealSize(p)
         return maxOf(p.x, p.y) to minOf(p.x, p.y)
     }
+
+    /** (eth|wifi|other, Wi-Fi band GHz or 0, link speed Mb/s or 0). */
+    private fun network(): Triple<String, String, Int> = try {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = if (Build.VERSION.SDK_INT >= 23) cm.getNetworkCapabilities(cm.activeNetwork) else null
+        when {
+            caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> Triple("eth", "0", 0)
+            caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                @Suppress("DEPRECATION") val wi = wm.connectionInfo
+                val f = if (Build.VERSION.SDK_INT >= 21) wi.frequency else 0
+                val band = when { f >= 5925 -> "6"; f >= 4900 -> "5"; f > 0 -> "2.4"; else -> "0" }
+                Triple("wifi", band, maxOf(wi.linkSpeed, 0))
+            }
+            else -> Triple("other", "0", 0)
+        }
+    } catch (_: Exception) { Triple("other", "0", 0) }
+
+    private fun networkLabel(): String {
+        val (net, band, link) = network()
+        return when (net) { "eth" -> L.t("ethernet"); "wifi" -> L.t("wifi", band, link); else -> "?" }
+    }
+
+    private fun localIp(): String? = try {
+        java.net.NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
+            .firstOrNull { it is Inet4Address && !it.isLoopbackAddress }?.hostAddress
+    } catch (_: Exception) { null }
 
     /** Ask for the native-resolution 60 Hz mode (TVs often idle at 50 Hz → judder). */
     private fun preferBestDisplayMode() {
@@ -345,23 +522,6 @@ class MainActivity : Activity() {
             .minByOrNull { Math.abs(it.refreshRate - 60f) } ?: return
         window.attributes = window.attributes.apply { preferredDisplayModeId = best.modeId }
     }
-
-    /** Highest 16:9 height the hardware decoder handles at 60 fps (0 = no hardware decoder). */
-    private fun maxDecodeHeight(mime: String): Int = try {
-        var best = 0
-        for (ci in MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos) {
-            if (ci.isEncoder || ci.supportedTypes.none { it.equals(mime, true) }) continue
-            val hw = if (Build.VERSION.SDK_INT >= 29) ci.isHardwareAccelerated
-                     else !ci.name.startsWith("OMX.google.") && !ci.name.startsWith("c2.android.")
-            if (!hw) continue
-            val vc = ci.getCapabilitiesForType(mime).videoCapabilities ?: continue
-            val h = listOf(2160, 1440, 1080, 900, 720).firstOrNull { h ->
-                try { vc.areSizeAndRateSupported(((h * 16 / 9) + 7) and 7.inv(), h, 60.0) } catch (_: Exception) { false }
-            } ?: 1080 // capabilities not reported: assume a standard 1080p60 TV decoder
-            best = maxOf(best, h)
-        }
-        best
-    } catch (_: Exception) { 0 }
 
     private fun acquireWifiLock() {
         if (wifiLock != null) return
@@ -387,15 +547,23 @@ class MainActivity : Activity() {
         text = s; textSize = size; setTextColor(color); gravity = Gravity.CENTER; setPadding(0, dp(6), 0, dp(6))
     }
 
-    private fun button(label: String, onClick: () -> Unit) = Button(this).apply {
+    private fun button(label: String, wide: Boolean = true, onClick: () -> Unit) = Button(this).apply {
         text = label; isAllCaps = false; textSize = 18f; setTextColor(Color.WHITE)
         isFocusable = true
-        background = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(Color.rgb(30, 60, 90)) }
+        gravity = if (wide) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.CENTER
+        setPadding(dp(20), dp(10), dp(20), dp(10))
+        background = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(BTN) }
         setOnFocusChangeListener { v, f ->
-            (v.background as GradientDrawable).setColor(if (f) Color.rgb(30, 136, 229) else Color.rgb(30, 60, 90))
-            v.scaleX = if (f) 1.04f else 1f; v.scaleY = v.scaleX
+            (v.background as GradientDrawable).setColor(if (f) BTN_FOCUS else BTN)
+            v.scaleX = if (f) 1.03f else 1f; v.scaleY = v.scaleX
         }
         setOnClickListener { onClick() }
-        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(6), 0, dp(6)) }
+        layoutParams = LinearLayout.LayoutParams(if (wide) -1 else -2, -2).apply { setMargins(dp(4), dp(6), dp(4), dp(6)) }
+    }
+
+    companion object {
+        private val BG = Color.rgb(13, 27, 42)
+        private val BTN = Color.rgb(30, 60, 90)
+        private val BTN_FOCUS = Color.rgb(30, 136, 229)
     }
 }

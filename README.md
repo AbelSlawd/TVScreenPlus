@@ -80,14 +80,36 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 | **OK** ou **Menu** | Afficher / masquer les statistiques (résolution, débit, images/s) |
 | **Retour** | Se déconnecter. L'écran disparaît de Windows |
 
-**Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, démarrage avec Windows, mises à jour, recalibrage, journal.
+**Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, démarrage avec Windows, mises à jour, recalibrage, **mode debug**, journal.
+
+### Paramètres de la TV (⚙ en haut à droite, ou touche Menu)
+| Paramètre | Rôle |
+|---|---|
+| **Langue** | Langue du système, ou Français / English / Español / Deutsch |
+| **Priorité de l'image** | *Automatique*, *Fluidité* (débit prudent, 1080p max) ou *Qualité maximale* (débit plus élevé) |
+| **Résolution maximale** | Automatique, 720p, 1080p, 1440p ou 4K |
+| **Connexion automatique** | Se connecter seule au dernier PC utilisé |
+| **Statistiques pendant la diffusion** | Les afficher d'office (sinon : touche OK) |
+| **Test du matériel de la TV** | Mesure ce que la puce vidéo décode vraiment (voir ci-dessous) |
+| **Rechercher les mises à jour** | Vérifie et installe la dernière version |
+| **Oublier les ordinateurs mémorisés** | Efface le dernier PC et l'IP saisie |
+| **À propos** | Version, modèle, Android, adresse IP, type de réseau (Ethernet / Wi-Fi 2,4-5-6 GHz) |
+
+La version de l'application est affichée en haut de l'écran d'accueil.
+
+### Mode debug (PC)
+Clic droit sur l'icône › *Mode debug* : une fenêtre affiche en direct
+- la **stabilité du signal** (score sur 100, saturation du réseau, gigue de latence, images perdues par la TV, baisses de débit) ;
+- les **images par seconde** envoyées par le PC et affichées par la TV ;
+- la **résolution**, le codec, l'encodeur et le débit ;
+- la **latence** : aller-retour réseau mesuré chaque seconde, latence de décodage de la TV et estimation de la latence totale PC → écran.
 
 > Astuce : pour placer la TV à gauche ou à droite de votre écran principal, faites-la glisser dans *Paramètres › Système › Affichage*.
 
 ## Réglage automatique de la qualité
 À chaque connexion, en 2 à 5 secondes :
 1. **Réseau** : la latence et le débit réel entre le PC et la TV sont mesurés.
-2. **TV** : l'application indique la résolution de l'écran, sa fréquence (50 ou 60 Hz) et la résolution maximale que sa puce vidéo peut décoder.
+2. **TV** : l'application indique la résolution de l'écran, sa fréquence (50 ou 60 Hz), le type de réseau et la résolution maximale que sa puce vidéo décode à 60 i/s. Après le **test du matériel** (Paramètres de la TV), ce sont les valeurs **mesurées** qui sont envoyées, avec la latence de décodage. Le test encode un court clip sur la TV puis le décode en HEVC et en H.264, de la 4K à la 720p.
 3. **PC** : l'encodeur de la carte graphique est détecté puis **testé en conditions réelles** (résultat mémorisé). Le réglage « qualité » est préféré, et le réglage « rapide » sert si le PC n'est pas assez puissant.
 4. TVScreenPlus choisit la **résolution la plus élevée** que l'ensemble supporte, avec le débit adapté.
 
@@ -141,9 +163,10 @@ PC Windows                                                   TV Google TV
 <summary>Protocole</summary>
 
 - **Découverte** : la TV diffuse `TVSP?` en UDP et le PC répond `TVSP!\nname=…\nbusy=0|1\nver=…`.
-- **Connexion** : la TV envoie `TVSP1;v=2;name=…;w=…;h=…;hz=…;hevc=<hauteur max>;avc=<hauteur max>`.
+- **Connexion** : la TV envoie `TVSP1;v=2;name=…;w=…;h=…;hz=…;hevc=<hauteur max>;avc=<hauteur max>;…`.
 - **Flux** : paquets `[u32 taille][u8 flags][données]`. Flags : `0x80` remplissage (test de débit), `0x40` ping (la TV répond `ACK`), `0x20` configuration, `0x10` message d'état, sinon une image vidéo Annex-B (`1` = image clé).
-- **Retour TV → PC** : `STAT;fps=…;kbps=…;drop=…` toutes les 2 secondes.
+- **Retour TV → PC** : `STAT;fps=…;kbps=…;drop=…` toutes les 2 secondes, et `ACK` en réponse aux pings envoyés chaque seconde pour mesurer la latence.
+- **Champs supplémentaires de la connexion** : `lang`, `tested`, `lat` (latence de décodage en ms), `net`/`band`/`link` (réseau), `pref` (priorité), `maxh` (résolution max).
 </details>
 
 ## Compiler soi-même

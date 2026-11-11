@@ -122,6 +122,7 @@ namespace TVScreenPlus
             menu.Items.Add(upd);
             menu.Items.Add("Rechercher une mise à jour", null, (s, e) => Task.Run(() => CheckUpdate(true)));
             menu.Items.Add("Recalibrer (nouveau matériel)", null, (s, e) => { Settings.ResetCalibration(); Notify("TVScreenPlus", "Le calibrage sera refait à la prochaine connexion."); });
+            menu.Items.Add("Mode debug (statistiques en direct)", null, (s, e) => DebugWindow.Toggle(() => server));
             menu.Items.Add("Ouvrir le journal", null, (s, e) => Process.Start("notepad.exe", Log.FilePath));
             menu.Items.Add(new ToolStripMenuItem("Version " + Program.Version.ToString(3)) { Enabled = false });
             menu.Items.Add(new ToolStripSeparator());

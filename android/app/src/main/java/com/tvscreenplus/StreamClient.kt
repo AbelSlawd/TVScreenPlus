@@ -79,7 +79,7 @@ class StreamClient(
             while (running) {
                 val len = input.readInt()
                 val flags = input.readUnsignedByte()
-                if (len < 0 || len > (64 shl 20)) throw Exception("Flux corrompu")
+                if (len < 0 || len > (64 shl 20)) throw Exception(L.t("corrupt"))
                 if (len > buf.size) buf = ByteArray(len * 2)
                 input.readFully(buf, 0, len)
                 bytesWindow += len + 5
@@ -108,7 +108,7 @@ class StreamClient(
         val hevc = c["codec"] == "hevc"
         decoder?.release()
         decoder = Decoder(if (hevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC, w, h, hevc)
-        val rate = c["kbps"]?.toIntOrNull()?.let { " · cible %.1f Mb/s".format(it / 1000.0) } ?: ""
+        val rate = c["kbps"]?.toIntOrNull()?.let { " · ${L.t("target")} %.1f Mb/s".format(it / 1000.0) } ?: ""
         info = "${w}x$h ${c["fps"] ?: "60"} i/s ${if (hevc) "HEVC" else "H.264"}$rate · ${c["enc"] ?: ""}"
         listener.onStarted(info)
     }
@@ -129,7 +129,7 @@ class StreamClient(
     /** One hardware decoder instance + its render thread. */
     private inner class Decoder(mime: String, w: Int, h: Int, private val hevc: Boolean) {
         @Volatile private var alive = true
-        private val codec = createDecoder(mime, w, h)
+        private val codec = Codecs.lowLatencyDecoder(mime, w, h, surface)
         private val render = Thread({ drain() }, "render").apply { start() }
         private var gotKey = false
 
@@ -177,39 +177,6 @@ class StreamClient(
             try { render.join(500) } catch (_: Exception) {}
             try { codec.stop() } catch (_: Exception) {}
             try { codec.release() } catch (_: Exception) {}
-        }
-
-        private fun createDecoder(mime: String, w: Int, h: Int): MediaCodec {
-            fun format(extended: Boolean) = MediaFormat.createVideoFormat(mime, w, h).apply {
-                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, maxOf(w * h, 2 shl 20))
-                if (Build.VERSION.SDK_INT >= 30) setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
-                if (extended) {
-                    if (Build.VERSION.SDK_INT >= 23) {
-                        setInteger(MediaFormat.KEY_PRIORITY, 0) // realtime
-                        setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE.toInt())
-                    }
-                    // Vendor low-latency switches (Qualcomm, MediaTek, HiSilicon, Amlogic/others).
-                    setInteger("vendor.qti-ext-dec-low-latency.enable", 1)
-                    setInteger("vendor.qti-ext-dec-picture-order.enable", 1)
-                    setInteger("vendor.rtc-ext-dec-low-latency.enable", 1)
-                    setInteger("vendor.low-latency.enable", 1)
-                    setInteger("vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-req", 1)
-                    setInteger("vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-rdy", -1)
-                }
-            }
-            for (extended in listOf(true, false)) {
-                val dec = MediaCodec.createDecoderByType(mime)
-                try {
-                    dec.configure(format(extended), surface, null, 0)
-                    dec.start()
-                    Log.i(TAG, "decoder ${dec.name} extended=$extended")
-                    return dec
-                } catch (e: Exception) {
-                    Log.w(TAG, "configure extended=$extended failed", e)
-                    dec.release()
-                }
-            }
-            throw Exception("Décodeur vidéo indisponible")
         }
     }
 

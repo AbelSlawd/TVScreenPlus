@@ -69,13 +69,13 @@ object Updater {
                     it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     activity.startActivity(it)
                 }
-                "Confirmez l'installation de la mise à jour…"
+                L.t("confirm_install")
             }
-            PackageInstaller.STATUS_SUCCESS -> "Mise à jour installée"
+            PackageInstaller.STATUS_SUCCESS -> L.t("installed")
             PackageInstaller.STATUS_FAILURE_CONFLICT, PackageInstaller.STATUS_FAILURE_INCOMPATIBLE ->
-                "Mise à jour impossible : la version installée a une autre signature. Désinstallez TVScreenPlus puis installez le nouvel APK une fois (les suivantes seront automatiques)."
-            PackageInstaller.STATUS_FAILURE_ABORTED -> "Mise à jour annulée"
-            else -> "Échec de la mise à jour : " + (intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "inconnu")
+                L.t("sig_conflict")
+            PackageInstaller.STATUS_FAILURE_ABORTED -> L.t("cancelled")
+            else -> L.t("update_failed", intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "?")
         }
     }
 }
