@@ -79,6 +79,12 @@ namespace TVScreenPlus
             Log.W("Virtual display " + (on ? "enabled" : "disabled") + " ok=" + ok);
         }
 
+        public static void Remove()
+        {
+            bool ok = WithDevice((h, d) => SetupDiCallClassInstaller(0x05 /*DIF_REMOVE*/, h, ref d));
+            Log.W("Virtual display removed ok=" + ok);
+        }
+
         static bool WithDevice(Func<IntPtr, SP_DEVINFO_DATA, bool> act)
         {
             var h = SetupDiGetClassDevs(ref DisplayClass, IntPtr.Zero, IntPtr.Zero, 0x2 /*DIGCF_PRESENT*/);
@@ -103,7 +109,7 @@ namespace TVScreenPlus
         static void WriteSettings(int w, int h, int fps)
         {
             Directory.CreateDirectory(ConfDir);
-            var modes = new List<(int, int)> { (w, h), (1920, 1080), (2560, 1440), (3840, 2160), (1280, 720) }.Distinct();
+            var modes = new List<(int, int)> { (w, h), (1920, 1080), (2560, 1440), (3840, 2160), (1600, 900), (1280, 720) }.Distinct();
             var sb = new StringBuilder("<?xml version='1.0' encoding='utf-8'?>\n<vdd_settings>\n<monitors><count>1</count></monitors>\n<gpu><friendlyname>default</friendlyname></gpu>\n");
             sb.Append($"<global><g_refresh_rate>{fps}</g_refresh_rate></global>\n<resolutions>\n");
             foreach (var (mw, mh) in modes) sb.Append($"<resolution><width>{mw}</width><height>{mh}</height><refresh_rate>{fps}</refresh_rate></resolution>\n");
@@ -128,6 +134,14 @@ namespace TVScreenPlus
             }
             if (name == null) throw new Exception("L'écran virtuel n'est pas apparu");
 
+            return SetMode(name, w, h, fps);
+        }
+
+        /// <summary>Change the virtual monitor resolution (stays attached).</summary>
+        public static DisplayTarget Resize(DisplayTarget t, int w, int h, int fps) => SetMode(t.GdiName, w, h, fps);
+
+        static DisplayTarget SetMode(string name, int w, int h, int fps)
+        {
             var dm = new DEVMODE { dmSize = (short)Marshal.SizeOf(typeof(DEVMODE)), dmPelsWidth = w, dmPelsHeight = h, dmDisplayFrequency = fps, dmFields = 0x80000 | 0x100000 | 0x400000 };
             int r = ChangeDisplaySettingsEx(name, ref dm, IntPtr.Zero, 0x1 /*CDS_UPDATEREGISTRY*/, IntPtr.Zero);
             Log.W($"ChangeDisplaySettingsEx {name} {w}x{h}@{fps} -> {r}");
@@ -135,7 +149,7 @@ namespace TVScreenPlus
             for (int i = 0; i < 25; i++)
             {
                 var t = Dxgi.Find(name);
-                if (t != null) { Log.W("Target " + t); return t; }
+                if (t != null && (t.Width == w || i > 10)) { Log.W("Target " + t); return t; }
                 Thread.Sleep(200);
             }
             throw new Exception("Sortie DXGI introuvable pour " + name);

@@ -68,8 +68,8 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |
-            **PC Windows** : `TVScreenPlus-PC.zip` → décompresser dans un dossier fixe, lancer `TVScreenPlus.exe`.
-            **Google TV** : `TVScreenPlus-TV.apk` → installer sur la TV (s'installe par-dessus la version précédente).
+            **PC Windows** : `TVScreenPlus-PC.zip` → décompresser n'importe où et lancer `TVScreenPlus.exe` : il s'installe dans *Program Files*, remplace et supprime l'ancienne version. Les versions suivantes s'installent automatiquement.
+            **Google TV** : `TVScreenPlus-TV.apk` → installer sur la TV ; l'application propose ensuite elle-même les mises à jour.
 
             Commit : ${{ github.sha }}
           files: |

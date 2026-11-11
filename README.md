@@ -10,12 +10,25 @@ Chaque push publie automatiquement une nouvelle Release `v1.0.N`.
 
 ## Installation (2 minutes)
 
-1. **PC Windows 10/11** : téléchargez `TVScreenPlus-PC.zip` (Releases ou artefact de la CI), décompressez-le où vous voulez et lancez `TVScreenPlus.exe` (accepter la demande administrateur).
-   Au premier lancement, il installe tout seul le pilote d'écran virtuel, ouvre le pare-feu et se met au démarrage de Windows. Une icône apparaît près de l'horloge.
+1. **PC Windows 10/11** : décompressez `TVScreenPlus-PC.zip` n'importe où et lancez `TVScreenPlus.exe` (accepter la demande administrateur).
+   Il s'installe dans `C:\Program Files\TVScreenPlus`, **arrête et supprime l'ancienne version** s'il y en a une, installe le pilote d'écran virtuel, ouvre le pare-feu, se lance au démarrage de Windows et apparaît dans *Paramètres › Applications* (désinstallation propre). Le dossier décompressé peut ensuite être supprimé.
 2. **TV** : installez `TVScreenPlus-TV.apk` (via *Send Files to TV*, *Downloader* ou `adb install`), puis ouvrez l'appli.
    Les PC du réseau apparaissent automatiquement ; s'il n'y en a qu'un, la connexion est **automatique**, et la TV se reconnecte toute seule au dernier PC utilisé.
 
-C'est tout : un nouvel écran apparaît dans Windows (Paramètres › Affichage) dès que la TV est connectée, et disparaît quand elle se déconnecte (touche *Retour*).
+Un nouvel écran apparaît dans Windows dès que la TV est connectée, et disparaît quand elle se déconnecte (touche *Retour*). Sur la TV, **OK** ou **Menu** affiche les statistiques en direct (résolution, débit, images/s).
+
+## Réglage automatique
+À chaque connexion :
+1. **Réseau** : la latence et le débit réel PC → TV sont mesurés (≈1 s).
+2. **TV** : l'appli annonce la résolution de l'écran, sa fréquence (50/60 Hz) et la résolution maximale que son décodeur matériel tient à 60 i/s (HEVC et H.264).
+3. **PC** : l'encodeur matériel est détecté puis **calibré en conditions réelles** (préréglage « qualité » d'abord, « rapide » sinon) ; résultat mémorisé.
+4. La résolution la plus haute que réseau + PC + TV tiennent est choisie, avec le débit qui va avec. Pendant la diffusion, le débit baisse automatiquement si le réseau sature, puis remonte quand il redevient stable.
+
+Tout reste réglable manuellement depuis l'icône (Résolution, Qualité, Recalibrer).
+
+## Mises à jour
+- **PC** : vérification toutes les 6 h (et via le menu *Rechercher une mise à jour*) ; installation automatique quand aucune TV n'est connectée.
+- **TV** : l'appli vérifie au lancement et propose la mise à jour (une confirmation Android est obligatoire).
 
 ## Pourquoi c'est rapide
 
@@ -23,11 +36,10 @@ C'est tout : un nouvel écran apparaît dans Windows (Paramètres › Affichage)
 |---|---|
 | Écran virtuel | Pilote IddCx open source ([Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver), MIT) : un vrai moniteur étendu pour Windows |
 | Capture | Desktop Duplication (DXGI) directement dans le GPU, curseur inclus |
-| Encodage | Matériel **zéro copie** : NVIDIA NVENC, AMD AMF ou Intel Quick Sync, détecté automatiquement (repli CPU x264 ultrafast) ; HEVC si la TV le décode, sinon H.264 ; réglages ultra-faible latence (pas de B-frames, CBR, VBV court) |
+| Encodage | Matériel **zéro copie** : NVIDIA NVENC, AMD AMF ou Intel Quick Sync, détecté automatiquement (repli CPU x264 ultrafast) ; HEVC si la TV le décode, sinon H.264 ; qualité constante plafonnée (texte net sur bureau statique), AQ spatiale, pas de B-frames, VBV court |
 | Transport | TCP sans Nagle, une trame = un paquet, aucune mise en tampon |
 | Décodage TV | MediaCodec matériel en mode *low-latency* (+ clés constructeur Amlogic/MediaTek/Qualcomm), rendu immédiat sur la surface, Wi-Fi en mode *low latency*, affichage forcé en 60 Hz |
 
-Par défaut : 1080p 60 i/s, ~17 Mb/s (HEVC) ou ~25 Mb/s (H.264). Le menu de l'icône permet de passer en 1440p / 4K / natif et de régler le débit (*Wi-Fi faible*, *Haute*, *Maximale*).
 Conseil : PC en Ethernet + TV en Ethernet ou Wi-Fi 5 GHz pour une fluidité maximale.
 
 ## Dépannage

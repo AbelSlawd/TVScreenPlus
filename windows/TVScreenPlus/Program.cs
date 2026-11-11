@@ -18,16 +18,25 @@ namespace TVScreenPlus
         public static readonly string DataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "TVScreenPlus");
 
+        public static readonly Version Version = typeof(Program).Assembly.GetName().Version;
+        public const string QuitEvent = "Global\\TVScreenPlus_quit";
+
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
-            using (var mtx = new Mutex(true, "Global\\TVScreenPlus_single", out bool first))
+            Directory.CreateDirectory(DataDir);
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            if (args.Contains("--uninstall")) { Installer.Uninstall(); return; }
+            try { if (!Installer.EnsureInstalled()) return; }
+            catch (Exception e) { Log.W("Install failed: " + e); MessageBox.Show("Installation impossible : " + e.Message, "TVScreenPlus"); return; }
+
+            using (var mtx = new Mutex(false, "Global\\TVScreenPlus_single"))
             {
-                if (!first) return;
-                Directory.CreateDirectory(DataDir);
+                // A previous instance may still be shutting down (update/reinstall): wait for it.
+                try { if (!mtx.WaitOne(15000)) return; } catch (AbandonedMutexException) { }
                 Log.Init();
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
+                Log.W("TVScreenPlus " + Version + " in " + Dir);
                 Application.Run(new TrayApp());
             }
         }
@@ -37,7 +46,10 @@ namespace TVScreenPlus
     {
         static readonly object L = new object();
         public static string FilePath = Path.Combine(Program.DataDir, "log.txt");
-        public static void Init() { try { File.WriteAllText(FilePath, ""); } catch { } }
+        public static void Init()
+        {
+            try { if (File.Exists(FilePath) && new FileInfo(FilePath).Length > (2 << 20)) File.WriteAllText(FilePath, ""); } catch { }
+        }
         public static void W(string s)
         {
             lock (L) try { File.AppendAllText(FilePath, DateTime.Now.ToString("HH:mm:ss.fff ") + s + "\r\n"); } catch { }
@@ -62,10 +74,17 @@ namespace TVScreenPlus
                 try { File.WriteAllLines(F, D.Select(p => p.Key + "=" + p.Value)); } catch { }
             }
         }
-        /// <summary>Target vertical resolution: 1080 / 1440 / 2160 / 0 = TV native.</summary>
-        public static int Res { get => int.Parse(Get("res", "1080")); set => Set("res", value.ToString()); }
-        /// <summary>Bitrate multiplier: 0.6 (Wi-Fi), 1 (normal), 2 (Ethernet/max).</summary>
-        public static double Quality { get => double.Parse(Get("quality", "1"), System.Globalization.CultureInfo.InvariantCulture); set => Set("quality", value.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+        /// <summary>Target vertical resolution: -1 = automatic, 0 = TV native, else 1080 / 1440 / 2160.</summary>
+        public static int Res { get => int.Parse(Get("resolution", "-1")); set => Set("resolution", value.ToString()); }
+        /// <summary>Bitrate: 0 = automatic (measured network), else multiplier 0.6 / 1 / 2.</summary>
+        public static double Quality { get => double.Parse(Get("bitrate", "0"), System.Globalization.CultureInfo.InvariantCulture); set => Set("bitrate", value.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+        public static bool AutoUpdate { get => Get("autoupdate", "1") == "1"; set => Set("autoupdate", value ? "1" : "0"); }
+        /// <summary>Forget encoder probes and benchmarks (new GPU/driver).</summary>
+        public static void ResetCalibration()
+        {
+            lock (D) foreach (var k in D.Keys.Where(k => k.StartsWith("enc_") || k.StartsWith("bench_")).ToList()) D.Remove(k);
+            Set("_", null);
+        }
         public static bool AutoStart { get => Get("autostart", "1") == "1"; set => Set("autostart", value ? "1" : "0"); }
     }
 
@@ -85,24 +104,69 @@ namespace TVScreenPlus
             menu.Items.Add(new ToolStripSeparator());
 
             var res = new ToolStripMenuItem("Résolution");
-            foreach (var (label, v) in new[] { ("1080p (recommandé)", 1080), ("1440p", 1440), ("4K", 2160), ("Native de la TV", 0) })
+            foreach (var (label, v) in new[] { ("Automatique (recommandé)", -1), ("1080p", 1080), ("1440p", 1440), ("4K", 2160), ("Native de la TV", 0) })
                 res.DropDownItems.Add(Radio(label, () => Settings.Res == v, () => Settings.Res = v));
             menu.Items.Add(res);
 
             var q = new ToolStripMenuItem("Qualité / débit");
-            foreach (var (label, v) in new[] { ("Wi-Fi faible", 0.6), ("Haute (recommandé)", 1.0), ("Maximale (Ethernet / Wi-Fi 6)", 2.0) })
+            foreach (var (label, v) in new[] { ("Automatique selon le réseau (recommandé)", 0.0), ("Wi-Fi faible", 0.6), ("Haute", 1.0), ("Maximale (Ethernet / Wi-Fi 6)", 2.0) })
                 q.DropDownItems.Add(Radio(label, () => Math.Abs(Settings.Quality - v) < 0.01, () => Settings.Quality = v));
             menu.Items.Add(q);
 
             var auto = new ToolStripMenuItem("Lancer au démarrage de Windows") { Checked = Settings.AutoStart, CheckOnClick = true };
             auto.CheckedChanged += (s, e) => { Settings.AutoStart = auto.Checked; Setup.SetAutoStart(auto.Checked); };
             menu.Items.Add(auto);
+            var upd = new ToolStripMenuItem("Mises à jour automatiques") { Checked = Settings.AutoUpdate, CheckOnClick = true };
+            upd.CheckedChanged += (s, e) => Settings.AutoUpdate = upd.Checked;
+            menu.Items.Add(upd);
+            menu.Items.Add("Rechercher une mise à jour", null, (s, e) => Task.Run(() => CheckUpdate(true)));
+            menu.Items.Add("Recalibrer (nouveau matériel)", null, (s, e) => { Settings.ResetCalibration(); Notify("TVScreenPlus", "Le calibrage sera refait à la prochaine connexion."); });
             menu.Items.Add("Ouvrir le journal", null, (s, e) => Process.Start("notepad.exe", Log.FilePath));
+            menu.Items.Add(new ToolStripMenuItem("Version " + Program.Version.ToString(3)) { Enabled = false });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Quitter", null, (s, e) => Quit());
 
             icon = new NotifyIcon { Icon = MakeIcon(), Text = "TVScreenPlus", ContextMenuStrip = menu, Visible = true };
+            // A newer copy being installed asks us to quit.
+            var quit = new EventWaitHandle(false, EventResetMode.AutoReset, Program.QuitEvent);
+            ThreadPool.RegisterWaitForSingleObject(quit, (s, t) => ui.Post(_ => Quit(), null), null, -1, true);
             Task.Run(Start);
+            updateTimer = new System.Threading.Timer(_ => CheckUpdate(false), null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(30));
+        }
+
+        readonly System.Threading.Timer updateTimer;
+        DateTime lastCheck = DateTime.MinValue;
+        int updating;
+
+        /// <summary>Checks GitHub every 6 h (or on demand) and installs when no TV is connected.</summary>
+        void CheckUpdate(bool manual)
+        {
+            if (!manual && (!Settings.AutoUpdate || DateTime.UtcNow - lastCheck < TimeSpan.FromHours(6))) return;
+            if (Interlocked.Exchange(ref updating, 1) == 1) return;
+            try
+            {
+                lastCheck = DateTime.UtcNow;
+                var latest = Updater.Latest();
+                Log.W("Latest release: " + (latest?.Item1?.ToString() ?? "?"));
+                if (latest == null || !Updater.Newer(latest.Item1))
+                {
+                    if (manual) Notify("TVScreenPlus", "Vous avez la dernière version (" + Program.Version.ToString(3) + ").");
+                    return;
+                }
+                if (server != null && server.Busy && !manual)
+                {
+                    lastCheck = DateTime.MinValue; // retry at next tick, once the TV is disconnected
+                    return;
+                }
+                Notify("TVScreenPlus", "Mise à jour vers la version " + latest.Item1.ToString(3) + "…");
+                Updater.Install(latest.Item2);
+            }
+            catch (Exception e)
+            {
+                Log.W("Update check failed: " + e.Message);
+                if (manual) Notify("TVScreenPlus", "Mise à jour impossible : " + e.Message);
+            }
+            finally { Interlocked.Exchange(ref updating, 0); }
         }
 
         static ToolStripMenuItem Radio(string label, Func<bool> isOn, Action set)
@@ -122,6 +186,9 @@ namespace TVScreenPlus
             {
                 SetStatus("Installation des composants…");
                 Setup.EnsureAll();
+                VirtualDisplay.Detach(); // in case a previous instance was killed while streaming
+                Installer.Register();
+                Task.Delay(15000).ContinueWith(_ => Installer.CleanupTemp());
                 server = new Server(SetStatus, Notify);
                 server.Start();
                 SetStatus("Prêt – en attente d'une TV (" + Environment.MachineName + ")");

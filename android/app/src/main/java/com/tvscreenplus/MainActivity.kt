@@ -2,6 +2,7 @@ package com.tvscreenplus
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaCodecList
@@ -45,6 +46,12 @@ class MainActivity : Activity() {
     @Volatile private var discovering = false
     private var wifiLock: WifiManager.WifiLock? = null
     private val prefs by lazy { getSharedPreferences("tvsp", Context.MODE_PRIVATE) }
+    private lateinit var stats: TextView
+    private lateinit var updateButton: Button
+    private var release: Updater.Release? = null
+    private var lastUpdateCheck = 0L
+    @Suppress("DEPRECATION")
+    private val versionCode by lazy { packageManager.getPackageInfo(packageName, 0).versionCode }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,6 +76,8 @@ class MainActivity : Activity() {
         overlay.addView(text("TVScreenPlus", 34f, Color.WHITE))
         status = text("Recherche des ordinateurs sur le réseau…", 18f, Color.rgb(144, 202, 249))
         overlay.addView(status)
+        updateButton = button("Mettre à jour") { startUpdate() }.apply { visibility = View.GONE }
+        overlay.addView(updateButton, LinearLayout.LayoutParams(dp(520), -2))
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(24), 0, dp(24)) }
         overlay.addView(list, LinearLayout.LayoutParams(dp(520), -2))
 
@@ -85,13 +94,77 @@ class MainActivity : Activity() {
         overlay.addView(manual)
         overlay.addView(text("Installez TVScreenPlus sur le PC Windows (même réseau). Retour = déconnecter.", 14f, Color.GRAY))
         root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
+        // Live statistics, toggled with OK / Menu while streaming.
+        stats = TextView(this).apply {
+            textSize = 15f; setTextColor(Color.WHITE); setBackgroundColor(Color.argb(170, 0, 0, 0))
+            setPadding(dp(14), dp(10), dp(14), dp(10)); visibility = View.GONE
+        }
+        root.addView(stats, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(24), dp(24), 0, 0) })
         setContentView(root)
+        val vn = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (_: Exception) { "" }
+        overlay.addView(text("Version $vn", 12f, Color.DKGRAY))
+        handleInstallIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleInstallIntent(intent)
+    }
+
+    private fun handleInstallIntent(i: Intent?) {
+        if (i?.action != Updater.ACTION_STATUS) return
+        Updater.onStatus(this, i)?.let { status.text = it }
+    }
+
+    // ---------------- updates ----------------
+    private fun checkUpdate() {
+        if (System.currentTimeMillis() - lastUpdateCheck < 6 * 3600_000L) return
+        lastUpdateCheck = System.currentTimeMillis()
+        Thread({
+            val r = try { Updater.latest() } catch (e: Exception) { null }
+            if (r == null || r.code <= versionCode) return@Thread
+            ui.post {
+                release = r
+                updateButton.text = "Mettre à jour vers la version ${r.name}"
+                updateButton.visibility = View.VISIBLE
+                // Offer it once per version, only when not streaming.
+                if (client == null && prefs.getInt("offered", 0) < r.code) {
+                    prefs.edit().putInt("offered", r.code).apply()
+                    startUpdate()
+                }
+            }
+        }, "update-check").start()
+    }
+
+    private fun startUpdate() {
+        val r = release ?: return
+        disconnect(null)
+        autoConnect = false
+        status.text = "Téléchargement de la mise à jour…"
+        Thread({
+            try {
+                Updater.install(this, r) { p -> ui.post { status.text = "Téléchargement de la mise à jour… $p %" } }
+            } catch (e: Exception) {
+                ui.post { status.text = "Échec de la mise à jour : ${e.message}" }
+            }
+        }, "update").start()
+    }
+
+    private val statsTick = object : Runnable {
+        override fun run() {
+            val c = client
+            if (c != null && stats.visibility == View.VISIBLE) {
+                stats.text = "${c.info}\nReçu : %.1f Mb/s · Affiché : ${c.fps} i/s · Pertes : ${c.dropped}".format(c.kbps / 1000.0)
+                ui.postDelayed(this, 1000)
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
         hideSystemUi()
         startDiscovery()
+        checkUpdate()
     }
 
     override fun onPause() {
@@ -186,30 +259,40 @@ class MainActivity : Activity() {
         disconnect(null)
         status.text = "Connexion à $name…"
         val (w, h) = panelSize()
-        val hello = "TVSP1;name=${Build.MODEL.replace(';', ' ')};w=$w;h=$h;hevc=${if (hasHwDecoder(MediaFormat.MIMETYPE_VIDEO_HEVC)) 1 else 0}"
+        @Suppress("DEPRECATION")
+        val hz = Math.round(windowManager.defaultDisplay.refreshRate)
+        val hello = "TVSP1;v=2;app=$versionCode;name=${Build.MODEL.replace(';', ' ')};w=$w;h=$h;hz=$hz" +
+            ";hevc=${maxDecodeHeight(MediaFormat.MIMETYPE_VIDEO_HEVC)};avc=${maxDecodeHeight(MediaFormat.MIMETYPE_VIDEO_AVC)}"
         lateinit var c: StreamClient
-        c = StreamClient(ip, hello, surfaceView.holder.surface,
-            onStarted = { sw, sh, codec ->
+        c = StreamClient(ip, hello, surfaceView.holder.surface, object : StreamClient.Listener {
+            override fun onStatus(text: String) {
+                ui.post { if (client === c && overlay.visibility == View.VISIBLE) status.text = "$name : $text" }
+            }
+
+            override fun onStarted(info: String) {
                 ui.post {
                     if (client !== c) return@post
                     prefs.edit().putString("last", ip).apply()
                     overlay.visibility = View.GONE
                     acquireWifiLock()
-                    if (Build.VERSION.SDK_INT >= 30) try { surfaceView.holder.surface.setFrameRate(60f, android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) } catch (_: Exception) {}
-                    android.util.Log.i(StreamClient.TAG, "streaming ${sw}x$sh $codec from $name")
+                    if (Build.VERSION.SDK_INT >= 30) try { surfaceView.holder.surface.setFrameRate(hz.toFloat(), android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) } catch (_: Exception) {}
+                    android.util.Log.i(StreamClient.TAG, "streaming $info from $name")
                 }
-            },
-            onEnded = { err ->
+            }
+
+            override fun onEnded(error: String?) {
                 ui.post {
                     if (client !== c) return@post
                     client = null
                     releaseWifiLock()
+                    stats.visibility = View.GONE
                     overlay.visibility = View.VISIBLE
-                    status.text = if (err != null) "Déconnecté : $err" else "Déconnecté"
+                    status.text = if (error != null) "Déconnecté : $error" else "Déconnecté"
                     list.getChildAt(0)?.requestFocus()
                     if (autoConnect) ui.postDelayed({ tryAutoConnect() }, 2000)
                 }
-            })
+            }
+        })
         client = c
         c.start()
     }
@@ -219,6 +302,7 @@ class MainActivity : Activity() {
         client = null
         c.stop()
         releaseWifiLock()
+        stats.visibility = View.GONE
         overlay.visibility = View.VISIBLE
         status.text = reason ?: "Déconnecté"
     }
@@ -228,6 +312,13 @@ class MainActivity : Activity() {
             autoConnect = false // user wants out: no auto-reconnect until they pick a PC
             disconnect("Déconnecté – choisissez un ordinateur pour reprendre")
             list.getChildAt(0)?.requestFocus()
+            return true
+        }
+        if (client != null && overlay.visibility == View.GONE &&
+            (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_INFO)) {
+            stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            ui.removeCallbacks(statsTick)
+            statsTick.run()
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -255,13 +346,22 @@ class MainActivity : Activity() {
         window.attributes = window.attributes.apply { preferredDisplayModeId = best.modeId }
     }
 
-    private fun hasHwDecoder(mime: String): Boolean = try {
-        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { ci ->
-            !ci.isEncoder && ci.supportedTypes.any { it.equals(mime, true) } &&
-                (if (Build.VERSION.SDK_INT >= 29) ci.isHardwareAccelerated
-                 else !ci.name.startsWith("OMX.google.") && !ci.name.startsWith("c2.android."))
+    /** Highest 16:9 height the hardware decoder handles at 60 fps (0 = no hardware decoder). */
+    private fun maxDecodeHeight(mime: String): Int = try {
+        var best = 0
+        for (ci in MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos) {
+            if (ci.isEncoder || ci.supportedTypes.none { it.equals(mime, true) }) continue
+            val hw = if (Build.VERSION.SDK_INT >= 29) ci.isHardwareAccelerated
+                     else !ci.name.startsWith("OMX.google.") && !ci.name.startsWith("c2.android.")
+            if (!hw) continue
+            val vc = ci.getCapabilitiesForType(mime).videoCapabilities ?: continue
+            val h = listOf(2160, 1440, 1080, 900, 720).firstOrNull { h ->
+                try { vc.areSizeAndRateSupported(((h * 16 / 9) + 7) and 7.inv(), h, 60.0) } catch (_: Exception) { false }
+            } ?: 1080 // capabilities not reported: assume a standard 1080p60 TV decoder
+            best = maxOf(best, h)
         }
-    } catch (_: Exception) { false }
+        best
+    } catch (_: Exception) { 0 }
 
     private fun acquireWifiLock() {
         if (wifiLock != null) return
