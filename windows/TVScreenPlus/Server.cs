@@ -32,13 +32,44 @@ namespace TVScreenPlus
 
         public void Start()
         {
-            udp = new UdpClient(new IPEndPoint(IPAddress.Any, UdpPort)) { EnableBroadcast = true };
+            for (int i = 0; ; i++)
+            {
+                try
+                {
+                    udp = new UdpClient(new IPEndPoint(IPAddress.Any, UdpPort)) { EnableBroadcast = true };
+                    NoInherit(udp.Client);
+                    tcp = new TcpListener(IPAddress.Any, TcpPort);
+                    tcp.Start();
+                    NoInherit(tcp.Server);
+                    break;
+                }
+                catch (SocketException e) when (e.SocketErrorCode == SocketError.AddressAlreadyInUse)
+                {
+                    // Port still held: a previous instance (or a process that inherited its socket) is exiting.
+                    try { udp?.Close(); } catch { }
+                    try { tcp?.Stop(); } catch { }
+                    Log.W($"Port busy (try {i + 1}): {e.Message}");
+                    if (i == 2) Installer.KillStrayFfmpeg();
+                    if (i >= 20) throw new Exception($"Les ports {TcpPort}/{UdpPort} sont utilisés par une autre application. Redémarrez le PC.");
+                    Thread.Sleep(1000);
+                }
+            }
             new Thread(UdpLoop) { IsBackground = true, Name = "discovery" }.Start();
-            tcp = new TcpListener(IPAddress.Any, TcpPort);
-            tcp.Start();
             new Thread(AcceptLoop) { IsBackground = true, Name = "accept" }.Start();
             Log.W("Server listening");
         }
+
+        /// <summary>
+        /// .NET Framework sockets are inheritable: without this, ffmpeg and the next version started by the
+        /// updater would keep a copy of our listening ports open and block them ("only one usage of each socket address").
+        /// </summary>
+        static void NoInherit(Socket s)
+        {
+            try { SetHandleInformation(s.Handle, 1 /*HANDLE_FLAG_INHERIT*/, 0); } catch { }
+        }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetHandleInformation(IntPtr h, int mask, int flags);
 
         /// <summary>
         /// Drops the current TV session (the TV reconnects by itself) and re-opens the network
@@ -50,12 +81,8 @@ namespace TVScreenPlus
             current?.Close();
             try { udp?.Close(); } catch { }
             try { tcp?.Stop(); } catch { }
-            for (int i = 0; ; i++)
-            {
-                Thread.Sleep(300);
-                try { Start(); return; }
-                catch (SocketException) when (i < 10) { try { udp?.Close(); } catch { } try { tcp?.Stop(); } catch { } }
-            }
+            Thread.Sleep(300);
+            Start();
         }
 
         public void Stop()
@@ -90,7 +117,7 @@ namespace TVScreenPlus
             while (true)
             {
                 TcpClient c;
-                try { c = tcp.AcceptTcpClient(); }
+                try { c = tcp.AcceptTcpClient(); NoInherit(c.Client); }
                 catch (Exception) { return; }
                 new Thread(() =>
                 {

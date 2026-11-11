@@ -189,6 +189,7 @@ namespace TVScreenPlus
                 Setup.EnsureAll();
                 VirtualDisplay.Detach(); // in case a previous instance was killed while streaming
                 Installer.Register();
+                if (!File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "TVScreenPlus.lnk"))) Installer.Shortcut();
                 Task.Delay(15000).ContinueWith(_ => Installer.CleanupTemp());
                 server = new Server(SetStatus, Notify);
                 server.Start();

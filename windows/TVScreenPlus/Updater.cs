@@ -45,7 +45,9 @@ namespace TVScreenPlus
             // The previous manual copy (e.g. an old extracted folder) is removed.
             if (previous != null && !Same(previous, InstallDir) && !Same(previous, here)) RemoveCopy(previous);
             Register();
-            Process.Start(new ProcessStartInfo(Path.Combine(InstallDir, "TVScreenPlus.exe")) { UseShellExecute = false, WorkingDirectory = InstallDir });
+            Shortcut();
+            // ShellExecute: the new instance must not inherit any of our handles.
+            Process.Start(new ProcessStartInfo(Path.Combine(InstallDir, "TVScreenPlus.exe")) { UseShellExecute = true, WorkingDirectory = InstallDir });
             return false;
         }
 
@@ -105,6 +107,36 @@ namespace TVScreenPlus
                 catch { }
         }
 
+        public static void KillStrayFfmpeg()
+        {
+            foreach (var p in Process.GetProcessesByName("ffmpeg"))
+                try
+                {
+                    string dir = Path.GetDirectoryName(p.MainModule.FileName);
+                    if (Same(dir, InstallDir) || Same(dir, Program.Dir) || Same(dir, Program.DataDir)) { p.Kill(); p.WaitForExit(3000); Log.W("Killed stray ffmpeg " + p.Id); }
+                }
+                catch { }
+        }
+
+        static readonly string ShortcutPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "TVScreenPlus.lnk");
+
+        /// <summary>Start menu shortcut, so the app can be relaunched after "Quitter".</summary>
+        public static void Shortcut()
+        {
+            try
+            {
+                var t = Type.GetTypeFromProgID("WScript.Shell");
+                object sh = Activator.CreateInstance(t);
+                object lnk = t.InvokeMember("CreateShortcut", System.Reflection.BindingFlags.InvokeMethod, null, sh, new object[] { ShortcutPath });
+                var lt = lnk.GetType();
+                lt.InvokeMember("TargetPath", System.Reflection.BindingFlags.SetProperty, null, lnk, new object[] { Path.Combine(InstallDir, "TVScreenPlus.exe") });
+                lt.InvokeMember("WorkingDirectory", System.Reflection.BindingFlags.SetProperty, null, lnk, new object[] { InstallDir });
+                lt.InvokeMember("Description", System.Reflection.BindingFlags.SetProperty, null, lnk, new object[] { "Utiliser une TV Google TV comme écran secondaire" });
+                lt.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, lnk, null);
+            }
+            catch (Exception e) { Log.W("shortcut: " + e.Message); }
+        }
+
         static void RemoveCopy(string dir)
         {
             Log.W("Removing previous copy in " + dir);
@@ -136,6 +168,7 @@ namespace TVScreenPlus
             Setup.Run("schtasks", "/Delete /F /TN TVScreenPlus");
             Setup.Run("netsh", "advfirewall firewall delete rule name=TVScreenPlus");
             try { Registry.LocalMachine.DeleteSubKeyTree(UninstallKey, false); } catch { }
+            try { File.Delete(ShortcutPath); } catch { }
             try { Directory.Delete(Program.DataDir, true); } catch { }
             // Delete our own folder once this process has exited.
             Process.Start(new ProcessStartInfo("cmd.exe", $"/c ping 127.0.0.1 -n 3 >nul & rmdir /s /q \"{Program.Dir.TrimEnd('\\')}\"")
@@ -184,7 +217,7 @@ namespace TVScreenPlus
             try { File.Delete(zip); } catch { }
             string exe = Directory.GetFiles(dir, "TVScreenPlus.exe", SearchOption.AllDirectories).First();
             Log.W("Starting update " + exe);
-            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(exe) });
+            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(exe) });
         }
     }
 }
