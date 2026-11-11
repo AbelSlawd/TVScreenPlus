@@ -87,7 +87,13 @@ namespace TVScreenPlus
         }
         public static bool AutoStart { get => Get("autostart", "1") == "1"; set => Set("autostart", value ? "1" : "0"); }
         /// <summary>Game mode: minimum latency (synchronous encoding) at the cost of a few lost frames; off = fluid 60 fps.</summary>
-        public static bool GameMode { get => Get("gamemode", "0") == "1"; set => Set("gamemode", value ? "1" : "0"); }
+        public static bool GameMode
+        {
+            get => Get("gamemode", "0") == "1";
+            set { if (GameMode == value) return; Set("gamemode", value ? "1" : "0"); GameModeChanged?.Invoke(); }
+        }
+        /// <summary>Raised when the mode changes (tray menu or TV remote).</summary>
+        public static event Action GameModeChanged;
         /// <summary>PC sound played by the TV while streaming.</summary>
         public static bool Audio { get => Get("audio", "1") == "1"; set => Set("audio", value ? "1" : "0"); }
         /// <summary>Mute the PC's own speakers while the TV plays the sound.</summary>
@@ -125,13 +131,16 @@ namespace TVScreenPlus
             var game = new ToolStripMenuItem("Mode jeu (latence minimale)") { Checked = Settings.GameMode, CheckOnClick = true };
             game.CheckedChanged += (s, e) =>
             {
+                if (Settings.GameMode == game.Checked) return; // changed from the TV remote: already applied
                 Settings.GameMode = game.Checked;
                 Log.W("Game mode " + (game.Checked ? "on" : "off"));
-                // Applied to the running stream by reconnecting the TV (it reconnects by itself).
-                if (server != null && server.Busy) Task.Run(RestartConnection);
+                // Applied to the running stream at once (encoder restart, the TV stays connected).
+                if (server != null && server.Busy) server.SwitchMode();
                 else Notify("TVScreenPlus", game.Checked ? "Mode jeu activé : latence minimale, quelques images peuvent être sautées."
                                                          : "Mode fluide : 60 images/s régulières, latence légèrement plus élevée.");
             };
+            // The TV remote (up / down) can switch the mode too: keep the tick in sync.
+            Settings.GameModeChanged += () => ui.Post(_ => game.Checked = Settings.GameMode, null);
             menu.Items.Add(game);
             menu.Items.Add(new ToolStripSeparator());
             var sound = new ToolStripMenuItem("Son sur la TV") { Checked = Settings.Audio, CheckOnClick = true };

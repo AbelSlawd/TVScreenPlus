@@ -38,6 +38,8 @@ namespace TVScreenPlus
         public SessionStats Stats => current?.Stats;
         /// <summary>"Son sur la TV" toggled in the tray: applies to the current session right away.</summary>
         public void SetAudio(bool on) => current?.SetAudio(on);
+        /// <summary>Applies Settings.GameMode to the running stream (encoder restart, no reconnection).</summary>
+        public void SwitchMode() => current?.SwitchMode();
 
         public Server(Action<string> status, Action<string, string> notify) { this.status = status; this.notify = notify; }
 
@@ -167,6 +169,7 @@ namespace TVScreenPlus
         volatile bool streaming;      // the TV is showing the stream
         AudioLoopback audio;          // PC sound -> TV
         readonly object audioLock = new object();
+        volatile bool modeSwitch;     // fluid <-> game mode asked while streaming
         IPEndPoint audioUdp;          // TV's UDP port for the sound (audioudp=), null = sound in the TCP stream
         UdpClient udpOut;
         volatile PadHub pads;         // TV gamepads -> virtual Xbox 360 controllers
@@ -184,6 +187,14 @@ namespace TVScreenPlus
             SetAudio(false);
             try { pads?.Dispose(); } catch { }
             try { udpOut?.Close(); } catch { }
+        }
+
+        /// <summary>Restart the encoder with the current mode (fluid / game) and tell the TV.</summary>
+        public void SwitchMode()
+        {
+            if (!streaming || closed) return;
+            modeSwitch = true;
+            try { streamer?.Dispose(); } catch { }
         }
 
         /// <summary>Starts / stops sending the PC sound (only to a TV that supports it, once streaming).</summary>
@@ -369,11 +380,15 @@ namespace TVScreenPlus
                 // A/V sync: how much later than the sound the image leaves the PC (ms). NVENC in fluid mode holds
                 // 2 frames (-delay 2); encoding ~8 ms; +15 ms because loopback captures the sound when Windows mixes it,
                 // ahead of the PC's own speakers that the player (browser…) syncs its video to.
-                int vpc = (plan.Enc.Name.Contains("nvenc") ? (Settings.GameMode ? 0 : 2) : 1) * 1000 / plan.Fps + 8 + 15;
-                Stats.PcVideoMs = vpc;
                 // avsync=0 in game mode: the TV never delays the image for the sound (lowest image latency first).
-                string features = $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)};vpc={vpc};apc=5;avsync={(Settings.GameMode ? 0 : 1)}";
-                if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}" + features));
+                // mode= tells the TV which mode is active (its up/down keys switch it).
+                string Features()
+                {
+                    int vpc = (plan.Enc.Name.Contains("nvenc") ? (Settings.GameMode ? 0 : 2) : 1) * 1000 / plan.Fps + 8 + 15;
+                    Stats.PcVideoMs = vpc;
+                    return $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)};vpc={vpc};apc=5;avsync={(Settings.GameMode ? 0 : 1)};mode={(Settings.GameMode ? "game" : "fluid")}";
+                }
+                if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}" + Features()));
                 else { var ok = Encoding.ASCII.GetBytes($"OK;codec={enc.Codec};w={target.Width};h={target.Height}\n"); ns.Write(ok, 0, ok.Length); }
                 string info = $"{target.Width}x{target.Height} {plan.Fps} i/s {enc.Codec.ToUpper()} {kbps / 1000} Mb/s";
                 status($"Diffusion vers {tv} – {info}");
@@ -427,9 +442,17 @@ namespace TVScreenPlus
                                 }
                             });
                         }
-                        catch (IOException) { if (!restart) break; }
-                        catch (ObjectDisposedException) { if (!restart) break; }
+                        catch (IOException) { if (!restart && !modeSwitch) break; }
+                        catch (ObjectDisposedException) { if (!restart && !modeSwitch) break; }
                         if (closed) break;
+                        if (modeSwitch)
+                        {
+                            modeSwitch = false;
+                            Stats.Encoder = plan.ToString();
+                            Log.W("Mode switched to " + (Settings.GameMode ? "game (minimum latency)" : "fluid (steady 60 fps)"));
+                            if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={plan.Enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}" + Features()));
+                            continue;
+                        }
                         if (restart) { status($"Diffusion vers {tv} – {target.Width}x{target.Height} {kbps / 1000} Mb/s"); continue; }
                         // ffmpeg ended (display change, secure desktop, driver reset…): restart it.
                         quickFails = (DateTime.UtcNow - st.Started).TotalSeconds < 3 ? quickFails + 1 : 0;
@@ -441,7 +464,7 @@ namespace TVScreenPlus
                         target = Dxgi.Find(target.GdiName) ?? VirtualDisplay.Attach(target.Width, target.Height, plan.Fps);
                         var e2 = Streamer.Pick(target, hevcTv);
                         plan = new EncodePlan { Enc = e2, Quality = false, Fps = plan.Fps };
-                        if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={e2.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={e2.Name}" + features));
+                        if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={e2.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={e2.Name}" + Features()));
                         quickFails = 0;
                     }
                     Thread.Sleep(300);
@@ -531,6 +554,13 @@ namespace TVScreenPlus
                             if (d.ContainsKey("vdel")) Stats.OnTvSync(Int(d, "aout", -1), Int(d, "abuf", -1), Int(d, "aext", 0), Int(d, "vdel", 0), Int(d, "avoff", 0));
                         }
                         else if (l.StartsWith("LOG;")) Log.W("TV: " + l.Substring(4));
+                        else if (l.StartsWith("MODE;"))
+                        {
+                            // Up/down keys of the TV remote: fluid <-> game mode (also updates the tray menu).
+                            bool game = l.Substring(5).Trim() == "game";
+                            Log.W("TV asks for " + (game ? "game" : "fluid") + " mode");
+                            if (game != Settings.GameMode) { Settings.GameMode = game; SwitchMode(); }
+                        }
                     }
                 }
                 catch { }

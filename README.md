@@ -81,6 +81,8 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 |---|---|
 | **OK** ou **Menu** | Afficher / masquer les statistiques (résolution, débit, images/s, son, manettes) |
 | **Retour** | Se déconnecter. L'écran disparaît de Windows |
+| **▲ / ▼** | Mode **fluide** (60 i/s réguliers, son synchronisé) / mode **jeu** (latence minimale). Appliqué en une fraction de seconde, sans déconnexion |
+| **◀ / ▶** | Avancer / retarder le son de 10 ms (réglage de la synchronisation à l'oreille, mémorisé) |
 
 Les touches des **manettes** ne pilotent pas la TV pendant la diffusion : elles vont au PC (le bouton B ne déconnecte pas). La télécommande garde toujours ses touches.
 
@@ -89,7 +91,7 @@ Les touches des **manettes** ne pilotent pas la TV pendant la diffusion : elles 
 ### Mode fluide ou mode jeu (PC)
 Par défaut, TVScreenPlus est en **mode fluide** : l'encodeur garde une ou deux images d'avance pour tenir **60 images/s régulières**, ce qui ajoute au plus une trentaine de millisecondes de latence. Idéal pour le bureau, la navigation et la vidéo.
 
-Clic droit sur l'icône › *Mode jeu (latence minimale)* : chaque image est envoyée dès qu'elle est encodée. La latence est la plus faible possible, mais quelques images peuvent être sautées (environ 55 à 58 i/s en 4K). Utile pour jouer. Le changement s'applique tout de suite : la TV se reconnecte en quelques secondes.
+Touche **▼** de la télécommande pendant la diffusion, ou clic droit sur l'icône › *Mode jeu (latence minimale)* : chaque image est envoyée dès qu'elle est encodée et l'image n'est jamais retardée pour attendre le son. La latence est la plus faible possible, mais quelques images peuvent être sautées (environ 55 à 58 i/s en 4K). Utile pour jouer. **▲** revient au mode fluide. Le changement s'applique en une fraction de seconde, sans déconnexion, et le menu du PC suit.
 
 ### Son du PC sur la TV
 Activé par défaut. Pendant la diffusion, tout ce que joue Windows (jeux, vidéos, musique, notifications) est envoyé à la TV et sort par ses haut-parleurs (ou sa barre de son).
@@ -210,7 +212,7 @@ PC Windows                                                   TV Google TV
 - **Flux** : paquets `[u32 taille][u8 flags][données]`. Flags : `0x80` remplissage (test de débit), `0x40` ping (la TV répond `ACK`), `0x20` configuration, `0x10` message d'état, sinon une image vidéo Annex-B (`1` = image clé).
 - **Retour TV → PC** : `STAT;fps=…;kbps=…;drop=…;dec=…;decmax=…;wait=…` toutes les 2 secondes (`dec`/`decmax` : latence du décodeur en ms, `wait` : % du temps où son entrée est pleine), `LOG;…` (diagnostic écrit dans le journal du PC), et `ACK` en réponse aux pings envoyés chaque seconde pour mesurer la latence.
 - **Champs supplémentaires de la connexion** : `lang`, `tested`, `lat` (latence de décodage en ms), `net`/`band`/`link` (réseau), `pref` (priorité), `maxh` (résolution max), `audio=0|1` (la TV joue le son), `pads=0|1` (la TV envoie ses manettes).
-- **Fonctions optionnelles** : le PC ne les utilise que si la TV les annonce dans sa ligne de connexion, et confirme ce qu'il accepte dans son paquet de configuration (`…;audio=0|1;pads=0|1`). La TV indique aussi `audioudp=<port>` : le PC lui envoie alors le son en datagrammes UDP de 5 ms (même contenu que les paquets 0x08), sinon dans le flux TCP. `avsync=0` (mode jeu) interdit de retarder l'image. Une ancienne application TV ou un ancien programme PC continuent donc de fonctionner (sans son ni manettes).
+- **Fonctions optionnelles** : le PC ne les utilise que si la TV les annonce dans sa ligne de connexion, et confirme ce qu'il accepte dans son paquet de configuration (`…;audio=0|1;pads=0|1`). La TV indique aussi `audioudp=<port>` : le PC lui envoie alors le son en datagrammes UDP de 5 ms (même contenu que les paquets 0x08), sinon dans le flux TCP. `avsync=0` (mode jeu) interdit de retarder l'image ; `mode=fluid|game` indique le mode actif, et la TV demande un changement avec la ligne `MODE;fluid|game` (touches ▲ ▼). Une ancienne application TV ou un ancien programme PC continuent donc de fonctionner (sans son ni manettes).
 - **Paquets `0x08` (extension)** : le premier octet donne le type. Une ancienne TV ne les reçoit jamais (ils seraient pris pour de la vidéo).
   - `1` = son : `[1][format 1 = PCM 16 bits LE][voies][0][fréquence u32][horodatage PC en ms u32][échantillons]`, 10 à 20 ms par paquet.
   - `2` = vibrations : `[2][emplacement 0-3][moteur gros 0-255][moteur petit 0-255]`.

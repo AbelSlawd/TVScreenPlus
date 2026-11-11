@@ -545,6 +545,18 @@ class MainActivity : Activity() {
             Toast.makeText(this, L.t("av_offset_now", v), Toast.LENGTH_SHORT).show()
             return true
         }
+        if (c != null && overlay.visibility == View.GONE &&
+            (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN)) {
+            // Latency mode: up = fluid (steady 60 fps, sound in sync), down = game (minimum latency).
+            if (!c.modeSupported) {
+                Toast.makeText(this, L.t("mode_unsupported"), Toast.LENGTH_LONG).show()
+            } else {
+                val game = keyCode == KeyEvent.KEYCODE_DPAD_DOWN
+                if (game != c.gameMode) c.requestMode(game)
+                Toast.makeText(this, L.t(if (game) "mode_game" else "mode_fluid"), Toast.LENGTH_SHORT).show()
+            }
+            return true
+        }
         if (client == null && keyCode == KeyEvent.KEYCODE_MENU && !inSettings) { showSettings(); return true }
         return super.onKeyDown(keyCode, event)
     }

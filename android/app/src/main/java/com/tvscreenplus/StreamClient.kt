@@ -64,6 +64,16 @@ class StreamClient(
     /** PC-side delay of the image compared with the sound (capture + encoding), from the PC config; -1 = old PC. */
     @Volatile private var pcVideoMs = -1
     @Volatile private var pcAudioMs = 5
+    /** Latency mode of the PC (from its config): game = minimum latency, else fluid. Older PCs don't say. */
+    @Volatile var gameMode = false
+    @Volatile var modeSupported = false
+
+    /** Remote up/down: ask the PC for fluid or game mode (it restarts its encoder and sends a new config). */
+    fun requestMode(game: Boolean) {
+        gameMode = game
+        post("MODE;" + if (game) "game" else "fluid")
+    }
+
     /** The PC lets us delay the image for the sound (avsync=1); 0 in its game mode: image latency first. */
     @Volatile private var syncImage = true
     /** Sound from the PC over UDP: never stuck behind a large video frame in the TCP stream. */
@@ -302,6 +312,8 @@ class StreamClient(
         pcVideoMs = c["vpc"]?.toIntOrNull() ?: -1
         pcAudioMs = c["apc"]?.toIntOrNull() ?: 5
         syncImage = c["avsync"] != "0"
+        modeSupported = c.containsKey("mode")
+        gameMode = c["mode"] == "game"
         frameMs = 1000 / (c["fps"]?.toIntOrNull()?.coerceIn(10, 240) ?: 60)
         synchronized(vLock) { vq.clear() } // frames of the previous stream must not reach the new decoder
         pads = c["pads"] == "1"
