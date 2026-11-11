@@ -400,12 +400,15 @@ namespace TVScreenPlus
                     // healthy and drops on congestion, and is remembered per TV and network type, so a better
                     // setup (gigabit port, clean Wi-Fi) earns a higher one.
                     hardCap = (int)(mbps * 1000 * 0.85) - audioKbps;
-                    capKey = "netcap_" + new string(tv.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray()) + "_" +
-                             (net == "wifi" ? "wifi" : mbps < 150 ? "eth100" : "eth");
+                    // Keyed by network TYPE, not by the measured speed: one wrong measurement (481 Mb/s once on a
+                    // 94 Mb/s port) must not bypass what this TV has learned (it then aimed at 139 Mb/s and froze).
+                    string tvKey = "netcap_" + new string(tv.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray()) + "_";
+                    capKey = tvKey + (net == "wifi" ? "wifi" : "eth");
                     double defShare = net == "wifi" ? 0.5 : mbps < 150 ? 0.6 : 0.85;
-                    int defCap = (int)(mbps * 1000 * defShare) - audioKbps;
-                    if (net == "wifi") defCap = Math.Min(defCap, 80000);
+                    // First connection on this network type: at most 50 Mb/s, the ceiling then rises if all is well.
+                    int defCap = Math.Min((int)(mbps * 1000 * defShare) - audioKbps, 50000);
                     int learned = int.TryParse(Settings.Get(capKey, ""), out int lc) ? lc : 0;
+                    if (learned == 0 && net != "wifi" && int.TryParse(Settings.Get(tvKey + "eth100", ""), out int old)) learned = old; // v1.0.23 key
                     int netCap = Math.Min(hardCap, learned > 0 ? learned : defCap);
                     if (kbps > netCap) { capped = $", capped to network {netCap}{(learned > 0 ? " (learned)" : "")}"; kbps = netCap; }
                 }
@@ -517,7 +520,10 @@ namespace TVScreenPlus
                         // Sent under the lock: a frame of the old encoder can never follow the new one's keyframe.
                         long t0 = Stopwatch.GetTimestamp();
                         SendFrame(buf, o, l, cap);
-                        blockedTicks += Stopwatch.GetTimestamp() - t0;
+                        long took = Stopwatch.GetTimestamp() - t0;
+                        blockedTicks += took;
+                        // One send stuck for 300 ms = the link is saturated now: don't wait for two bad seconds.
+                        if (took > Stopwatch.Frequency * 3 / 10) congested = Math.Max(congested, 1);
                     }
                     if (replaced != null) ThreadPool.QueueUserWorkItem(_ => { try { replaced.Dispose(); } catch { } });
                     Stats.AddPcCapture(Wrap31((long)NowMs() - cap));

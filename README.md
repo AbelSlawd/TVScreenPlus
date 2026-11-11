@@ -156,7 +156,7 @@ Les mêmes chiffres sont écrits dans le journal toutes les 10 secondes (lignes 
 
 Pendant la diffusion, si le réseau sature (micro-ondes, autre appareil qui télécharge…), le débit **baisse automatiquement** pour éviter les saccades, puis **remonte** quand la connexion redevient stable.
 
-Pour forcer une valeur : clic droit sur l'icône › *Résolution* ou *Qualité / débit*. Même forcé, le débit ne dépasse jamais un **plafond appris pour chaque TV et chaque type de réseau** : il part d'une valeur prudente (60 % du débit mesuré sur un lien lent comme le port Ethernet 100 Mb/s de beaucoup de TV, 50 % et 80 Mb/s au plus en Wi-Fi, 85 % sur un réseau filaire rapide), monte de 15 % après 30 secondes sans aucun signe de saturation (socket, pings, son, images perdues), redescend dès qu'il sature, et reste mémorisé pour les connexions suivantes. Une installation plus performante obtient donc d'elle-même un plafond plus haut, sans jamais dépasser 85 % du débit mesuré. *Recalibrer* efface ces plafonds appris. Si vous changez de carte graphique, utilisez *Recalibrer*.
+Pour forcer une valeur : clic droit sur l'icône › *Résolution* ou *Qualité / débit*. Même forcé, le débit ne dépasse jamais un **plafond appris pour chaque TV et chaque type de réseau (Ethernet ou Wi-Fi)** : il part d'une valeur prudente (50 Mb/s au plus, et 60 % du débit mesuré sur un lien lent comme le port Ethernet 100 Mb/s de beaucoup de TV, 50 % en Wi-Fi, 85 % sur un réseau filaire rapide), monte de 15 % après 30 secondes sans aucun signe de saturation (socket, pings, son, images perdues), redescend dès qu'il sature, et reste mémorisé pour les connexions suivantes. Une installation plus performante obtient donc d'elle-même un plafond plus haut, sans jamais dépasser 85 % du débit mesuré. *Recalibrer* efface ces plafonds appris. Si vous changez de carte graphique, utilisez *Recalibrer*.
 
 ## Mises à jour
 - **PC** : le programme vérifie toutes les 6 heures et s'installe tout seul quand aucune TV n'est connectée. Vérification manuelle : clic droit › *Rechercher une mise à jour*.
@@ -169,7 +169,7 @@ Toutes les versions sont listées dans les [Releases](https://github.com/AbelSla
 | Problème | Solution |
 |---|---|
 | La TV ne trouve pas le PC | Vérifiez que les deux sont sur le **même réseau** (pas de réseau « invité » ni d'isolation Wi-Fi). Sinon, saisissez l'adresse IP du PC sur la TV (`ipconfig` dans un terminal Windows). |
-| Image figée, écran noir ou connexion bloquée | Clic droit sur l'icône › *Redémarrer la connexion* : la TV se reconnecte automatiquement en quelques secondes. |
+| Image figée, écran noir ou connexion bloquée | La TV se reconnecte d'elle-même si aucune image n'arrive pendant 6 secondes. Sinon : clic droit sur l'icône › *Redémarrer la connexion*. |
 | Image saccadée | Préférez l'Ethernet ou le Wi-Fi 5 GHz, rapprochez la TV de la box. Les statistiques (touche OK) montrent le débit réel. |
 | Image floue | Clic droit sur l'icône › *Qualité / débit › Maximale*, et vérifiez que *Résolution* est sur *Automatique* ou *Native*. |
 | « Mise à jour impossible : autre signature » sur la TV | Désinstallez l'application de la TV puis réinstallez l'APK une fois. Les mises à jour suivantes fonctionneront. |

@@ -48,6 +48,8 @@ class StreamClient(
     }
 
     @Volatile private var running = true
+    /** Ended by the no-image watchdog: the app reconnects by itself. */
+    @Volatile var stalled = false
     private var socket: Socket? = null
     private var out: OutputStream? = null
     @Volatile private var decoder: Decoder? = null
@@ -464,10 +466,24 @@ class StreamClient(
 
     private fun startStats() = Thread({
         var lastRendered = 0
+        var watchRendered = -1
+        var stuckSince = 0L
         while (running) {
             for (i in 0 until 8) {
                 try { Thread.sleep(250) } catch (_: InterruptedException) {}
                 try { syncTick() } catch (_: Exception) {}
+                // Self-healing: no new image for 6 s while streaming (the PC always sends 60 fps, even on a still
+                // desktop) = stuck connection. Reconnect instead of making the user restart the app.
+                if (decoder != null) {
+                    val r = rendered
+                    val now = System.nanoTime()
+                    if (r != watchRendered) { watchRendered = r; stuckSince = now }
+                    else if (r > 0 && now - stuckSince > 6_000_000_000L) {
+                        log("no image for 6 s: reconnecting")
+                        stalled = true
+                        stop()
+                    }
+                }
             }
             val r = rendered
             fps = (r - lastRendered) / 2

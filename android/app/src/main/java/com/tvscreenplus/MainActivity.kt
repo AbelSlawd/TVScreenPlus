@@ -516,7 +516,9 @@ class MainActivity : Activity() {
                     overlay.visibility = View.VISIBLE
                     setStatus(if (error != null) L.t("disconnected_err", error) else L.t("disconnected"))
                     list?.getChildAt(0)?.requestFocus()
-                    if (autoConnect) ui.postDelayed({ tryAutoConnect() }, 2000)
+                    // Stuck stream (no image for 6 s): reconnect to the same PC at once, whatever the settings.
+                    if (c.stalled) ui.postDelayed({ if (client == null && !inSettings) connect(ip, name) }, 1500)
+                    else if (autoConnect) ui.postDelayed({ tryAutoConnect() }, 2000)
                 }
             }
         })
