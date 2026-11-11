@@ -28,6 +28,7 @@ namespace TVScreenPlus
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             if (args.Contains("--uninstall")) { Installer.Uninstall(); return; }
+            if (args.Length > 0 && args[0] == "--bench-encoder") { EncoderBench.Run(args); return; }
             try { if (!Installer.EnsureInstalled()) return; }
             catch (Exception e) { Log.W("Install failed: " + e); MessageBox.Show("Installation impossible : " + e.Message, "TVScreenPlus"); return; }
 

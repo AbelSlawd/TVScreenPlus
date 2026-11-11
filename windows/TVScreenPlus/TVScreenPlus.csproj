@@ -9,6 +9,7 @@
     <AssemblyName>TVScreenPlus</AssemblyName>
     <RootNamespace>TVScreenPlus</RootNamespace>
     <Optimize>true</Optimize>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DebugType>none</DebugType>
     <Version>1.1.0</Version>
   </PropertyGroup>
