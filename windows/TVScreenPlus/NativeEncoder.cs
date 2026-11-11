@@ -386,6 +386,7 @@ namespace TVScreenPlus
         /// a halved target and overshot the peak by 10-15 %). It does not pad: a static desktop costs little.
         /// </summary>
         public static uint RateControl = 0;
+        public static uint BufferDivisor = 1;
         public readonly bool Hevc;
         readonly int width, height, fps;
         void* activate, mft, events, codec, manager;
@@ -501,7 +502,7 @@ namespace TVScreenPlus
         {
             Com.SetCodec(codec, CODECAPI_AVEncCommonMeanBitRate, (uint)kbps * (RateControl == 0 ? 900u : 750u));
             Com.SetCodec(codec, CODECAPI_AVEncCommonMaxBitRate, (uint)kbps * 1000);
-            Com.SetCodec(codec, CODECAPI_AVEncCommonBufferSize, (uint)kbps * 1000 / 6);
+            Com.SetCodec(codec, CODECAPI_AVEncCommonBufferSize, (uint)kbps * 1000 / 6 / BufferDivisor);
         }
 
         public string Diag() => $"rc={Com.GetCodec(codec, CODECAPI_AVEncCommonRateControlMode)} mean={Com.GetCodec(codec, CODECAPI_AVEncCommonMeanBitRate)} max={Com.GetCodec(codec, CODECAPI_AVEncCommonMaxBitRate)} buf={Com.GetCodec(codec, CODECAPI_AVEncCommonBufferSize)} lowlat={Com.GetCodec(codec, CODECAPI_AVLowLatencyMode)} refus:{(Com.CodecErrors == "" ? " aucun" : Com.CodecErrors)}";
@@ -644,11 +645,32 @@ namespace TVScreenPlus
             try { Enc = new MfEncoder(Cap, hevc, fps, kbps, fps * 120, qualityVsSpeed); }
             catch { Cap.Dispose(); if (FineTimer) Native.timeEndPeriod(1); throw; }
             this.fps = fps;
+            // Packets leave on their own thread: a socket write that blocks must never stop the encoder's event
+            // loop (no METransformNeedInput handled -> captured images dropped: measured 55-59 fps on the TV link).
             Enc.OnOutput = (b, len, key, t) =>
             {
-                if (inflight.TryRemove(t, out var i)) OnPacket?.Invoke(b, len, key, i[0], i[1], i[2] == 1);
+                if (!inflight.TryRemove(t, out var i)) return;
+                var copy = new byte[len + 5];
+                Buffer.BlockCopy(b, 5, copy, 5, len);
+                outQueue.Add(new Packet { Buf = copy, Len = len, Key = key, Acquired = i[0], Submitted = i[1], Fresh = i[2] == 1 });
             };
             Enc.OnError = e => { error = e; stop = true; };
+            sender = new Thread(SendLoop) { IsBackground = true, Name = "native send", Priority = ThreadPriority.AboveNormal };
+            sender.Start();
+        }
+
+        struct Packet { public byte[] Buf; public int Len; public bool Key, Fresh; public long Acquired, Submitted; }
+        readonly System.Collections.Concurrent.BlockingCollection<Packet> outQueue = new System.Collections.Concurrent.BlockingCollection<Packet>(30); // 0.5 s: then back-pressure again
+        readonly Thread sender;
+
+        void SendLoop()
+        {
+            try
+            {
+                foreach (var p in outQueue.GetConsumingEnumerable())
+                    OnPacket?.Invoke(p.Buf, p.Len, p.Key, p.Acquired, p.Submitted, p.Fresh);
+            }
+            catch (Exception e) { error = error ?? e; stop = true; }
         }
 
         /// <summary>Thread-safe: applied by the capture loop before its next frame.</summary>
@@ -711,6 +733,8 @@ namespace TVScreenPlus
         {
             stop = true;
             Enc?.Dispose();
+            outQueue.CompleteAdding();
+            if (Thread.CurrentThread != sender) sender.Join(1000);
             Cap.Dispose();
             if (FineTimer) Native.timeEndPeriod(1);
         }

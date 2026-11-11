@@ -214,8 +214,10 @@ namespace TVScreenPlus
             {
                 Log.W($"native encoder: {s.Enc.Name} on {s.Cap.AdapterName} {s.Cap.OutputName} {s.Cap.Width}x{s.Cap.Height} {kbps} kb/s | {s.Enc.Diag()} | GPU {s.Cap.GpuPriority}");
                 bool first = true;
+                int count = 0;
                 s.OnPacket = (b, len, key, acq, sub, fresh) =>
                 {
+                    if (++count % 600 == 0) Log.W($"native: {s.NewFrames} new, {s.Repeats} repeated, {s.Dropped} dropped");
                     // [u32 BE length][flags][Annex-B AU]: the encoder left 5 free bytes before the AU.
                     b[0] = (byte)(len >> 24); b[1] = (byte)(len >> 16); b[2] = (byte)(len >> 8); b[3] = (byte)len;
                     b[4] = (byte)((key ? 1 : 0) | (first ? 2 : 0));

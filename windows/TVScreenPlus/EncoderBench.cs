@@ -41,6 +41,7 @@ namespace TVScreenPlus
             if (args.Length > 4 && uint.TryParse(args[4], out uint q)) MfEncoder.QualityVsSpeed = q;
             if (args.Contains("noflush")) DesktopCapture.FlushAfterConvert = false;
             if (args.Contains("coarse")) NativeSession.FineTimer = false;
+            if (args.Contains("buf8")) MfEncoder.BufferDivisor = 8;
             foreach (var a in args)
             {
                 if (a.StartsWith("prio=")) int.TryParse(a.Substring(5), out DesktopCapture.GpuPriorityLevel);
@@ -84,13 +85,14 @@ namespace TVScreenPlus
                 long freq = Stopwatch.Frequency, start = Stopwatch.GetTimestamp();
                 long measureFrom = start + freq, half = start + (seconds + 1) * freq / 2, end = start + seconds * freq;
                 var lat = new List<double>(); var encT = new List<double>(); var evT = new List<double>();
-                long[] bytes = new long[2]; int outFrames = 0, keys = 0, fresh = 0, repeats = 0; string idrNals = null;
+                long[] bytes = new long[2]; int maxFrame = 0; var perSec = new List<long>(); int outFrames = 0, keys = 0, fresh = 0, repeats = 0; string idrNals = null;
                 s.OnPacket = (b, len, key, acq, sub, isNew) =>
                 {
                     long now = Stopwatch.GetTimestamp();
                     if (key) { keys++; if (idrNals == null) idrNals = NalTypes(b, 5, len, hevc); }
                     if (sub < measureFrom) return;
                     outFrames++; bytes[sub < half ? 0 : 1] += len;
+                    if (sub < half) { maxFrame = Math.Max(maxFrame, len); int sec = (int)((sub - measureFrom) / freq); while (perSec.Count <= sec) perSec.Add(0); perSec[sec] += len; }
                     if (isNew) fresh++; else repeats++;
                     encT.Add((now - sub) * 1000.0 / freq);
                     evT.Add((enc.EventQpc - sub) * 1000.0 / freq);
@@ -102,6 +104,7 @@ namespace TVScreenPlus
                 s.SetBitrate(kbps / 2); s.ForceKeyFrame();
                 s.Run(end);
                 Out("  ICodecAPI après : " + enc.Diag());
+                Out(FormattableString.Invariant($"  1re moitié : pointe sur 1 s {(perSec.Count > 0 ? perSec.Max() * 8 / 1e6 : 0):0.0} Mb/s, plus grosse image {maxFrame / 1024} Ko (débit/60 = {kbps / 8 / 60} Ko)"));
                 Thread.Sleep(100);
                 double secs = (end - measureFrom) / (double)freq, h1 = (half - measureFrom) / (double)freq, h2 = (end - half) / (double)freq;
                 lat.Sort(); encT.Sort(); evT.Sort();
