@@ -156,7 +156,7 @@ Les mêmes chiffres sont écrits dans le journal toutes les 10 secondes (lignes 
 
 Pendant la diffusion, si le réseau sature (micro-ondes, autre appareil qui télécharge…), le débit **baisse automatiquement** pour éviter les saccades, puis **remonte** quand la connexion redevient stable.
 
-Pour forcer une valeur : clic droit sur l'icône › *Résolution* ou *Qualité / débit*. Même forcé, le débit ne dépasse jamais ce que le réseau mesuré peut transporter : 85 % sur un réseau filaire rapide, 50 % (80 Mb/s au plus) en Wi-Fi, 60 % sur un lien lent comme le port Ethernet 100 Mb/s de beaucoup de TV (les pics d'images saturaient le câble : saccades, image figée, son haché). Si vous changez de carte graphique, utilisez *Recalibrer*.
+Pour forcer une valeur : clic droit sur l'icône › *Résolution* ou *Qualité / débit*. Même forcé, le débit ne dépasse jamais un **plafond appris pour chaque TV et chaque type de réseau** : il part d'une valeur prudente (60 % du débit mesuré sur un lien lent comme le port Ethernet 100 Mb/s de beaucoup de TV, 50 % et 80 Mb/s au plus en Wi-Fi, 85 % sur un réseau filaire rapide), monte de 15 % après 30 secondes sans aucun signe de saturation (socket, pings, son, images perdues), redescend dès qu'il sature, et reste mémorisé pour les connexions suivantes. Une installation plus performante obtient donc d'elle-même un plafond plus haut, sans jamais dépasser 85 % du débit mesuré. *Recalibrer* efface ces plafonds appris. Si vous changez de carte graphique, utilisez *Recalibrer*.
 
 ## Mises à jour
 - **PC** : le programme vérifie toutes les 6 heures et s'installe tout seul quand aucune TV n'est connectée. Vérification manuelle : clic droit › *Rechercher une mise à jour*.

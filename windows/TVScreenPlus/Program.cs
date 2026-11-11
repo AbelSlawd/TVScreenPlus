@@ -79,10 +79,10 @@ namespace TVScreenPlus
         /// <summary>Bitrate: 0 = automatic (measured network), else multiplier 0.6 / 1 / 2.</summary>
         public static double Quality { get => double.Parse(Get("bitrate", "0"), System.Globalization.CultureInfo.InvariantCulture); set => Set("bitrate", value.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
         public static bool AutoUpdate { get => Get("autoupdate", "1") == "1"; set => Set("autoupdate", value ? "1" : "0"); }
-        /// <summary>Forget encoder probes and benchmarks (new GPU/driver).</summary>
+        /// <summary>Forget encoder probes, benchmarks and learned network ceilings (new GPU/driver/network).</summary>
         public static void ResetCalibration()
         {
-            lock (D) foreach (var k in D.Keys.Where(k => k.StartsWith("enc_") || k.StartsWith("bench_")).ToList()) D.Remove(k);
+            lock (D) foreach (var k in D.Keys.Where(k => k.StartsWith("enc_") || k.StartsWith("bench_") || k.StartsWith("netcap_")).ToList()) D.Remove(k);
             Set("_", null);
         }
         public static bool AutoStart { get => Get("autostart", "1") == "1"; set => Set("autostart", value ? "1" : "0"); }

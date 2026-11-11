@@ -382,6 +382,9 @@ namespace TVScreenPlus
                 // Never above what the measured link can carry, even with a forced quality: the encoder's peak
                 // rate (maxrate) beyond the link only queues frames (lag) then triggers congestion drops.
                 string capped = "";
+                int desired = kbps;              // what the quality setting asks for
+                int hardCap = int.MaxValue;      // never above 85 % of the measured link
+                string capKey = null;            // learned ceiling for this TV on this kind of network
                 if (v2)
                 {
                     // A slow link (100 Mb/s TV port, Wi-Fi) saturates on the encoder's peaks (keyframes, scene changes):
@@ -389,10 +392,18 @@ namespace TVScreenPlus
                     // and the sound queued behind the video (stutter). Keep more headroom there.
                     // Wi-Fi delivers in bursts (50-70 ms of sound at once measured on 5 GHz Wi-Fi 6): big encoder
                     // peaks make it worse, so half the measured rate and never above 80 Mb/s (plenty for 4K HEVC).
-                    double capShare = net == "wifi" ? 0.5 : mbps < 150 ? 0.6 : 0.85;
-                    int netCap = (int)(mbps * 1000 * capShare) - audioKbps;
-                    if (net == "wifi") netCap = Math.Min(netCap, 80000);
-                    if (kbps > netCap) { capped = $", capped to network {netCap}"; kbps = netCap; }
+                    // These are only starting points: the ceiling then rises while the network stays perfectly
+                    // healthy and drops on congestion, and is remembered per TV and network type, so a better
+                    // setup (gigabit port, clean Wi-Fi) earns a higher one.
+                    hardCap = (int)(mbps * 1000 * 0.85) - audioKbps;
+                    capKey = "netcap_" + new string(tv.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray()) + "_" +
+                             (net == "wifi" ? "wifi" : mbps < 150 ? "eth100" : "eth");
+                    double defShare = net == "wifi" ? 0.5 : mbps < 150 ? 0.6 : 0.85;
+                    int defCap = (int)(mbps * 1000 * defShare) - audioKbps;
+                    if (net == "wifi") defCap = Math.Min(defCap, 80000);
+                    int learned = int.TryParse(Settings.Get(capKey, ""), out int lc) ? lc : 0;
+                    int netCap = Math.Min(hardCap, learned > 0 ? learned : defCap);
+                    if (kbps > netCap) { capped = $", capped to network {netCap}{(learned > 0 ? " (learned)" : "")}"; kbps = netCap; }
                 }
                 int maxKbps = kbps;
                 client.SendBufferSize = Math.Max(64 << 10, kbps * 1000 / 8 / 50); // ~20 ms of video: little hidden queue
@@ -431,7 +442,7 @@ namespace TVScreenPlus
                 }
 
                 // ---- 4. Stream with congestion control ----
-                int quickFails = 0, congested = 0;
+                int quickFails = 0, congested = 0, healthy = 0;
                 var window = Stopwatch.StartNew();
                 var cleanSince = Stopwatch.StartNew();
                 long blockedTicks = 0, bytes = 0;
@@ -470,11 +481,22 @@ namespace TVScreenPlus
                                 frames = 0; bytes = 0;
                                 blockedTicks = 0; window.Restart();
                                 congested = blocked > 0.25 ? congested + 1 : 0;
+                                // Perfectly healthy second: socket never waits, steady pings and sound, no frame lost on the TV.
+                                bool good = blocked < 0.03 && Stats.Jitter < 8 && (Stats.TvAudioJitter < 0 || Stats.TvAudioJitter <= 20) && Stats.TvDropsDelta == 0;
+                                healthy = good ? healthy + 1 : 0;
                                 if (blocked > 0.1) cleanSince.Restart();
                                 if (congested >= 2 && kbps > ideal * 0.35)
                                 {
                                     kbps = (int)Math.Max(ideal * 0.35, kbps * 0.7);
                                     Log.W($"Congestion ({blocked:P0} blocked) -> {kbps} kb/s");
+                                    if (capKey != null)
+                                    {
+                                        // This link can't take the ceiling: remember a lower one for next time too.
+                                        maxKbps = (int)Math.Max(ideal * 0.35, maxKbps * 0.85);
+                                        Settings.Set(capKey, maxKbps.ToString());
+                                        Log.W($"Learned ceiling lowered to {maxKbps} kb/s ({capKey})");
+                                    }
+                                    healthy = 0;
                                     Stats.TargetKbps = kbps; Stats.BitrateDown++;
                                     restart = true; congested = 0; st.Dispose();
                                 }
@@ -484,6 +506,17 @@ namespace TVScreenPlus
                                     Log.W($"Network OK -> {kbps} kb/s");
                                     Stats.TargetKbps = kbps;
                                     restart = true; cleanSince.Restart(); st.Dispose();
+                                }
+                                else if (capKey != null && kbps >= maxKbps && maxKbps < Math.Min(desired, hardCap) && healthy >= 30)
+                                {
+                                    // 30 s without the slightest sign of saturation while the ceiling limits the
+                                    // quality: try 15 % more, and remember it.
+                                    maxKbps = Math.Min(Math.Min(desired, hardCap), (int)(maxKbps * 1.15));
+                                    kbps = maxKbps;
+                                    Settings.Set(capKey, maxKbps.ToString());
+                                    Log.W($"Network healthy for 30 s -> ceiling raised to {kbps} kb/s ({capKey})");
+                                    Stats.TargetKbps = kbps;
+                                    restart = true; healthy = 0; cleanSince.Restart(); st.Dispose();
                                 }
                             }, cursor == null);
                         }
