@@ -2,6 +2,12 @@
 
 Utilisez une TV **Google TV / Android TV** comme **écran secondaire** (étendu) d'un PC Windows, en Wi-Fi ou Ethernet, comme si elle était branchée en HDMI.
 
+## Téléchargement (dernière version)
+- PC Windows : https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip
+- Google TV : https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk
+
+Chaque push publie automatiquement une nouvelle Release `v1.0.N`.
+
 ## Installation (2 minutes)
 
 1. **PC Windows 10/11** : téléchargez `TVScreenPlus-PC.zip` (Releases ou artefact de la CI), décompressez-le où vous voulez et lancez `TVScreenPlus.exe` (accepter la demande administrateur).
@@ -31,7 +37,7 @@ Conseil : PC en Ethernet + TV en Ethernet ou Wi-Fi 5 GHz pour une fluidité maxi
 ## Compiler
 - PC : `dotnet build windows/TVScreenPlus -c Release` (.NET Framework 4.8, déjà présent sur Windows ; le zip CI inclut `ffmpeg.exe` et le pilote, sinon ils sont téléchargés au premier lancement).
 - TV : `cd android && ./gradlew assembleRelease`.
-- La CI GitHub (`.github/workflows/build.yml`) produit les deux paquets ; un tag `v*` crée une Release.
+- La CI GitHub (`.github/workflows/build.yml`) produit les deux paquets et publie une Release à chaque push. Pour que chaque APK s'installe par-dessus le précédent, définir les secrets `ANDROID_KEYSTORE_BASE64` (keystore en base64, alias `tvsp`) et `ANDROID_KEYSTORE_PASSWORD` ; sans eux, l'APK est signé avec une clé de debug.
 
 ## Protocole
 UDP 47801 : la TV diffuse `TVSP?`, le PC répond `TVSP!\nname=…`. TCP 47800 : la TV envoie `TVSP1;name=…;w=…;h=…;hevc=0|1`, le PC répond `OK;codec=…;w=…;h=…` puis des paquets `[u32 taille][u8 flags][unité d'accès Annex-B]`.
