@@ -512,6 +512,9 @@ namespace TVScreenPlus
 
         public string Diag() => $"rc={Com.GetCodec(codec, CODECAPI_AVEncCommonRateControlMode)} mean={Com.GetCodec(codec, CODECAPI_AVEncCommonMeanBitRate)} max={Com.GetCodec(codec, CODECAPI_AVEncCommonMaxBitRate)} buf={Com.GetCodec(codec, CODECAPI_AVEncCommonBufferSize)} lowlat={Com.GetCodec(codec, CODECAPI_AVLowLatencyMode)} refus:{(Com.CodecErrors == "" ? " aucun" : Com.CodecErrors)}";
 
+        /// <summary>Live speed/quality trade-off (0 fastest .. 100 best): game / fluid mode without a restart.</summary>
+        public void SetQualityVsSpeed(uint q) => Com.SetCodec(codec, CODECAPI_AVEncCommonQualityVsSpeed, q);
+
         /// <summary>The next submitted frame becomes an IDR.</summary>
         public void ForceKeyFrame() => Com.SetCodec(codec, CODECAPI_AVEncVideoForceKeyFrame, 1);
 
@@ -711,6 +714,8 @@ namespace TVScreenPlus
 
         /// <summary>Thread-safe: applied by the capture loop before its next frame.</summary>
         public void SetBitrate(int kbps) => newKbps = kbps;
+        public void SetQualityVsSpeed(uint q) => newQvs = (int)q + 1;
+        volatile int newQvs;
         public void ForceKeyFrame() => keyRequested = true;
         public void Stop() => stop = true;
 
@@ -753,6 +758,8 @@ namespace TVScreenPlus
                 if (!Enc.WaitInput(periodMs)) { Dropped++; held = false; continue; }
                 int k = newKbps;
                 if (k != 0) { newKbps = 0; Enc.SetBitrate(k); }
+                int qv = newQvs;
+                if (qv != 0) { newQvs = 0; Enc.SetQualityVsSpeed((uint)(qv - 1)); }
                 if (keyRequested) { keyRequested = false; Enc.ForceKeyFrame(); }
                 now = Stopwatch.GetTimestamp();
                 long t100 = (now - start) * 10000000L / freq;

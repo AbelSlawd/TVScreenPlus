@@ -473,6 +473,7 @@ namespace TVScreenPlus
                 int genCounter = 0, activeGen = 0, nextGen = 0;
                 Streamer activeSt = null, nextSt = null;
                 bool configOnSwitch = false;
+                bool configOnKey = false;        // send the config right before the next keyframe (live mode change)
                 DateTime activeStarted = DateTime.UtcNow;
 
                 byte[] ConfigPacket() => Encoding.ASCII.GetBytes(
@@ -529,6 +530,8 @@ namespace TVScreenPlus
                             if (configOnSwitch) { configOnSwitch = false; if (v2) Send(0x20, ConfigPacket()); }
                         }
                         else if (gen != activeGen) return;               // last frames of the replaced encoder
+                        // The TV rebuilds its decoder on a config: it must come right before a keyframe.
+                        if (configOnKey && (buf[o + 4] & 1) != 0) { configOnKey = false; if (v2) Send(0x20, ConfigPacket()); }
                         // Sent under the lock: a frame of the old encoder can never follow the new one's keyframe.
                         long t0 = Stopwatch.GetTimestamp();
                         SendFrame(buf, o, l, cap);
@@ -607,7 +610,16 @@ namespace TVScreenPlus
                         modeSwitch = false;
                         Stats.Encoder = plan.ToString();
                         Log.W("Mode switched to " + (Settings.GameMode ? "game (minimum latency)" : "fluid (steady 60 fps)"));
-                        StartNext(kbps, true); // the TV gets the new config right before the new encoder's keyframe
+                        // In-house encoder: applied live. A second encoder could not start anyway: Desktop
+                        // Duplication refuses a second duplication of the same screen (E_INVALIDARG).
+                        Streamer live;
+                        lock (genLock) live = nextSt == null ? activeSt : null;
+                        if (live != null && live.SetMode(Settings.GameMode))
+                        {
+                            lock (genLock) configOnKey = true;
+                            live.ForceKeyFrame();
+                        }
+                        else StartNext(kbps, true); // the TV gets the new config right before the new encoder's keyframe
                         continue;
                     }
                     Streamer cur, nxt;

@@ -196,6 +196,15 @@ namespace TVScreenPlus
             return true;
         }
 
+        /// <summary>Game / fluid mode applied live (in-house encoder only). false: start a new encoder.</summary>
+        public bool SetMode(bool game)
+        {
+            var s = native;
+            if (s == null) return false;
+            s.SetQualityVsSpeed(game ? 0u : 50u);
+            return true;
+        }
+
         /// <summary>Next frame becomes a keyframe (in-house encoder only).</summary>
         public bool ForceKeyFrame()
         {
