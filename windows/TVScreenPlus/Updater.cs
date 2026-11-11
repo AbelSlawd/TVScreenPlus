@@ -19,7 +19,7 @@ namespace TVScreenPlus
     {
         public static readonly string InstallDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "TVScreenPlus");
         const string UninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TVScreenPlus";
-        static readonly string[] Files = { "TVScreenPlus.exe", "TVScreenPlus.exe.config", "ffmpeg.exe" };
+        static readonly string[] Files = { "TVScreenPlus.exe", "TVScreenPlus.exe.config", "ffmpeg.exe", GamepadDriver.SetupName };
 
         static bool Same(string a, string b) =>
             string.Equals(Path.GetFullPath(a).TrimEnd('\\'), Path.GetFullPath(b).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
@@ -165,6 +165,8 @@ namespace TVScreenPlus
             if (MessageBox.Show("Désinstaller TVScreenPlus ?", "TVScreenPlus", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             StopRunning(PreviousLocation());
             try { VirtualDisplay.Remove(); } catch (Exception e) { Log.W("driver remove: " + e.Message); }
+            try { GamepadDriver.UninstallIfOurs(); } catch (Exception e) { Log.W("gamepad driver remove: " + e.Message); }
+            AudioLoopback.RestoreMuteAfterCrash();
             Setup.Run("schtasks", "/Delete /F /TN TVScreenPlus");
             Setup.Run("netsh", "advfirewall firewall delete rule name=TVScreenPlus");
             try { Registry.LocalMachine.DeleteSubKeyTree(UninstallKey, false); } catch { }

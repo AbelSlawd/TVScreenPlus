@@ -86,6 +86,12 @@ namespace TVScreenPlus
             Set("_", null);
         }
         public static bool AutoStart { get => Get("autostart", "1") == "1"; set => Set("autostart", value ? "1" : "0"); }
+        /// <summary>PC sound played by the TV while streaming.</summary>
+        public static bool Audio { get => Get("audio", "1") == "1"; set => Set("audio", value ? "1" : "0"); }
+        /// <summary>Mute the PC's own speakers while the TV plays the sound.</summary>
+        public static bool MutePc { get => Get("mutepc", "0") == "1"; set => Set("mutepc", value ? "1" : "0"); }
+        /// <summary>Gamepads connected to the TV appear on the PC as Xbox 360 controllers.</summary>
+        public static bool Pads { get => Get("pads", "1") == "1"; set => Set("pads", value ? "1" : "0"); }
     }
 
     sealed class TrayApp : ApplicationContext
@@ -113,6 +119,16 @@ namespace TVScreenPlus
             foreach (var (label, v) in new[] { ("Automatique selon le réseau (recommandé)", 0.0), ("Wi-Fi faible", 0.6), ("Haute", 1.0), ("Maximale (Ethernet / Wi-Fi 6)", 2.0) })
                 q.DropDownItems.Add(Radio(label, () => Math.Abs(Settings.Quality - v) < 0.01, () => Settings.Quality = v));
             menu.Items.Add(q);
+
+            var sound = new ToolStripMenuItem("Son sur la TV") { Checked = Settings.Audio, CheckOnClick = true };
+            sound.CheckedChanged += (s, e) => { Settings.Audio = sound.Checked; server?.SetAudio(sound.Checked); };
+            menu.Items.Add(sound);
+            var mute = new ToolStripMenuItem("Couper le son du PC pendant la diffusion") { Checked = Settings.MutePc, CheckOnClick = true };
+            mute.CheckedChanged += (s, e) => Settings.MutePc = mute.Checked;
+            menu.Items.Add(mute);
+            var pads = new ToolStripMenuItem("Manettes de la TV (à la prochaine connexion)") { Checked = Settings.Pads, CheckOnClick = true };
+            pads.CheckedChanged += (s, e) => Settings.Pads = pads.Checked;
+            menu.Items.Add(pads);
 
             var auto = new ToolStripMenuItem("Lancer au démarrage de Windows") { Checked = Settings.AutoStart, CheckOnClick = true };
             auto.CheckedChanged += (s, e) => { Settings.AutoStart = auto.Checked; Setup.SetAutoStart(auto.Checked); };
@@ -189,6 +205,7 @@ namespace TVScreenPlus
                 SetStatus("Installation des composants…");
                 Setup.EnsureAll();
                 VirtualDisplay.Detach(); // in case a previous instance was killed while streaming
+                AudioLoopback.RestoreMuteAfterCrash();
                 Installer.Register();
                 if (!File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "TVScreenPlus.lnk"))) Installer.Shortcut();
                 Task.Delay(15000).ContinueWith(_ => Installer.CleanupTemp());

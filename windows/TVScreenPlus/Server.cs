@@ -19,6 +19,10 @@ namespace TVScreenPlus
     ///         TV also sends "STAT;fps=..;kbps=..;drop=..;dec=..;decmax=..;wait=..\n" every 2 s
     ///         (dec/decmax = live decoder latency in ms, wait = % of time the decoder input was full)
     ///         and "LOG;text\n" diagnostic lines, written to the PC log.
+    ///  Optional features, used only when the TV announces them in its hello line (older TV apps are unaffected):
+    ///   audio=1: PC sound in flag 0x08 packets whose payload starts with 1 (see AudioLoopback);
+    ///   pads=1:  "PADON/PADOFF/PAD" lines from the TV, rumble in flag 0x08 packets starting with 2 (see PadHub).
+    ///   The PC confirms what it accepted with "audio=0|1;pads=0|1" in its config packet (0x20).
     /// </summary>
     sealed class Server
     {
@@ -32,6 +36,8 @@ namespace TVScreenPlus
         public bool Busy => current != null;
         /// <summary>Live statistics of the current session (null when no TV is connected).</summary>
         public SessionStats Stats => current?.Stats;
+        /// <summary>"Son sur la TV" toggled in the tray: applies to the current session right away.</summary>
+        public void SetAudio(bool on) => current?.SetAudio(on);
 
         public Server(Action<string> status, Action<string, string> notify) { this.status = status; this.notify = notify; }
 
@@ -156,6 +162,11 @@ namespace TVScreenPlus
         volatile bool closed;
         volatile Streamer streamer;
         bool v2;
+        volatile bool tvAudio;        // the TV announced audio=1
+        volatile bool streaming;      // the TV is showing the stream
+        AudioLoopback audio;          // PC sound -> TV
+        readonly object audioLock = new object();
+        volatile PadHub pads;         // TV gamepads -> virtual Xbox 360 controllers
 
         public Session(TcpClient c, Action<string> status, Action<string, string> notify)
         {
@@ -167,6 +178,35 @@ namespace TVScreenPlus
             closed = true;
             try { client.Close(); } catch { }
             try { streamer?.Dispose(); } catch { }
+            SetAudio(false);
+            try { pads?.Dispose(); } catch { }
+        }
+
+        /// <summary>Starts / stops sending the PC sound (only to a TV that supports it, once streaming).</summary>
+        public void SetAudio(bool on)
+        {
+            lock (audioLock)
+            {
+                if (on && tvAudio && streaming && !closed && audio == null)
+                {
+                    audio = new AudioLoopback(p => { if (!closed) try { Send(0x08, p); } catch { } }, Stats);
+                    Log.W("Audio to TV: on");
+                }
+                else if (!on && audio != null)
+                {
+                    audio.Dispose(); audio = null;
+                    if (!closed) Stats.Audio = "désactivé sur le PC";
+                    Stats.AudioKbps = 0;
+                    Log.W("Audio to TV: off");
+                }
+            }
+        }
+
+        /// <summary>A game set the motors of a virtual controller: forward to the TV gamepad.</summary>
+        void SendRumble(int slot, int large, int small)
+        {
+            if (closed) return;
+            try { Send(0x08, new[] { PadHub.RumbleKind, (byte)slot, (byte)large, (byte)small }); } catch { }
         }
 
         void Send(int flags, byte[] payload)
@@ -220,8 +260,15 @@ namespace TVScreenPlus
                 string band = hello.TryGetValue("band", out var bd) ? bd : "0";
                 Stats.Tv = tv; Stats.TvLatencyMs = Int(hello, "lat", -1);
                 Stats.Network = net == "eth" ? "Ethernet" : net == "wifi" ? $"Wi-Fi {band} GHz, lien {Int(hello, "link", 0)} Mb/s" : "?";
+                // Optional features: only what this TV announced (older TV apps announce nothing).
+                int helloAudio = Int(hello, "audio", -1), helloPads = Int(hello, "pads", -1);
+                tvAudio = v2 && helloAudio == 1;
+                bool padsOn = v2 && helloPads == 1 && Settings.Pads;
+                Stats.Audio = helloAudio < 0 ? "non pris en charge par l'app TV" : !tvAudio ? "désactivé sur la TV" : Settings.Audio ? "en attente de la diffusion" : "désactivé sur le PC";
+                Stats.Pads = helloPads < 0 ? "non prises en charge par l'app TV" : helloPads == 0 ? "désactivées sur la TV" : padsOn ? "aucune manette détectée sur la TV" : "désactivées sur le PC";
+                if (padsOn) pads = new PadHub(SendRumble, notify, Stats);
                 Log.W($"TV '{tv}' v{(v2 ? 2 : 1)} {client.Client.RemoteEndPoint} {tvW}x{tvH}@{hz} hevc≤{hevcMax} avc≤{avcMax} " +
-                      $"tested={Int(hello, "tested", 0)} lat={Stats.TvLatencyMs}ms net={Stats.Network} pref={pref} maxh={tvMaxH}");
+                      $"tested={Int(hello, "tested", 0)} lat={Stats.TvLatencyMs}ms net={Stats.Network} pref={pref} maxh={tvMaxH} audio={helloAudio} pads={helloPads}");
                 StartReader();
 
                 // ---- 1. Network: latency + throughput (v2 TVs) ----
@@ -242,6 +289,9 @@ namespace TVScreenPlus
                 double share = net == "eth" ? 0.7 : band == "2.4" ? 0.45 : 0.55;
                 if (pref == "smooth") share *= 0.7; else if (pref == "quality") share = Math.Min(0.8, share * 1.3);
                 double budget = mbps * 1000 * share;
+                // The PC sound travels with the video: keep room for it.
+                int audioKbps = tvAudio && Settings.Audio ? AudioLoopback.Kbps : 0;
+                budget = Math.Max(budget * 0.5, budget - audioKbps);
                 Stats.MeasuredMbps = mbps; Stats.RttMs = rtt;
                 var heights = new List<int>();
                 foreach (int hh in new[] { 2160, 1440, 1080, 900, 720 })
@@ -281,7 +331,7 @@ namespace TVScreenPlus
                 string capped = "";
                 if (v2)
                 {
-                    int netCap = (int)(mbps * 1000 * 0.85);
+                    int netCap = (int)(mbps * 1000 * 0.85) - audioKbps;
                     if (kbps > netCap) { capped = $", capped to network {netCap}"; kbps = netCap; }
                 }
                 int maxKbps = kbps;
@@ -292,11 +342,14 @@ namespace TVScreenPlus
                 Stats.Since = DateTime.Now; Stats.Streaming = true;
                 if (v2) StartPing();
 
-                if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}"));
+                string features = $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)}";
+                if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}" + features));
                 else { var ok = Encoding.ASCII.GetBytes($"OK;codec={enc.Codec};w={target.Width};h={target.Height}\n"); ns.Write(ok, 0, ok.Length); }
                 string info = $"{target.Width}x{target.Height} {plan.Fps} i/s {enc.Codec.ToUpper()} {kbps / 1000} Mb/s";
                 status($"Diffusion vers {tv} – {info}");
                 notify("TVScreenPlus", $"{tv} connectée : {info}");
+                streaming = true;
+                SetAudio(Settings.Audio);
 
                 // ---- 4. Stream with congestion control ----
                 int quickFails = 0, congested = 0;
@@ -358,7 +411,7 @@ namespace TVScreenPlus
                         target = Dxgi.Find(target.GdiName) ?? VirtualDisplay.Attach(target.Width, target.Height, plan.Fps);
                         var e2 = Streamer.Pick(target, hevcTv);
                         plan = new EncodePlan { Enc = e2, Quality = false, Fps = plan.Fps };
-                        if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={e2.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={e2.Name}"));
+                        if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={e2.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={e2.Name}" + features));
                         quickFails = 0;
                     }
                     Thread.Sleep(300);
@@ -431,16 +484,20 @@ namespace TVScreenPlus
             {
                 try
                 {
+                    // Buffered reads: gamepad lines can come hundreds of times per second (writes still go to ns).
+                    var input = new BufferedStream(ns, 4096);
                     while (!closed)
                     {
-                        string l = ReadLine(ns, true);
+                        string l = ReadLine(input, true);
                         if (l == null) break;
                         if (l == "ACK") ack.Set();
+                        else if (l.StartsWith("PAD")) pads?.OnLine(l);
                         else if (l.StartsWith("STAT"))
                         {
                             var d = Parse(l);
                             Stats.OnTvStats(Int(d, "fps", 0), Int(d, "kbps", 0), Int(d, "drop", 0),
                                             Int(d, "dec", -1), Int(d, "decmax", -1), Int(d, "wait", -1));
+                            if (d.ContainsKey("alat")) Stats.OnTvAudio(Int(d, "alat", -1), Int(d, "aund", 0), Int(d, "adrop", 0), Int(d, "ajit", -1));
                         }
                         else if (l.StartsWith("LOG;")) Log.W("TV: " + l.Substring(4));
                     }
@@ -483,6 +540,10 @@ namespace TVScreenPlus
         /// <summary>Live decoder latency (avg / max over 2 s, ms) and % of time the decoder input was full; -1 = old TV app.</summary>
         public int TvDecMs = -1, TvDecMaxMs = -1, TvWaitPct = -1;
         public bool Streaming;
+        /// <summary>PC sound and gamepads, as shown in the debug window.</summary>
+        public volatile string Audio = "—", Pads = "—";
+        public double AudioKbps;
+        public int AudioSkipped, TvAudioMs = -1, TvAudioUnderruns, TvAudioDrops, TvAudioJitter = -1;
         public DateTime Since = DateTime.Now;
         readonly Queue<double> rtts = new Queue<double>();
         int loggedDrops;
@@ -498,6 +559,16 @@ namespace TVScreenPlus
             TvDecMs = decMs; TvDecMaxMs = decMaxMs; TvWaitPct = waitPct;
         }
 
+        /// <summary>TV audio buffer (ms), underruns, packets dropped to keep latency low, arrival jitter (ms).</summary>
+        public void OnTvAudio(int queuedMs, int underruns, int drops, int jitterMs)
+        {
+            TvAudioMs = queuedMs; TvAudioUnderruns = underruns; TvAudioDrops = drops; TvAudioJitter = jitterMs;
+        }
+
+        string AudioLine => Audio + (AudioKbps > 0 ? FormattableString.Invariant($" · {AudioKbps / 1000:0.0} Mb/s") : "") +
+            (TvAudioMs >= 0 ? $"\r\n  côté TV             tampon {TvAudioMs} ms · coupures {TvAudioUnderruns} · paquets jetés {TvAudioDrops}" +
+                              (TvAudioJitter >= 0 ? $" · gigue {TvAudioJitter} ms" : "") : "");
+
         /// <summary>Decoder latency used for estimates: live measurement first, then the TV hardware test.</summary>
         public int DecodeMs => TvDecMs >= 0 ? TvDecMs : TvLatencyMs;
 
@@ -510,7 +581,8 @@ namespace TVScreenPlus
                 FormattableString.Invariant($"Stats: sent {SentFps:0} fps {SentKbps / 1000:0.0} Mb/s (target {TargetKbps / 1000.0:0.0})"),
                 FormattableString.Invariant($"TV {TvFps} fps {TvKbps / 1000.0:0.0} Mb/s drops +{Math.Max(0, drops)} {dec}"),
                 FormattableString.Invariant($"blocked {Blocked * 100:0}% RTT {RttMs:0.0} ms jitter {Jitter:0.0}"),
-                FormattableString.Invariant($"stability {Stability} | ~{EndToEndMs:0} ms PC->screen"));
+                FormattableString.Invariant($"stability {Stability} | ~{EndToEndMs:0} ms PC->screen"),
+                FormattableString.Invariant($"audio {AudioKbps / 1000:0.0} Mb/s TV buffer {TvAudioMs} ms underruns {TvAudioUnderruns} drops {TvAudioDrops} PC skips {AudioSkipped}"));
         }
 
         public double Jitter
@@ -571,6 +643,9 @@ namespace TVScreenPlus
                 $"Latence réseau (A/R)  {RttMs:0.0} ms\r\n" +
                 $"Latence décodage TV   {(TvDecMs >= 0 ? $"{TvDecMs} ms en direct (max {TvDecMaxMs} ms)" : TvLatencyMs >= 0 ? TvLatencyMs + " ms (test matériel)" : "inconnue (mettre à jour l'app TV)")}\r\n" +
                 $"Latence PC → écran    ≈ {EndToEndMs:0} ms (estimation)\r\n" +
+                $"\r\n" +
+                $"Son sur la TV         {AudioLine}\r\n" +
+                $"Manettes              {Pads}\r\n" +
                 $"\r\n" +
                 $"Connectée depuis      {(int)up.TotalHours:00}:{up.Minutes:00}:{up.Seconds:00}";
         }
