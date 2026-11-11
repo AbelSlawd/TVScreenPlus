@@ -15,22 +15,22 @@ android {
         versionName = "1.0.$build"
     }
     // Fixed key (from CI secrets) so every release installs over the previous one; debug key otherwise.
-    val ksFile = System.getenv("ANDROID_KEYSTORE_FILE")
+    val ksFile = System.getenv("ANDROID_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
     signingConfigs {
         create("release") {
-            if (ksFile != null && file(ksFile).exists()) {
-                storeFile = file(ksFile)
+            if (ksFile != null) {
+                storeFile = ksFile
                 storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "tvsp"
                 keyPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-            } else initWith(getByName("debug"))
+            }
         }
     }
     buildTypes {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName(if (ksFile != null) "release" else "debug")
         }
     }
     compileOptions {
