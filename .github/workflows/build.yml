@@ -69,12 +69,26 @@ jobs:
     permissions: { contents: write }
     steps:
       - uses: actions/checkout@v4
-        with: { sparse-checkout: VERSION, sparse-checkout-cone-mode: false, path: src }
+        with:
+          sparse-checkout: |
+            VERSION
+            RELEASE_NOTES.md
+          sparse-checkout-cone-mode: false
+          path: src
       - id: ver
         run: |
           v=$(tr -d '[:space:]' < src/VERSION)
           echo "name=$v" >> "$GITHUB_OUTPUT"
           echo "tag=v$(echo "$v" | cut -d. -f1-2).${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          # Release text: what changed (RELEASE_NOTES.md, edited for each version) + how to install.
+          {
+            cat src/RELEASE_NOTES.md
+            echo
+            echo "**PC Windows** : \`TVScreenPlus-PC.zip\` → décompresser n'importe où et lancer \`TVScreenPlus.exe\` : il s'installe dans *Program Files*, remplace et supprime l'ancienne version. Les versions suivantes s'installent automatiquement."
+            echo "**Google TV** : \`TVScreenPlus-TV.apk\` → installer sur la TV ; l'application propose ensuite elle-même les mises à jour."
+            echo
+            echo "Commit : ${{ github.sha }}"
+          } > release_body.md
       - uses: actions/download-artifact@v4
       - run: |
           cd TVScreenPlus-PC && zip -qr ../TVScreenPlus-PC.zip TVScreenPlus-PC && cd ..
@@ -86,15 +100,7 @@ jobs:
           name: TVScreenPlus ${{ steps.ver.outputs.name }}
           target_commitish: ${{ github.sha }}
           make_latest: true
-          body: |
-            **Nouveau en 1.1 : encodeur vidéo TVScreenPlus** (sans ffmpeg) — 60 images/s régulières et latence réduite, y compris en mode jeu.
-            ✅ Testé et validé sur carte **NVIDIA** (GeForce RTX 5080, 4K 60 i/s).
-            ⚠️ Les autres configurations (AMD, Intel, autres générations NVIDIA, PC portables à deux GPU) restent à tester. Si l'encodeur ne fonctionne pas ou est trop lent, l'encodeur ffmpeg de la version 1.0 prend le relais automatiquement ; il peut aussi être choisi à la main : icône TVScreenPlus → *Encodeur vidéo* → *ffmpeg*.
-
-            **PC Windows** : `TVScreenPlus-PC.zip` → décompresser n'importe où et lancer `TVScreenPlus.exe` : il s'installe dans *Program Files*, remplace et supprime l'ancienne version. Les versions suivantes s'installent automatiquement.
-            **Google TV** : `TVScreenPlus-TV.apk` → installer sur la TV ; l'application propose ensuite elle-même les mises à jour.
-
-            Commit : ${{ github.sha }}
+          body_path: release_body.md
           files: |
             TVScreenPlus-PC.zip
             TVScreenPlus-TV.apk
