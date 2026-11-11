@@ -75,6 +75,10 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |
+            **Nouveau en 1.1 : encodeur vidéo TVScreenPlus** (sans ffmpeg) — 60 images/s régulières et latence réduite, y compris en mode jeu.
+            ✅ Testé et validé sur carte **NVIDIA** (GeForce RTX 5080, 4K 60 i/s).
+            ⚠️ Les autres configurations (AMD, Intel, autres générations NVIDIA, PC portables à deux GPU) restent à tester. Si l'encodeur ne fonctionne pas ou est trop lent, l'encodeur ffmpeg de la version 1.0 prend le relais automatiquement ; il peut aussi être choisi à la main : icône TVScreenPlus → *Encodeur vidéo* → *ffmpeg*.
+
             **PC Windows** : `TVScreenPlus-PC.zip` → décompresser n'importe où et lancer `TVScreenPlus.exe` : il s'installe dans *Program Files*, remplace et supprime l'ancienne version. Les versions suivantes s'installent automatiquement.
             **Google TV** : `TVScreenPlus-TV.apk` → installer sur la TV ; l'application propose ensuite elle-même les mises à jour.
 
