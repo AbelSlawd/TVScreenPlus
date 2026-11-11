@@ -93,9 +93,10 @@ namespace TVScreenPlus
             foreach (int fps in fpsChoices)
                 foreach (bool q in new[] { true, false })
                 {
-                    string key = $"bench_{e.Name}_{t.Width}x{t.Height}_{fps}_{(q ? "q" : "f")}";
+                    // "v2": measured after the encoder start-up (older results underestimated fast GPUs).
+                    string key = $"bench_v2_{e.Name}_{t.Width}x{t.Height}_{fps}_{(q ? "q" : "f")}";
                     string cached = Settings.Get(key, "");
-                    double got = cached != "" ? double.Parse(cached, CultureInfo.InvariantCulture) : RunTest(e, t, fps, q, fps * 3);
+                    double got = cached != "" ? double.Parse(cached, CultureInfo.InvariantCulture) : RunTest(e, t, fps, q, fps * 4);
                     if (cached == "" && got >= 0) Settings.Set(key, got.ToString(CultureInfo.InvariantCulture));
                     Log.W($"bench {key}: {got:0.0} fps");
                     if (got >= fps * 0.93) return new EncodePlan { Enc = e, Quality = q, Fps = fps };
@@ -103,22 +104,39 @@ namespace TVScreenPlus
             return null;
         }
 
-        /// <summary>Encodes 'frames' frames to null. Returns achieved fps, or -1 on failure.</summary>
+        /// <summary>
+        /// Encodes 'frames' frames to null. Returns the steady-state fps, or -1 on failure.
+        /// ffmpeg's own fps= figure includes process and encoder start-up (a 60 fps GPU reported ~56 over 3 s),
+        /// so the rate is measured between progress reports, from the first encoded frame to the end.
+        /// </summary>
         static double RunTest(Encoder e, DisplayTarget t, int fps, bool quality, int frames)
         {
             try
             {
                 int kbps = (int)(t.Width * (double)t.Height * fps * 0.12 / 1000);
-                var psi = new ProcessStartInfo(Setup.FFmpeg, e.CommandLine(t, fps, kbps, quality, $"-frames:v {frames} -progress pipe:1 -nostats -f null -"))
+                var psi = new ProcessStartInfo(Setup.FFmpeg, e.CommandLine(t, fps, kbps, quality,
+                    $"-frames:v {frames} -progress pipe:1 -stats_period 0.25 -nostats -f null -"))
                 { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
                 using (var p = Process.Start(psi))
+                using (new System.Threading.Timer(_ => { try { p.Kill(); } catch { } }, null, 25000, System.Threading.Timeout.Infinite))
                 {
                     var err = p.StandardError.ReadToEndAsync();
-                    var outp = p.StandardOutput.ReadToEndAsync();
-                    if (!p.WaitForExit(20000)) { try { p.Kill(); } catch { } return -1; }
-                    if (p.ExitCode != 0) { Log.W("  " + err.Result.Trim().Replace("\n", " | ")); return -1; }
-                    string fpsLine = outp.Result.Split('\n').LastOrDefault(l => l.StartsWith("fps="));
-                    return fpsLine != null && double.TryParse(fpsLine.Substring(4).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : fps;
+                    var sw = Stopwatch.StartNew();
+                    long f0 = -1, f1 = -1; double t0 = 0, t1 = 0, ffFps = -1;
+                    string line;
+                    while ((line = p.StandardOutput.ReadLine()) != null)
+                    {
+                        if (line.StartsWith("fps=")) double.TryParse(line.Substring(4).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out ffFps);
+                        if (!line.StartsWith("frame=") || !long.TryParse(line.Substring(6).Trim(), out long f) || f <= 0) continue;
+                        double now = sw.Elapsed.TotalSeconds;
+                        if (f0 < 0) { f0 = f; t0 = now; } else { f1 = f; t1 = now; }
+                    }
+                    p.WaitForExit(5000);
+                    if (!p.HasExited || p.ExitCode != 0) { Log.W("  " + err.Result.Trim().Replace("\n", " | ")); return -1; }
+                    double steady = f1 > f0 && t1 - t0 >= 1.0 ? (f1 - f0) / (t1 - t0) : -1;
+                    Log.W(FormattableString.Invariant($"  test {frames} frames: steady {steady:0.0} fps, ffmpeg overall {ffFps:0.0} fps"));
+                    // The capture is paced at 'fps': anything above is report jitter.
+                    return steady > 0 ? Math.Min(fps, steady) : ffFps > 0 ? ffFps : fps;
                 }
             }
             catch (Exception ex) { Log.W("test error " + ex.Message); return -1; }

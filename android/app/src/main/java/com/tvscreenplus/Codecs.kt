@@ -8,6 +8,9 @@ import android.util.Log
 import android.view.Surface
 
 object Codecs {
+    /** Name and settings of the last decoder created (for the PC log). */
+    @Volatile var lastDecoder = ""
+
     /** Hardware decoder configured for minimum latency (vendor switches tried first, plain config as fallback). */
     fun lowLatencyDecoder(mime: String, w: Int, h: Int, surface: Surface?): MediaCodec {
         fun format(extended: Boolean) = MediaFormat.createVideoFormat(mime, w, h).apply {
@@ -32,7 +35,8 @@ object Codecs {
             try {
                 dec.configure(format(extended), surface, null, 0)
                 dec.start()
-                Log.i(StreamClient.TAG, "decoder ${dec.name} ${w}x$h extended=$extended")
+                lastDecoder = "${dec.name} ${w}x$h low-latency=${if (extended) "vendor+standard" else "standard"}"
+                Log.i(StreamClient.TAG, "decoder $lastDecoder")
                 return dec
             } catch (e: Exception) {
                 Log.w(StreamClient.TAG, "configure extended=$extended failed", e)

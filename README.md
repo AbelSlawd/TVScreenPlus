@@ -102,7 +102,10 @@ Clic droit sur l'icône › *Mode debug* : une fenêtre affiche en direct
 - la **stabilité du signal** (score sur 100, saturation du réseau, gigue de latence, images perdues par la TV, baisses de débit) ;
 - les **images par seconde** envoyées par le PC et affichées par la TV ;
 - la **résolution**, le codec, l'encodeur et le débit ;
-- la **latence** : aller-retour réseau mesuré chaque seconde, latence de décodage de la TV et estimation de la latence totale PC → écran.
+- la **latence** : aller-retour réseau mesuré chaque seconde, latence de décodage **mesurée en direct sur la TV** (moyenne et maximum) et estimation de la latence totale PC → écran ;
+- la **saturation du décodeur de la TV** : part du temps où la puce vidéo ne suit plus le flux.
+
+Les mêmes chiffres sont écrits dans le journal toutes les 10 secondes (lignes `Stats:`), avec les informations envoyées par la TV à chaque connexion (lignes `TV:` : modèle, décodeur utilisé, détail du test du matériel). On peut ainsi analyser une session après coup, sans outil de développement sur la TV.
 
 > Astuce : pour placer la TV à gauche ou à droite de votre écran principal, faites-la glisser dans *Paramètres › Système › Affichage*.
 
@@ -115,7 +118,7 @@ Clic droit sur l'icône › *Mode debug* : une fenêtre affiche en direct
 
 Pendant la diffusion, si le réseau sature (micro-ondes, autre appareil qui télécharge…), le débit **baisse automatiquement** pour éviter les saccades, puis **remonte** quand la connexion redevient stable.
 
-Pour forcer une valeur : clic droit sur l'icône › *Résolution* ou *Qualité / débit*. Si vous changez de carte graphique, utilisez *Recalibrer*.
+Pour forcer une valeur : clic droit sur l'icône › *Résolution* ou *Qualité / débit*. Même forcé, le débit ne dépasse jamais ce que le réseau mesuré peut transporter (85 %) : au-delà, l'image prendrait du retard. Si vous changez de carte graphique, utilisez *Recalibrer*.
 
 ## Mises à jour
 - **PC** : le programme vérifie toutes les 6 heures et s'installe tout seul quand aucune TV n'est connectée. Vérification manuelle : clic droit › *Rechercher une mise à jour*.
@@ -133,7 +136,7 @@ Toutes les versions sont listées dans les [Releases](https://github.com/AbelSla
 | Image floue | Clic droit sur l'icône › *Qualité / débit › Maximale*, et vérifiez que *Résolution* est sur *Automatique* ou *Native*. |
 | « Mise à jour impossible : autre signature » sur la TV | Désinstallez l'application de la TV puis réinstallez l'APK une fois. Les mises à jour suivantes fonctionneront. |
 | Rien ne s'affiche après la connexion | Clic droit › *Recalibrer*, puis reconnectez la TV. Mettez à jour le pilote de la carte graphique. |
-| Autre souci | Clic droit › *Ouvrir le journal* (`C:\ProgramData\TVScreenPlus\log.txt`) et joignez-le à une [issue](https://github.com/AbelSlawd/TVScreenPlus/issues). |
+| Autre souci | Clic droit › *Ouvrir le journal* (`C:\ProgramData\TVScreenPlus\log.txt`) et joignez-le à une [issue](https://github.com/AbelSlawd/TVScreenPlus/issues). Il contient aussi les informations de la TV (lignes `TV:`) et les statistiques de la diffusion (lignes `Stats:`). |
 
 ## Désinstallation
 - **PC** : *Paramètres › Applications › TVScreenPlus › Désinstaller*. Le pilote d'écran virtuel, la règle du pare-feu et le démarrage automatique sont aussi supprimés.
@@ -165,7 +168,7 @@ PC Windows                                                   TV Google TV
 - **Découverte** : la TV diffuse `TVSP?` en UDP et le PC répond `TVSP!\nname=…\nbusy=0|1\nver=…`.
 - **Connexion** : la TV envoie `TVSP1;v=2;name=…;w=…;h=…;hz=…;hevc=<hauteur max>;avc=<hauteur max>;…`.
 - **Flux** : paquets `[u32 taille][u8 flags][données]`. Flags : `0x80` remplissage (test de débit), `0x40` ping (la TV répond `ACK`), `0x20` configuration, `0x10` message d'état, sinon une image vidéo Annex-B (`1` = image clé).
-- **Retour TV → PC** : `STAT;fps=…;kbps=…;drop=…` toutes les 2 secondes, et `ACK` en réponse aux pings envoyés chaque seconde pour mesurer la latence.
+- **Retour TV → PC** : `STAT;fps=…;kbps=…;drop=…;dec=…;decmax=…;wait=…` toutes les 2 secondes (`dec`/`decmax` : latence du décodeur en ms, `wait` : % du temps où son entrée est pleine), `LOG;…` (diagnostic écrit dans le journal du PC), et `ACK` en réponse aux pings envoyés chaque seconde pour mesurer la latence.
 - **Champs supplémentaires de la connexion** : `lang`, `tested`, `lat` (latence de décodage en ms), `net`/`band`/`link` (réseau), `pref` (priorité), `maxh` (résolution max).
 </details>
 

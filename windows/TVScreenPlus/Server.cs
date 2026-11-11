@@ -16,7 +16,9 @@ namespace TVScreenPlus
     ///  v1 TV: PC answers "OK;codec=..;w=..;h=..\n" then video packets.
     ///  v2 TV: only packets [u32 len][u8 flags][payload]; flags 0x80 filler, 0x40 ping (TV answers "ACK\n"),
     ///         0x20 config text, 0x10 status text, else video (1 = keyframe, 2 = new stream).
-    ///         TV also sends "STAT;fps=..;kbps=..;drop=..\n" lines.
+    ///         TV also sends "STAT;fps=..;kbps=..;drop=..;dec=..;decmax=..;wait=..\n" every 2 s
+    ///         (dec/decmax = live decoder latency in ms, wait = % of time the decoder input was full)
+    ///         and "LOG;text\n" diagnostic lines, written to the PC log.
     /// </summary>
     sealed class Server
     {
@@ -274,9 +276,17 @@ namespace TVScreenPlus
                 bool hevc = enc.Codec == "hevc";
                 double ideal = Ideal(target.Width, target.Height, plan.Fps, hevc);
                 int kbps = (int)(autoQ ? Math.Max(ideal * 0.6, Math.Min(budget, ideal * 2.5)) : ideal * 1.4 * Settings.Quality);
+                // Never above what the measured link can carry, even with a forced quality: the encoder's peak
+                // rate (maxrate) beyond the link only queues frames (lag) then triggers congestion drops.
+                string capped = "";
+                if (v2)
+                {
+                    int netCap = (int)(mbps * 1000 * 0.85);
+                    if (kbps > netCap) { capped = $", capped to network {netCap}"; kbps = netCap; }
+                }
                 int maxKbps = kbps;
                 client.SendBufferSize = Math.Max(64 << 10, kbps * 1000 / 8 / 25); // ~40 ms of video: low latency
-                Log.W($"Plan: {target.Width}x{target.Height} {plan} {kbps} kb/s (budget {budget:0}, ideal {ideal:0})");
+                Log.W($"Plan: {target.Width}x{target.Height} {plan} {kbps} kb/s (budget {budget:0}, ideal {ideal:0}{capped})");
                 Stats.Width = target.Width; Stats.Height = target.Height; Stats.Codec = enc.Codec.ToUpper();
                 Stats.Encoder = plan.ToString(); Stats.TargetFps = plan.Fps; Stats.TargetKbps = kbps;
                 Stats.Since = DateTime.Now; Stats.Streaming = true;
@@ -388,12 +398,16 @@ namespace TVScreenPlus
             return Math.Min(800, sent * 8 / secs / 1e6);
         }
 
-        /// <summary>Round-trip time every second (the ping waits behind queued video: real frame latency).</summary>
+        /// <summary>
+        /// Round-trip time every second (the ping waits behind queued video: real frame latency),
+        /// and a summary line in the log every 10 s so a session can be analysed afterwards.
+        /// </summary>
         void StartPing()
         {
             new Thread(() =>
             {
                 var sw = new Stopwatch();
+                var logEvery = Stopwatch.StartNew();
                 while (!closed)
                 {
                     try
@@ -404,6 +418,7 @@ namespace TVScreenPlus
                         else Stats.AddRtt(3000);
                     }
                     catch { return; }
+                    if (logEvery.ElapsedMilliseconds >= 10000) { logEvery.Restart(); Log.W(Stats.LogLine()); }
                     Thread.Sleep(1000);
                 }
             }) { IsBackground = true, Name = "ping" }.Start();
@@ -424,8 +439,10 @@ namespace TVScreenPlus
                         else if (l.StartsWith("STAT"))
                         {
                             var d = Parse(l);
-                            Stats.OnTvStats(Int(d, "fps", 0), Int(d, "kbps", 0), Int(d, "drop", 0));
+                            Stats.OnTvStats(Int(d, "fps", 0), Int(d, "kbps", 0), Int(d, "drop", 0),
+                                            Int(d, "dec", -1), Int(d, "decmax", -1), Int(d, "wait", -1));
                         }
+                        else if (l.StartsWith("LOG;")) Log.W("TV: " + l.Substring(4));
                     }
                 }
                 catch { }
@@ -463,18 +480,37 @@ namespace TVScreenPlus
         public int Width, Height, TargetFps, TargetKbps, TvLatencyMs = -1, BitrateDown;
         public double MeasuredMbps, RttMs, SentFps, SentKbps, Blocked;
         public int TvFps, TvKbps, TvDrops, TvDropsDelta;
+        /// <summary>Live decoder latency (avg / max over 2 s, ms) and % of time the decoder input was full; -1 = old TV app.</summary>
+        public int TvDecMs = -1, TvDecMaxMs = -1, TvWaitPct = -1;
         public bool Streaming;
         public DateTime Since = DateTime.Now;
         readonly Queue<double> rtts = new Queue<double>();
+        int loggedDrops;
 
         public void AddRtt(double ms)
         {
             lock (rtts) { rtts.Enqueue(ms); while (rtts.Count > 20) rtts.Dequeue(); RttMs = ms; }
         }
 
-        public void OnTvStats(int fps, int kbps, int drops)
+        public void OnTvStats(int fps, int kbps, int drops, int decMs, int decMaxMs, int waitPct)
         {
             TvFps = fps; TvKbps = kbps; TvDropsDelta = Math.Max(0, drops - TvDrops); TvDrops = drops;
+            TvDecMs = decMs; TvDecMaxMs = decMaxMs; TvWaitPct = waitPct;
+        }
+
+        /// <summary>Decoder latency used for estimates: live measurement first, then the TV hardware test.</summary>
+        public int DecodeMs => TvDecMs >= 0 ? TvDecMs : TvLatencyMs;
+
+        /// <summary>One-line summary for the log (every 10 s while streaming).</summary>
+        public string LogLine()
+        {
+            int drops = TvDrops - loggedDrops; loggedDrops = TvDrops;
+            string dec = TvDecMs >= 0 ? $"dec {TvDecMs} ms (max {TvDecMaxMs}) wait {TvWaitPct}%" : "dec ?";
+            return string.Join(" | ",
+                FormattableString.Invariant($"Stats: sent {SentFps:0} fps {SentKbps / 1000:0.0} Mb/s (target {TargetKbps / 1000.0:0.0})"),
+                FormattableString.Invariant($"TV {TvFps} fps {TvKbps / 1000.0:0.0} Mb/s drops +{Math.Max(0, drops)} {dec}"),
+                FormattableString.Invariant($"blocked {Blocked * 100:0}% RTT {RttMs:0.0} ms jitter {Jitter:0.0}"),
+                FormattableString.Invariant($"stability {Stability} | ~{EndToEndMs:0} ms PC->screen"));
         }
 
         public double Jitter
@@ -507,7 +543,7 @@ namespace TVScreenPlus
             get
             {
                 double frame = 1000.0 / Math.Max(1, TargetFps);
-                return frame + 4 + RttMs / 2 + (TvLatencyMs >= 0 ? TvLatencyMs : frame) + frame;
+                return frame + 4 + RttMs / 2 + (DecodeMs >= 0 ? DecodeMs : frame) + frame;
             }
         }
 
@@ -524,6 +560,7 @@ namespace TVScreenPlus
                 $"  saturation réseau   {Blocked:P0}\r\n" +
                 $"  gigue latence       {Jitter:0.0} ms\r\n" +
                 $"  images perdues TV   {TvDrops} (+{TvDropsDelta})\r\n" +
+                (TvWaitPct >= 0 ? $"  décodeur TV saturé  {TvWaitPct} % du temps\r\n" : "") +
                 $"  baisses de débit    {BitrateDown}\r\n" +
                 $"\r\n" +
                 $"Images par seconde    envoyées {SentFps:0} · affichées TV {TvFps} · cible {TargetFps}\r\n" +
@@ -532,7 +569,7 @@ namespace TVScreenPlus
                 $"Débit                 envoyé {SentKbps / 1000:0.0} Mb/s · cible {TargetKbps / 1000.0:0.0} Mb/s\r\n" +
                 $"\r\n" +
                 $"Latence réseau (A/R)  {RttMs:0.0} ms\r\n" +
-                $"Latence décodage TV   {(TvLatencyMs >= 0 ? TvLatencyMs + " ms" : "inconnue (lancer le test matériel sur la TV)")}\r\n" +
+                $"Latence décodage TV   {(TvDecMs >= 0 ? $"{TvDecMs} ms en direct (max {TvDecMaxMs} ms)" : TvLatencyMs >= 0 ? TvLatencyMs + " ms (test matériel)" : "inconnue (mettre à jour l'app TV)")}\r\n" +
                 $"Latence PC → écran    ≈ {EndToEndMs:0} ms (estimation)\r\n" +
                 $"\r\n" +
                 $"Connectée depuis      {(int)up.TotalHours:00}:{up.Minutes:00}:{up.Seconds:00}";

@@ -17,10 +17,13 @@ import java.net.Socket
  * hardware decoder straight onto the Surface (zero copy, low-latency mode).
  * flags: 0x80 filler (bandwidth test), 0x40 ping (answer "ACK"), 0x20 config, 0x10 status text,
  * otherwise an Annex-B access unit (1 = keyframe).
+ * Upstream: "ACK", "STAT;fps=;kbps=;drop=;dec=;decmax=;wait=" every 2 s, and "LOG;<text>" lines that the
+ * PC writes to its log (diagnostics, decoder in use, errors).
  */
 class StreamClient(
     private val host: String,
     private val hello: String,
+    private val diagnostics: List<String>,
     private val surface: Surface,
     private val listener: Listener,
 ) {
@@ -43,6 +46,13 @@ class StreamClient(
     private var bytesWindow = 0L
     @Volatile private var rendered = 0
 
+    // Live decoder measurements over the current 2 s window (guarded by decLock).
+    private val decLock = Any()
+    private var decSumUs = 0L
+    private var decCount = 0
+    private var decMaxUs = 0L
+    private var waitNs = 0L // time spent waiting for a free decoder input buffer (decoder saturated)
+
     fun start() = Thread({ run() }, "net-decode").start()
 
     fun stop() {
@@ -55,6 +65,9 @@ class StreamClient(
         synchronized(o) { o.write((line + "\n").toByteArray()); o.flush() }
     }
 
+    /** Line for the PC log (single line, short). */
+    private fun log(text: String) = try { send("LOG;" + text.replace('\n', ' ').take(900)) } catch (_: Exception) {}
+
     private fun run() {
         boost()
         var error: String? = null
@@ -66,6 +79,7 @@ class StreamClient(
             s.connect(InetSocketAddress(host, PORT), 4000)
             out = s.getOutputStream()
             send(hello)
+            diagnostics.forEach { log(it) }
             val input = DataInputStream(BufferedInputStream(s.getInputStream(), 256 shl 10))
             startStats()
 
@@ -92,7 +106,7 @@ class StreamClient(
                 }
             }
         } catch (e: Exception) {
-            if (running) error = e.message ?: e.javaClass.simpleName
+            if (running) { error = e.message ?: e.javaClass.simpleName; log("stream error: ${e.javaClass.simpleName}: ${e.message}") }
             Log.w(TAG, "stream ended", e)
         } finally {
             running = false
@@ -107,7 +121,10 @@ class StreamClient(
         val h = c["h"]?.toIntOrNull() ?: 1080
         val hevc = c["codec"] == "hevc"
         decoder?.release()
-        decoder = Decoder(if (hevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC, w, h, hevc)
+        decoder = try {
+            Decoder(if (hevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC, w, h, hevc)
+        } catch (e: Exception) { log("decoder creation failed ${w}x$h: ${e.javaClass.simpleName}: ${e.message}"); throw e }
+        log("decoder ${Codecs.lastDecoder}")
         val rate = c["kbps"]?.toIntOrNull()?.let { " · ${L.t("target")} %.1f Mb/s".format(it / 1000.0) } ?: ""
         info = "${w}x$h ${c["fps"] ?: "60"} i/s ${if (hevc) "HEVC" else "H.264"}$rate · ${c["enc"] ?: ""}"
         listener.onStarted(info)
@@ -122,7 +139,12 @@ class StreamClient(
             lastRendered = r
             kbps = (bytesWindow * 8 / 2000).toInt()
             bytesWindow = 0
-            if (decoder != null) try { send("STAT;fps=$fps;kbps=$kbps;drop=$dropped") } catch (_: Exception) {}
+            val (dec, decMax, wait) = synchronized(decLock) {
+                val r = Triple(if (decCount > 0) decSumUs / decCount / 1000 else -1L, decMaxUs / 1000, waitNs * 100 / 2_000_000_000L)
+                decSumUs = 0; decCount = 0; decMaxUs = 0; waitNs = 0
+                r
+            }
+            if (decoder != null) try { send("STAT;fps=$fps;kbps=$kbps;drop=$dropped;dec=$dec;decmax=$decMax;wait=$wait") } catch (_: Exception) {}
         }
     }, "stats").start()
 
@@ -149,7 +171,10 @@ class StreamClient(
         }
 
         private fun queue(data: ByteArray, off: Int, len: Int, flags: Int) {
+            val t0 = System.nanoTime()
             val idx = codec.dequeueInputBuffer(200_000)
+            val waited = System.nanoTime() - t0
+            if (waited > 1_000_000) synchronized(decLock) { waitNs += waited }
             if (idx < 0) { dropped++; return } // decoder saturated
             val b = codec.getInputBuffer(idx)!!
             b.clear()
@@ -165,10 +190,15 @@ class StreamClient(
             try {
                 while (alive) {
                     val idx = codec.dequeueOutputBuffer(info, 50_000)
-                    if (idx >= 0) { codec.releaseOutputBuffer(idx, System.nanoTime()); rendered++ }
+                    if (idx >= 0) {
+                        // presentationTimeUs = time the frame was queued: input -> output delay of the decoder.
+                        val lat = System.nanoTime() / 1000 - info.presentationTimeUs
+                        codec.releaseOutputBuffer(idx, System.nanoTime()); rendered++
+                        if (lat in 0L..2_000_000L) synchronized(decLock) { decSumUs += lat; decCount++; decMaxUs = maxOf(decMaxUs, lat) }
+                    }
                 }
             } catch (e: Exception) {
-                if (alive) { Log.w(TAG, "decoder", e); stop() }
+                if (alive) { Log.w(TAG, "decoder", e); log("decoder error: ${e.javaClass.simpleName}: ${e.message}"); stop() }
             }
         }
 

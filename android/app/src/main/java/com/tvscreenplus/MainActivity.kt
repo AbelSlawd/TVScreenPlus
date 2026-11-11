@@ -209,7 +209,8 @@ class MainActivity : Activity() {
                 ui.post {
                     testing = false
                     if (r != null) prefs.edit().putInt("hw_hevc", r.hevc).putInt("hw_avc", r.avc)
-                        .putInt("hw_lat", r.latencyMs).putInt("hw_ver", versionCode).apply()
+                        .putInt("hw_lat", r.latencyMs).putInt("hw_ver", versionCode)
+                        .putString("hw_log", r.report.joinToString("\n")).apply()
                     testNote.text = (if (r != null) L.t("hwtest_done") + "\n" else "") + hwSummary()
                 }
             }, "hwtest").start()
@@ -400,6 +401,23 @@ class MainActivity : Activity() {
             ";net=$net;band=$band;link=$link;pref=${prefs.getString("pref", "auto")};maxh=${prefs.getString("maxh", "0")}"
     }
 
+    /** Diagnostic lines written to the PC log on every connection (no ADB needed to see what the TV does). */
+    private fun diagnostics(): List<String> {
+        val soc = if (Build.VERSION.SDK_INT >= 31) " SoC ${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}" else ""
+        val lines = arrayListOf(
+            "device ${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE}) Android ${Build.VERSION.RELEASE} SDK ${Build.VERSION.SDK_INT}$soc app $versionName",
+            "panel ${panelSize().let { "${it.first}x${it.second}" }} @${refreshHz()} Hz, declared HEVC ${Codecs.declaredMaxHeight(MediaFormat.MIMETYPE_VIDEO_HEVC)}p60, H.264 ${Codecs.declaredMaxHeight(MediaFormat.MIMETYPE_VIDEO_AVC)}p60",
+        )
+        val hwVer = prefs.getInt("hw_ver", 0)
+        if (hwVer == 0) lines += "hwtest never run"
+        else {
+            val log = prefs.getString("hw_log", null)
+            if (log.isNullOrEmpty()) lines += "hwtest run with app build $hwVer (no details: run the test again)"
+            else log.split('\n').forEach { lines += "hwtest $it" }
+        }
+        return lines
+    }
+
     @Suppress("DEPRECATION")
     private fun refreshHz() = Math.round(windowManager.defaultDisplay.refreshRate)
 
@@ -410,7 +428,7 @@ class MainActivity : Activity() {
         setStatus(L.t("connecting", name))
         val hz = refreshHz()
         lateinit var c: StreamClient
-        c = StreamClient(ip, hello(), surfaceView.holder.surface, object : StreamClient.Listener {
+        c = StreamClient(ip, hello(), diagnostics(), surfaceView.holder.surface, object : StreamClient.Listener {
             override fun onStatus(text: String) {
                 ui.post { if (client === c && overlay.visibility == View.VISIBLE) setStatus("$name : $text") }
             }

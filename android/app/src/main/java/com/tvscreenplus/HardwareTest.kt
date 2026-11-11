@@ -16,41 +16,50 @@ import android.util.Log
  * (per-frame latency, the delay the decoder adds to the stream). Results are sent to the PC.
  */
 object HardwareTest {
-    class Result(val hevc: Int, val avc: Int, val latencyMs: Int)
+    /** report: one human-readable line per step, sent to the PC log on every connection. */
+    class Result(val hevc: Int, val avc: Int, val latencyMs: Int, val report: List<String>)
 
     private class Clip(val csd: ByteArray?, val frames: List<Pair<ByteArray, Int>>)
 
     fun run(progress: (String) -> Unit): Result {
-        val (avc, avcLat) = testCodec(MediaFormat.MIMETYPE_VIDEO_AVC, "H.264", progress)
-        val (hevc, hevcLat) = testCodec(MediaFormat.MIMETYPE_VIDEO_HEVC, "HEVC", progress)
+        val report = ArrayList<String>()
+        val (avc, avcLat) = testCodec(MediaFormat.MIMETYPE_VIDEO_AVC, "H.264", progress, report)
+        val (hevc, hevcLat) = testCodec(MediaFormat.MIMETYPE_VIDEO_HEVC, "HEVC", progress, report)
         val lat = listOf(hevcLat, avcLat).filter { it >= 0 }.minOrNull() ?: -1
-        return Result(hevc, avc, lat)
+        report += "result: HEVC ${hevc}p, H.264 ${avc}p, latency ${if (lat >= 0) "$lat ms" else "unknown"}"
+        return Result(hevc, avc, lat, report)
     }
 
+    private fun why(e: Exception) = "${e.javaClass.simpleName}: ${e.message ?: ""}".take(160)
+
     /** Returns (max height decodable at ≥ 60 fps, latency in ms or -1). */
-    private fun testCodec(mime: String, label: String, progress: (String) -> Unit): Pair<Int, Int> {
+    private fun testCodec(mime: String, label: String, progress: (String) -> Unit, report: MutableList<String>): Pair<Int, Int> {
+        fun note(s: String) { report += "$label $s"; Log.i(StreamClient.TAG, "hwtest $label $s") }
         val declared = Codecs.declaredMaxHeight(mime)
+        note("declared ${declared}p60")
         if (declared == 0) return 0 to -1
         for (h in listOf(2160, 1440, 1080, 720)) {
             if (h > maxOf(declared, 1080)) continue // far above what the chip claims: skip
             progress("$label ${h}p")
             val w = Codecs.width(h)
-            val clip = try { encodeClip(mime, w, h) } catch (e: Exception) { Log.w(StreamClient.TAG, "encode $label $h", e); null }
+            val clip = try { encodeClip(mime, w, h) } catch (e: Exception) { note("${h}p: no test clip (${why(e)})"); null }
+            if (clip != null && clip.frames.size < 20) note("${h}p: test clip too short (${clip.frames.size} frames)")
             if (clip == null || clip.frames.size < 20) {
-                if (declared >= h) return h to -1 // can't build a test clip here: trust the declared capability
+                if (declared >= h) { note("${h}p: kept as declared, NOT measured"); return h to -1 } // trust the declared capability
                 continue
             }
-            val fps = try { throughput(mime, w, h, clip) } catch (e: Exception) { Log.w(StreamClient.TAG, "decode $label $h", e); 0.0 }
-            Log.i(StreamClient.TAG, "hwtest $label ${h}p: %.1f fps".format(fps))
+            val fps = try { throughput(mime, w, h, clip) } catch (e: Exception) { note("${h}p: decode error (${why(e)})"); 0.0 }
+            note("${h}p: decodes %.1f fps (clip ${clip.frames.size} frames)".format(fps))
             if (fps >= 66) {
-                val lat = try { latency(mime, w, h, clip) } catch (e: Exception) { -1 }
+                val lat = try { latency(mime, w, h, clip) } catch (e: Exception) { note("${h}p: latency not measured (${why(e)})"); -1 }
+                if (lat >= 0) note("${h}p: latency $lat ms (75th percentile)")
                 return h to lat
             }
         }
         return 0 to -1
     }
 
-    private fun encodeClip(mime: String, w: Int, h: Int): Clip? {
+    private fun encodeClip(mime: String, w: Int, h: Int): Clip {
         val enc = MediaCodec.createEncoderByType(mime)
         val surface: android.view.Surface
         try {
@@ -63,7 +72,7 @@ object HardwareTest {
             enc.configure(f, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             surface = enc.createInputSurface()
             enc.start()
-        } catch (e: Exception) { enc.release(); return null }
+        } catch (e: Exception) { enc.release(); throw e }
 
         var csd: ByteArray? = null
         val frames = ArrayList<Pair<ByteArray, Int>>()
@@ -172,7 +181,7 @@ object HardwareTest {
                 val o = dec.dequeueOutputBuffer(info, 5000)
                 if (o >= 0) { queued.remove(info.presentationTimeUs)?.let { samples += System.nanoTime() - it }; dec.releaseOutputBuffer(o, false) }
             }
-            if (samples.size < 10) return -1
+            if (samples.size < 10) throw Exception("only ${samples.size} frames came out of the decoder")
             return (samples.drop(5).sorted()[samples.size * 3 / 4 - 5] / 1_000_000).toInt() // 75th percentile
         } finally {
             try { dec.stop() } catch (_: Exception) {}
