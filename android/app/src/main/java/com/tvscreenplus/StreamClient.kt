@@ -52,6 +52,28 @@ class StreamClient(
     private var padFlushQueued = false
     /** Delay of the TV audio buffer (ms), -1 when no sound is playing. */
     val audioLatencyMs: Int get() = audio?.latencyMs ?: -1
+    /** Measured write -> speaker delay of the sound (ms), -1 when unknown. */
+    val audioOutputMs: Int get() = audio?.outputMs ?: -1
+    val audioExtraMs: Int get() = audio?.extraDelayMs ?: 0
+
+    // ---- A/V sync ----
+    /** User correction from the remote (ms): + = sound later, - = sound earlier. */
+    @Volatile var userOffsetMs = 0
+    /** PC-side delay of the image compared with the sound (capture + encoding), from the PC config; -1 = old PC. */
+    @Volatile private var pcVideoMs = -1
+    @Volatile private var pcAudioMs = 5
+    @Volatile private var frameMs = 17
+    /** Smoothed decoder delay (us). */
+    @Volatile private var decAvgUs = 12_000.0
+    /** Delay applied to the image so that it matches the sound (ms), target and current value. */
+    @Volatile var videoDelayMs = 0
+        private set
+    @Volatile private var appliedDelayNs = 0L
+    private class VFrame(val data: ByteArray, val key: Boolean, val arrival: Long)
+    private val vq = ArrayDeque<VFrame>()
+    private val vLock = java.lang.Object()
+    private var feeding = false
+    val appliedVideoDelayMs: Int get() = (appliedDelayNs / 1_000_000).toInt()
 
     // Live statistics (overlay + reports to the PC).
     @Volatile var info = ""
@@ -119,6 +141,7 @@ class StreamClient(
             s.receiveBufferSize = 4 shl 20
             s.connect(InetSocketAddress(host, PORT), 4000)
             out = s.getOutputStream()
+            Thread({ feedLoop() }, "video-delay").start()
             send(hello)
             diagnostics.forEach { log(it) }
             val input = DataInputStream(BufferedInputStream(s.getInputStream(), 256 shl 10))
@@ -144,7 +167,7 @@ class StreamClient(
                     flags and 0x20 != 0 -> configure(parse(String(buf, 0, len)))
                     flags and 0x10 != 0 -> String(buf, 0, len, Charsets.UTF_8).let { listener.onStatus(it) }
                     flags and 0x08 != 0 -> extension(buf, len)
-                    else -> decoder?.feed(buf, len, flags and 1 != 0)
+                    else -> video(buf, len, flags and 1 != 0)
                 }
             }
         } catch (e: Exception) {
@@ -157,8 +180,69 @@ class StreamClient(
             decoder?.release()
             audio?.release()
             audio = null
+            synchronized(vLock) { vq.clear(); vLock.notifyAll() }
             listener.onEnded(error)
         }
+    }
+
+    /**
+     * Video frame from the network. Fed to the decoder at once, unless the A/V sync delays the image:
+     * then the compressed frame waits in [vq] (cheap: no decoder buffer is held) and the feeder thread
+     * hands it over when due. The delay moves by at most 2 ms per frame, so changes are invisible.
+     */
+    private fun video(buf: ByteArray, len: Int, key: Boolean) {
+        synchronized(vLock) {
+            if (videoDelayMs > 0 || appliedDelayNs > 0 || vq.isNotEmpty() || feeding) {
+                vq.addLast(VFrame(buf.copyOf(len), key, System.nanoTime()))
+                vLock.notifyAll()
+                return
+            }
+        }
+        decoder?.feed(buf, len, key)
+    }
+
+    private fun feedLoop() {
+        boost()
+        while (running) {
+            val f = synchronized(vLock) {
+                if (vq.isEmpty()) { vLock.wait(50); return@synchronized null }
+                val head = vq.first()
+                val waitNs = head.arrival + appliedDelayNs - System.nanoTime()
+                if (waitNs > 500_000) { vLock.wait(waitNs / 1_000_000, (waitNs % 1_000_000).toInt()); return@synchronized null }
+                feeding = true
+                // Slew the applied delay toward the target: at most 2 ms per frame.
+                val target = videoDelayMs * 1_000_000L
+                appliedDelayNs = when {
+                    appliedDelayNs < target -> minOf(target, appliedDelayNs + 2_000_000L)
+                    appliedDelayNs > target -> maxOf(target, appliedDelayNs - 2_000_000L)
+                    else -> appliedDelayNs
+                }
+                vq.removeFirst()
+            } ?: continue
+            try { decoder?.feed(f.data, f.data.size, f.key) } catch (_: Exception) {} // decoder replaced meanwhile
+            synchronized(vLock) { feeding = false }
+        }
+    }
+
+    /**
+     * Every 250 ms: make the sound and the image leave the TV together.
+     * image = PC capture/encoding delay (from the PC) + decoder + one frame to reach the screen;
+     * sound = PC capture delay + measured write -> speaker delay (TV audio hardware included).
+     * Sound later -> delay the image; sound earlier -> delay the sound. Plus the user's correction.
+     */
+    private fun syncTick() {
+        if (!audioOn) { videoDelayMs = 0; return } // no sound: never delay the image
+        val a = audio ?: return
+        val out = a.outputMs
+        if (out < 0) return
+        val pcVideo = pcVideoMs.coerceAtLeast(0)
+        val imageMs = pcVideo + (decAvgUs / 1000).toInt() + frameMs
+        val soundMs = pcAudioMs + (out - a.extraDelayMs).coerceAtLeast(0)
+        val late = soundMs - imageMs - userOffsetMs // > 0: sound behind the image
+        val newVideo = late.coerceIn(0, 250)
+        val newExtra = (-late).coerceIn(0, 200)
+        if (Math.abs(newVideo - videoDelayMs) >= 4) videoDelayMs = newVideo
+        if (Math.abs(newExtra - a.extraDelayMs) >= 4) a.extraDelayMs = newExtra
     }
 
     /** Flag 0x08 packets: payload[0] = 1 PC sound, 2 gamepad rumble [slot][large motor][small motor]. */
@@ -183,6 +267,10 @@ class StreamClient(
         info = "${w}x$h ${c["fps"] ?: "60"} i/s ${if (hevc) "HEVC" else "H.264"}$rate · ${c["enc"] ?: ""}"
         // Older PC versions don't send these keys: no sound, gamepads keep driving the TV.
         audioOn = c["audio"] == "1"
+        pcVideoMs = c["vpc"]?.toIntOrNull() ?: -1
+        pcAudioMs = c["apc"]?.toIntOrNull() ?: 5
+        frameMs = 1000 / (c["fps"]?.toIntOrNull()?.coerceIn(10, 240) ?: 60)
+        synchronized(vLock) { vq.clear() } // frames of the previous stream must not reach the new decoder
         pads = c["pads"] == "1"
         listener.onStarted(info)
     }
@@ -190,7 +278,10 @@ class StreamClient(
     private fun startStats() = Thread({
         var lastRendered = 0
         while (running) {
-            try { Thread.sleep(2000) } catch (_: InterruptedException) {}
+            for (i in 0 until 8) {
+                try { Thread.sleep(250) } catch (_: InterruptedException) {}
+                try { syncTick() } catch (_: Exception) {}
+            }
             val r = rendered
             fps = (r - lastRendered) / 2
             lastRendered = r
@@ -201,7 +292,7 @@ class StreamClient(
                 decSumUs = 0; decCount = 0; decMaxUs = 0; waitNs = 0
                 r
             }
-            val a = audio?.stats() ?: ""
+            val a = (audio?.stats() ?: "") + ";vdel=$appliedVideoDelayMs;avoff=$userOffsetMs"
             if (decoder != null) try { send("STAT;fps=$fps;kbps=$kbps;drop=$dropped;dec=$dec;decmax=$decMax;wait=$wait$a") } catch (_: Exception) {}
         }
     }, "stats").start()
@@ -252,7 +343,10 @@ class StreamClient(
                         // presentationTimeUs = time the frame was queued: input -> output delay of the decoder.
                         val lat = System.nanoTime() / 1000 - info.presentationTimeUs
                         codec.releaseOutputBuffer(idx, System.nanoTime()); rendered++
-                        if (lat in 0L..2_000_000L) synchronized(decLock) { decSumUs += lat; decCount++; decMaxUs = maxOf(decMaxUs, lat) }
+                        if (lat in 0L..2_000_000L) {
+                            synchronized(decLock) { decSumUs += lat; decCount++; decMaxUs = maxOf(decMaxUs, lat) }
+                            decAvgUs = decAvgUs * 0.98 + lat * 0.02
+                        }
                     }
                 }
             } catch (e: Exception) {

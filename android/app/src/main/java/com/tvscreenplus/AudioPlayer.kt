@@ -3,6 +3,7 @@ package com.tvscreenplus
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.os.Build
 import android.os.Process
@@ -10,12 +11,15 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * Plays the PC sound with the smallest stable delay.
- * Packets (flag 0x08, kind 1): [1][format 1 = s16le][channels][0][u32 rate][u32 PC time ms][PCM], ~10-20 ms each.
- * - AudioTrack in streaming mode, low-latency path on Android 8+.
- * - Its buffer is the jitter buffer: small at first, +10 ms after each underrun while sound is flowing,
- *   -5 ms after 15 s without trouble (Android 7+).
- * - Audio that piles up (network burst after a stall) is dropped instead of being played late.
+ * Plays the PC sound with the smallest stable delay, and measures that delay for the A/V sync.
+ * Packets (flag 0x08, kind 1): [1][format 1 = s16le][channels][0][u32 rate][u32 PC time ms][PCM], ~5-20 ms each.
+ *
+ * - The amount of sound waiting in the AudioTrack is regulated to a target = jitter buffer + extra delay:
+ *   the jitter buffer starts at 20 ms (getMinBufferSize is very conservative: 96 ms on a TCL/MediaTek TV),
+ *   grows 5 ms after an underrun and shrinks 2 ms after 10 s without trouble. Sound piling up above the target
+ *   is trimmed instead of being played late.
+ * - The extra delay is set by the A/V sync when the sound would otherwise be ahead of the image.
+ * - [outputMs] is the real write -> speaker delay (AudioTrack.getTimestamp), TV audio hardware included.
  */
 class AudioPlayer(private val log: (String) -> Unit) {
     private class Packet(val rate: Int, val channels: Int, val pcm: ByteArray)
@@ -25,17 +29,24 @@ class AudioPlayer(private val log: (String) -> Unit) {
     @Volatile private var track: AudioTrack? = null
     private val thread = Thread({ loop() }, "audio").apply { start() }
 
+    /** Delay added on purpose so that the sound matches the image (ms, set by the A/V sync). */
+    @Volatile var extraDelayMs = 0
+    /** Write -> speaker delay measured by the TV (ms, smoothed; includes the extra delay); -1 = not known yet. */
+    @Volatile var outputMs = -1
+        private set
+    /** Current jitter buffer target, without the extra delay (ms). */
+    @Volatile var bufferMs = 0
+        private set
+    /** Sound waiting in the AudioTrack right now (ms), for the on-screen statistics. */
+    @Volatile var latencyMs = -1
+        private set
+
     // Statistics for the 2 s STAT line.
     private val statLock = Any()
     private var underruns = 0
     private var drops = 0
-    private var latSumMs = 0L
-    private var latCount = 0
     private var transitMin = Long.MAX_VALUE
     private var transitMax = Long.MIN_VALUE
-    /** Last measured delay of the TV-side buffer (ms), for the on-screen statistics. */
-    @Volatile var latencyMs = -1
-        private set
 
     /** Network thread: queue a packet (never blocks). */
     fun offer(b: ByteArray, len: Int) {
@@ -53,12 +64,11 @@ class AudioPlayer(private val log: (String) -> Unit) {
         }
     }
 
-    /** ";alat=..;aund=..;adrop=..;ajit=.." for the STAT line, and resets the window. */
+    /** ";alat=..;aund=..;adrop=..;ajit=..;aout=..;abuf=..;aext=.." for the STAT line, and resets the window. */
     fun stats(): String = synchronized(statLock) {
-        val lat = if (latCount > 0) (latSumMs / latCount).toInt() else -1
         val jit = if (transitMax >= transitMin) (transitMax - transitMin).toInt() else -1
-        latSumMs = 0; latCount = 0; transitMin = Long.MAX_VALUE; transitMax = Long.MIN_VALUE
-        ";alat=$lat;aund=$underruns;adrop=$drops;ajit=$jit"
+        transitMin = Long.MAX_VALUE; transitMax = Long.MIN_VALUE
+        ";alat=$latencyMs;aund=$underruns;adrop=$drops;ajit=$jit;aout=$outputMs;abuf=$bufferMs;aext=$extraDelayMs"
     }
 
     fun release() {
@@ -70,15 +80,22 @@ class AudioPlayer(private val log: (String) -> Unit) {
     private fun loop() {
         try { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) } catch (_: Exception) {}
         var t: AudioTrack? = null
-        var rate = 0
+        var rate = 48000
         var channels = 0
         var frameBytes = 4
+        var capacity = 0           // allocated frames
         var written = 0            // frames written (wraps like playbackHeadPosition)
+        var writtenTotal = 0L      // same, never wraps (compared with AudioTimestamp.framePosition)
         var lastWrite = 0L
         var lastUnderruns = 0
         var steadySince = 0L
-        var minFrames = 0          // smallest effective buffer
-        var maxFrames = 0          // allocated buffer
+        var baseMs = 20            // jitter buffer target
+        var appliedTarget = -1     // frames: buffer size last given to the track
+        var levelAvg = -1.0        // smoothed fill level after each write (frames)
+        var lastTs = 0L
+        var startedAt = 0L
+        var reported = false
+        val ts = AudioTimestamp()
         var failed = false
         try {
             while (running) {
@@ -91,51 +108,82 @@ class AudioPlayer(private val log: (String) -> Unit) {
                         if (!failed) log("audio: AudioTrack ${rate} Hz ${channels} ch failed: ${e.javaClass.simpleName}: ${e.message}")
                         failed = true; null
                     } ?: continue
-                    t = n.first; maxFrames = n.second; minFrames = n.third
+                    t = n.first; capacity = n.second
                     track = t
-                    written = 0; lastUnderruns = 0; steadySince = System.nanoTime()
+                    written = 0; writtenTotal = 0; lastUnderruns = 0; steadySince = System.nanoTime()
+                    appliedTarget = -1; levelAvg = -1.0; outputMs = -1; startedAt = System.nanoTime(); reported = false
                     t.play()
                 }
                 val tr = t ?: continue
                 val now = System.nanoTime()
-                // Late audio is useless: if more than ~60 ms wait in the queue, keep only the newest.
-                if (queue.size * p.pcm.size / frameBytes > rate * 60 / 1000) {
-                    var d = 0
-                    while (queue.size > 1) { queue.poll(); d++ }
-                    synchronized(statLock) { drops += d + 1 }
-                    continue
+
+                // Target fill level = jitter buffer + extra delay for the A/V sync.
+                val margin = rate * 30 / 1000
+                val target = minOf(capacity - margin, rate * (baseMs + extraDelayMs) / 1000).coerceAtLeast(rate / 100)
+                if (target != appliedTarget && Build.VERSION.SDK_INT >= 24) {
+                    // Room above the target so that writes never block in normal operation.
+                    tr.setBufferSizeInFrames(minOf(capacity, target + margin))
                 }
+                appliedTarget = target
+                bufferMs = baseMs
+
+                val pktFrames = p.pcm.size / frameBytes
+                val queued = written - tr.playbackHeadPosition
                 val flowing = now - lastWrite < 60_000_000L
-                if (!flowing) {
-                    // Sound resumes after a silence (the PC sends nothing then): add a small cushion against jitter.
-                    val cushion = ByteArray(minFrames / 2 * frameBytes)
-                    written += tr.write(cushion, 0, cushion.size).coerceAtLeast(0) / frameBytes
+                var skip = 0
+                if (!flowing || queued <= 0) {
+                    // Sound (re)starts or the track ran dry: refill to the target with silence first.
+                    val fill = (target - queued.coerceAtLeast(0) - pktFrames).coerceAtLeast(0)
+                    if (fill > 0) {
+                        val r = tr.write(ByteArray(fill * frameBytes), 0, fill * frameBytes).coerceAtLeast(0) / frameBytes
+                        written += r; writtenTotal += r
+                    }
+                    levelAvg = -1.0
+                } else {
+                    // Sound piling up (network burst, target lowered): trim it instead of playing it late.
+                    val after = queued + pktFrames
+                    levelAvg = if (levelAvg < 0) after.toDouble() else levelAvg * 0.9 + after * 0.1
+                    if (levelAvg > target + rate * 15 / 1000) {
+                        skip = minOf(pktFrames, (levelAvg - target).toInt())
+                        levelAvg -= skip
+                        synchronized(statLock) { drops++ }
+                    }
                 }
-                val r = tr.write(p.pcm, 0, p.pcm.size)
-                if (r < 0) throw IllegalStateException("AudioTrack.write $r")
-                written += r / frameBytes
+                if (skip < pktFrames) {
+                    val r = tr.write(p.pcm, skip * frameBytes, (pktFrames - skip) * frameBytes)
+                    if (r < 0) throw IllegalStateException("AudioTrack.write $r")
+                    written += r / frameBytes; writtenTotal += r / frameBytes
+                }
                 lastWrite = System.nanoTime()
 
-                // Underruns while sound is flowing = buffer too small for this network: grow it.
-                val queued = written - tr.playbackHeadPosition
+                // Underruns while sound is flowing = jitter buffer too small for this network: grow it.
                 val underrun = if (Build.VERSION.SDK_INT >= 24) {
                     val u = tr.underrunCount
                     val grew = u > lastUnderruns && flowing
                     lastUnderruns = u
                     grew
-                } else flowing && queued <= r / frameBytes
+                } else flowing && queued <= 0
                 if (underrun) {
                     synchronized(statLock) { underruns++ }
                     steadySince = lastWrite
-                    if (Build.VERSION.SDK_INT >= 24 && tr.bufferSizeInFrames < maxFrames)
-                        tr.setBufferSizeInFrames(minOf(maxFrames, tr.bufferSizeInFrames + rate / 100))
-                } else if (Build.VERSION.SDK_INT >= 24 && lastWrite - steadySince > 15_000_000_000L && tr.bufferSizeInFrames > minFrames) {
+                    baseMs = minOf(80, baseMs + 5)
+                } else if (lastWrite - steadySince > 10_000_000_000L && baseMs > 10) {
                     steadySince = lastWrite
-                    tr.setBufferSizeInFrames(maxOf(minFrames, tr.bufferSizeInFrames - rate / 200))
+                    baseMs = maxOf(10, baseMs - 2)
                 }
-                val ms = (queued.coerceAtLeast(0) * 1000L / rate).toInt()
-                latencyMs = ms
-                synchronized(statLock) { latSumMs += ms; latCount++ }
+                latencyMs = ((written - tr.playbackHeadPosition).coerceAtLeast(0) * 1000L / rate).toInt()
+
+                // Real delay until the speaker: frames not yet presented, per the audio hardware's own clock.
+                if (lastWrite - lastTs > 250_000_000L && tr.getTimestamp(ts)) {
+                    lastTs = lastWrite
+                    val pending = writtenTotal - ts.framePosition
+                    val ms = pending * 1000.0 / rate - (System.nanoTime() - ts.nanoTime) / 1e6
+                    if (ms in 0.0..1000.0) outputMs = if (outputMs < 0) ms.toInt() else (outputMs * 0.8 + ms * 0.2).toInt()
+                }
+                if (!reported && lastWrite - startedAt > 4_000_000_000L) {
+                    reported = true
+                    log("audio: output delay $outputMs ms (timestamp), buffer $baseMs ms + extra $extraDelayMs ms, queued $latencyMs ms")
+                }
             }
         } catch (e: Exception) {
             if (running) log("audio error: ${e.javaClass.simpleName}: ${e.message}")
@@ -145,15 +193,14 @@ class AudioPlayer(private val log: (String) -> Unit) {
         }
     }
 
-    /** (track, allocated frames, starting effective frames). */
-    private fun create(rate: Int, channels: Int): Triple<AudioTrack, Int, Int> {
+    /** (track, allocated frames). */
+    private fun create(rate: Int, channels: Int): Pair<AudioTrack, Int> {
         val mask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
         val frameBytes = 2 * channels
         val min = AudioTrack.getMinBufferSize(rate, mask, AudioFormat.ENCODING_PCM_16BIT)
         if (min <= 0) throw IllegalArgumentException("getMinBufferSize $min")
-        // Android 7+ can shrink/grow the used part of the buffer: allocate room to grow (150 ms).
-        val adaptive = Build.VERSION.SDK_INT >= 24
-        val bytes = if (adaptive) maxOf(min * 2, rate * frameBytes * 150 / 1000) else maxOf(min, rate * frameBytes * 50 / 1000)
+        // Room for the jitter buffer (up to 80 ms) + an A/V sync delay (up to 200 ms) + margin.
+        val bytes = maxOf(min * 2, rate * frameBytes * 320 / 1000)
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
@@ -172,15 +219,10 @@ class AudioPlayer(private val log: (String) -> Unit) {
         }
         if (t.state != AudioTrack.STATE_INITIALIZED) { t.release(); throw IllegalStateException("not initialized") }
         val alloc = bytes / frameBytes
-        var start = alloc
-        if (Build.VERSION.SDK_INT >= 24) {
-            // Start at ~30 ms (or the device minimum): playback only begins once this much is queued.
-            start = maxOf(min / frameBytes, rate * 30 / 1000)
-            start = t.setBufferSizeInFrames(start).takeIf { it > 0 } ?: alloc
-        }
+        if (Build.VERSION.SDK_INT >= 24) t.setBufferSizeInFrames(rate * 50 / 1000) // the loop then follows its target
         val mode = if (Build.VERSION.SDK_INT >= 26) (if (t.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) " low-latency" else " normal") else ""
-        log("audio: AudioTrack $rate Hz ${channels} ch$mode, min ${min / frameBytes * 1000 / rate} ms, buffer ${start * 1000 / rate}/${alloc * 1000 / rate} ms")
-        return Triple(t, alloc, start)
+        log("audio: AudioTrack $rate Hz ${channels} ch$mode, min ${min / frameBytes * 1000 / rate} ms, capacity ${alloc * 1000 / rate} ms")
+        return t to alloc
     }
 
     private fun u32(b: ByteArray, o: Int): Long =

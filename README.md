@@ -96,7 +96,9 @@ Activé par défaut. Pendant la diffusion, tout ce que joue Windows (jeux, vidé
 - Le son est capturé sur la **sortie audio par défaut de Windows** : si vous changez de sortie (casque…), la TV suit automatiquement.
 - Le PC continue aussi de jouer le son sur ses propres haut-parleurs. Pour ne l'entendre que sur la TV : clic droit sur l'icône › *Couper le son du PC pendant la diffusion* (le son du PC est rétabli à la déconnexion).
 - Pour désactiver le son sur la TV : clic droit › *Son sur la TV*, ou dans les paramètres de la TV.
-- Le son voyage avec l'image sur la même connexion (environ 1,5 Mb/s, pris en compte dans le réglage du débit). La TV garde un tampon de quelques dizaines de millisecondes, agrandi automatiquement si le réseau est irrégulier, puis réduit quand il redevient stable : le son reste calé sur l'image.
+- Le son voyage avec l'image sur la même connexion (environ 1,5 Mb/s, pris en compte dans le réglage du débit). La TV garde un tampon d'environ 20 ms, agrandi automatiquement si le réseau est irrégulier, puis réduit quand il redevient stable.
+- **Synchronisation automatique** : la TV mesure le vrai délai de sa sortie son (haut-parleurs ou barre de son compris) et le compare au délai de l'image. Si le son arrive après l'image, l'image est légèrement retardée ; s'il arrive avant, c'est le son. Les changements sont progressifs et invisibles.
+- **Réglage à l'oreille** : pendant la diffusion, les touches **◀ ▶** de la télécommande avancent ou retardent le son de 10 ms (mémorisé). *Paramètres de la TV › Synchronisation du son* le remet à 0. Pratique avec une vidéo de test de synchronisation labiale.
 
 ### Manettes
 Activées par défaut. Connectez vos manettes à la TV (*Paramètres de la TV › Télécommandes et accessoires › Ajouter un accessoire* pour le Bluetooth), puis connectez la TV au PC : chaque manette apparaît dans Windows comme une **manette Xbox 360** (jusqu'à 4). Les jeux et Steam la reconnaissent comme une manette branchée sur le PC.
@@ -212,7 +214,8 @@ PC Windows                                                   TV Google TV
   - `1` = son : `[1][format 1 = PCM 16 bits LE][voies][0][fréquence u32][horodatage PC en ms u32][échantillons]`, 10 à 20 ms par paquet.
   - `2` = vibrations : `[2][emplacement 0-3][moteur gros 0-255][moteur petit 0-255]`.
 - **Manettes, TV → PC** : `PADON;<emplacement>;<nom>` (manette apparue), `PADOFF;<emplacement>`, et à chaque changement `PAD;<emplacement>;<boutons hexa, bits XInput>;<gâchette G 0-255>;<gâchette D>;<stick G x>;<stick G y>;<stick D x>;<stick D y>` (sticks de -32768 à 32767, y vers le haut).
-- **Statistiques du son** : `STAT;…;alat=<tampon TV en ms>;aund=<coupures>;adrop=<paquets jetés>;ajit=<gigue en ms>`.
+- **Statistiques du son** : `STAT;…;alat=<tampon TV en ms>;aund=<coupures>;adrop=<paquets jetés>;ajit=<gigue en ms>;aout=<délai écriture → haut-parleur en ms>;abuf=<tampon visé>;aext=<retard ajouté au son>;vdel=<retard ajouté à l'image>;avoff=<réglage utilisateur>`.
+- **Synchronisation** : le paquet de configuration du PC indique `vpc` (retard de l'image sur le son au départ du PC, en ms) et `apc` (délai de capture du son).
 </details>
 
 ## Compiler soi-même

@@ -342,7 +342,12 @@ namespace TVScreenPlus
                 Stats.Since = DateTime.Now; Stats.Streaming = true;
                 if (v2) StartPing();
 
-                string features = $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)}";
+                // A/V sync: how much later than the sound the image leaves the PC (ms). NVENC in fluid mode holds
+                // 2 frames (-delay 2); encoding ~8 ms; +15 ms because loopback captures the sound when Windows mixes it,
+                // ahead of the PC's own speakers that the player (browser…) syncs its video to.
+                int vpc = (plan.Enc.Name.Contains("nvenc") ? (Settings.GameMode ? 0 : 2) : 1) * 1000 / plan.Fps + 8 + 15;
+                Stats.PcVideoMs = vpc;
+                string features = $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)};vpc={vpc};apc=5";
                 if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}" + features));
                 else { var ok = Encoding.ASCII.GetBytes($"OK;codec={enc.Codec};w={target.Width};h={target.Height}\n"); ns.Write(ok, 0, ok.Length); }
                 string info = $"{target.Width}x{target.Height} {plan.Fps} i/s {enc.Codec.ToUpper()} {kbps / 1000} Mb/s";
@@ -498,6 +503,7 @@ namespace TVScreenPlus
                             Stats.OnTvStats(Int(d, "fps", 0), Int(d, "kbps", 0), Int(d, "drop", 0),
                                             Int(d, "dec", -1), Int(d, "decmax", -1), Int(d, "wait", -1));
                             if (d.ContainsKey("alat")) Stats.OnTvAudio(Int(d, "alat", -1), Int(d, "aund", 0), Int(d, "adrop", 0), Int(d, "ajit", -1));
+                            if (d.ContainsKey("vdel")) Stats.OnTvSync(Int(d, "aout", -1), Int(d, "abuf", -1), Int(d, "aext", 0), Int(d, "vdel", 0), Int(d, "avoff", 0));
                         }
                         else if (l.StartsWith("LOG;")) Log.W("TV: " + l.Substring(4));
                     }
@@ -565,9 +571,19 @@ namespace TVScreenPlus
             TvAudioMs = queuedMs; TvAudioUnderruns = underruns; TvAudioDrops = drops; TvAudioJitter = jitterMs;
         }
 
+        /// <summary>A/V sync, from the TV: sound write -> speaker delay, jitter buffer, delay added to the sound,
+        /// delay added to the image, user correction (ms). PcVideoMs = image delay estimated on the PC.</summary>
+        public int TvAudioOutMs = -1, TvAudioBufMs = -1, TvAudioExtraMs, TvVideoDelayMs, TvAvOffsetMs, PcVideoMs = -1;
+
+        public void OnTvSync(int outMs, int bufMs, int extraMs, int videoDelayMs, int offsetMs)
+        {
+            TvAudioOutMs = outMs; TvAudioBufMs = bufMs; TvAudioExtraMs = extraMs; TvVideoDelayMs = videoDelayMs; TvAvOffsetMs = offsetMs;
+        }
+
         string AudioLine => Audio + (AudioKbps > 0 ? FormattableString.Invariant($" · {AudioKbps / 1000:0.0} Mb/s") : "") +
             (TvAudioMs >= 0 ? $"\r\n  côté TV             tampon {TvAudioMs} ms · coupures {TvAudioUnderruns} · paquets jetés {TvAudioDrops}" +
-                              (TvAudioJitter >= 0 ? $" · gigue {TvAudioJitter} ms" : "") : "");
+                              (TvAudioJitter >= 0 ? $" · gigue {TvAudioJitter} ms" : "") : "") +
+            (TvAudioOutMs >= 0 ? $"\r\n  synchro image/son   sortie du son {TvAudioOutMs} ms · image retardée {TvVideoDelayMs} ms · son retardé {TvAudioExtraMs} ms · réglage {TvAvOffsetMs:+0;-0;0} ms" : "");
 
         /// <summary>Decoder latency used for estimates: live measurement first, then the TV hardware test.</summary>
         public int DecodeMs => TvDecMs >= 0 ? TvDecMs : TvLatencyMs;
@@ -582,7 +598,8 @@ namespace TVScreenPlus
                 FormattableString.Invariant($"TV {TvFps} fps {TvKbps / 1000.0:0.0} Mb/s drops +{Math.Max(0, drops)} {dec}"),
                 FormattableString.Invariant($"blocked {Blocked * 100:0}% RTT {RttMs:0.0} ms jitter {Jitter:0.0}"),
                 FormattableString.Invariant($"stability {Stability} | ~{EndToEndMs:0} ms PC->screen"),
-                FormattableString.Invariant($"audio {AudioKbps / 1000:0.0} Mb/s TV buffer {TvAudioMs} ms underruns {TvAudioUnderruns} drops {TvAudioDrops} PC skips {AudioSkipped}"));
+                FormattableString.Invariant($"audio {AudioKbps / 1000:0.0} Mb/s TV buffer {TvAudioMs} ms (target {TvAudioBufMs}) underruns {TvAudioUnderruns} drops {TvAudioDrops} jitter {TvAudioJitter} ms PC skips {AudioSkipped}"),
+                FormattableString.Invariant($"sync: sound out {TvAudioOutMs} ms, image delayed {TvVideoDelayMs} ms, sound delayed {TvAudioExtraMs} ms, user {TvAvOffsetMs} ms, PC image {PcVideoMs} ms"));
         }
 
         public double Jitter
@@ -615,7 +632,7 @@ namespace TVScreenPlus
             get
             {
                 double frame = 1000.0 / Math.Max(1, TargetFps);
-                return frame + 4 + RttMs / 2 + (DecodeMs >= 0 ? DecodeMs : frame) + frame;
+                return frame + 4 + RttMs / 2 + (DecodeMs >= 0 ? DecodeMs : frame) + frame + TvVideoDelayMs;
             }
         }
 

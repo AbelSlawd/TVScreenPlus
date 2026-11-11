@@ -27,6 +27,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
@@ -202,6 +203,13 @@ class MainActivity : Activity() {
         toggle(L.t("audio"), "audio", true)
         toggle(L.t("pads"), "pads", true)
         note(L.t("pads_note"))
+        val sync = button(L.t("av_offset", prefs.getInt("av_offset", 0))) {}
+        sync.setOnClickListener {
+            prefs.edit().putInt("av_offset", 0).apply()
+            sync.text = L.t("av_offset", 0)
+        }
+        p.addView(sync, LinearLayout.LayoutParams(w, -2))
+        note(L.t("av_offset_note"))
 
         section(L.t("hwtest"))
         val testNote = note(hwSummary())
@@ -297,6 +305,7 @@ class MainActivity : Activity() {
             if (c != null && stats.visibility == View.VISIBLE) {
                 val alat = c.audioLatencyMs
                 val extra = (if (alat >= 0) "\n" + L.t("stats_audio", alat) else "") +
+                    (if (c.audioOutputMs >= 0) "\n" + L.t("stats_sync", c.audioOutputMs, c.appliedVideoDelayMs, c.audioExtraMs, c.userOffsetMs) else "") +
                     (gamepads?.count?.takeIf { it > 0 }?.let { "\n" + L.t("stats_pads", it) } ?: "")
                 stats.text = c.info + "\n" + L.t("stats", c.kbps / 1000.0, c.fps, c.dropped) + extra
                 ui.postDelayed(this, 1000)
@@ -477,6 +486,7 @@ class MainActivity : Activity() {
                 }
             }
         })
+        c.userOffsetMs = prefs.getInt("av_offset", 0)
         client = c
         c.start()
     }
@@ -520,6 +530,16 @@ class MainActivity : Activity() {
             stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
             ui.removeCallbacks(statsTick)
             statsTick.run()
+            return true
+        }
+        val c = client
+        if (c != null && overlay.visibility == View.GONE &&
+            (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+            // Fine lip-sync by ear: < sound earlier, > sound later (10 ms steps, remembered).
+            val v = (prefs.getInt("av_offset", 0) + if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 10 else -10).coerceIn(-200, 300)
+            prefs.edit().putInt("av_offset", v).apply()
+            c.userOffsetMs = v
+            Toast.makeText(this, L.t("av_offset_now", v), Toast.LENGTH_SHORT).show()
             return true
         }
         if (client == null && keyCode == KeyEvent.KEYCODE_MENU && !inSettings) { showSettings(); return true }
