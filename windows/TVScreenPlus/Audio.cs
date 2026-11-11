@@ -22,9 +22,12 @@ namespace TVScreenPlus
         readonly SessionStats stats;
         long bytes; readonly Stopwatch window = Stopwatch.StartNew();
 
-        public AudioLoopback(Action<byte[]> onPacket, SessionStats stats)
+        readonly int chunkMs;
+
+        /// <param name="chunkMs">Largest packet (ms of sound): 20 in the TCP stream, 5 over UDP (one Ethernet frame).</param>
+        public AudioLoopback(Action<byte[]> onPacket, SessionStats stats, int chunkMs = 20)
         {
-            this.onPacket = onPacket; this.stats = stats;
+            this.onPacket = onPacket; this.stats = stats; this.chunkMs = chunkMs;
             thread = new Thread(Loop) { IsBackground = true, Name = "audio", Priority = ThreadPriority.Highest };
             thread.Start();
         }
@@ -167,8 +170,8 @@ namespace TVScreenPlus
 
         void Send(short[] pcm, int startFrame, int frames, int rate)
         {
-            // Packets of at most ~20 ms so that one never waits long behind a video frame.
-            int chunk = rate / 50;
+            // Small packets: one never waits long behind a video frame (TCP) and each fits in one frame (UDP).
+            int chunk = rate * chunkMs / 1000;
             for (int o = 0; o < frames; o += chunk)
             {
                 int c = Math.Min(chunk, frames - o);

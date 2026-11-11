@@ -86,6 +86,8 @@ class MainActivity : Activity() {
         }
         root.addView(stats, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(24), dp(24), 0, 0) })
         setContentView(root)
+        // Ask the TV for its "game" picture/sound path (ALLM): less processing, so less image and sound delay.
+        if (Build.VERSION.SDK_INT >= 30) try { window.setPreferMinimalPostProcessing(true) } catch (_: Exception) {}
         showMain()
         handleInstallIntent(intent)
     }
@@ -429,6 +431,7 @@ class MainActivity : Activity() {
             "device ${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE}) Android ${Build.VERSION.RELEASE} SDK ${Build.VERSION.SDK_INT}$soc app $versionName",
             "panel ${panelSize().let { "${it.first}x${it.second}" }} @${refreshHz()} Hz, declared HEVC ${Codecs.declaredMaxHeight(MediaFormat.MIMETYPE_VIDEO_HEVC)}p60, H.264 ${Codecs.declaredMaxHeight(MediaFormat.MIMETYPE_VIDEO_AVC)}p60",
         )
+        if (Build.VERSION.SDK_INT >= 30) lines += "display minimal post-processing (game mode) supported: ${try { windowManager.defaultDisplay.isMinimalPostProcessingSupported } catch (_: Exception) { "?" }}"
         val hwVer = prefs.getInt("hw_ver", 0)
         if (hwVer == 0) lines += "hwtest never run"
         else {

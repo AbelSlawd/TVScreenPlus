@@ -78,6 +78,7 @@ namespace TVScreenPlus
         {
             try { SetHandleInformation(s.Handle, 1 /*HANDLE_FLAG_INHERIT*/, 0); } catch { }
         }
+        public static void NoInheritPublic(Socket s) => NoInherit(s);
 
         [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
         static extern bool SetHandleInformation(IntPtr h, int mask, int flags);
@@ -166,6 +167,8 @@ namespace TVScreenPlus
         volatile bool streaming;      // the TV is showing the stream
         AudioLoopback audio;          // PC sound -> TV
         readonly object audioLock = new object();
+        IPEndPoint audioUdp;          // TV's UDP port for the sound (audioudp=), null = sound in the TCP stream
+        UdpClient udpOut;
         volatile PadHub pads;         // TV gamepads -> virtual Xbox 360 controllers
 
         public Session(TcpClient c, Action<string> status, Action<string, string> notify)
@@ -180,6 +183,7 @@ namespace TVScreenPlus
             try { streamer?.Dispose(); } catch { }
             SetAudio(false);
             try { pads?.Dispose(); } catch { }
+            try { udpOut?.Close(); } catch { }
         }
 
         /// <summary>Starts / stops sending the PC sound (only to a TV that supports it, once streaming).</summary>
@@ -189,8 +193,21 @@ namespace TVScreenPlus
             {
                 if (on && tvAudio && streaming && !closed && audio == null)
                 {
-                    audio = new AudioLoopback(p => { if (!closed) try { Send(0x08, p); } catch { } }, Stats);
-                    Log.W("Audio to TV: on");
+                    if (audioUdp != null)
+                    {
+                        // Own UDP channel: sound never waits behind a large video frame in the TCP stream
+                        // (measured: up to 177 ms of arrival jitter when YouTube pushed the video to 40-58 Mb/s).
+                        // 5 ms packets (~1 kB) fit in one Ethernet frame.
+                        if (udpOut == null) { udpOut = new UdpClient(AddressFamily.InterNetwork); Server.NoInheritPublic(udpOut.Client); }
+                        var ep = audioUdp; var u = udpOut;
+                        audio = new AudioLoopback(p => { if (!closed) try { u.Send(p, p.Length, ep); } catch { } }, Stats, 5);
+                        Log.W($"Audio to TV: on (UDP {ep})");
+                    }
+                    else
+                    {
+                        audio = new AudioLoopback(p => { if (!closed) try { Send(0x08, p); } catch { } }, Stats);
+                        Log.W("Audio to TV: on (TCP)");
+                    }
                 }
                 else if (!on && audio != null)
                 {
@@ -263,6 +280,9 @@ namespace TVScreenPlus
                 // Optional features: only what this TV announced (older TV apps announce nothing).
                 int helloAudio = Int(hello, "audio", -1), helloPads = Int(hello, "pads", -1);
                 tvAudio = v2 && helloAudio == 1;
+                int udpPort = Int(hello, "audioudp", 0);
+                if (tvAudio && udpPort > 0 && udpPort < 65536 && client.Client.RemoteEndPoint is IPEndPoint tvEp)
+                    audioUdp = new IPEndPoint(tvEp.Address, udpPort);
                 bool padsOn = v2 && helloPads == 1 && Settings.Pads;
                 Stats.Audio = helloAudio < 0 ? "non pris en charge par l'app TV" : !tvAudio ? "désactivé sur la TV" : Settings.Audio ? "en attente de la diffusion" : "désactivé sur le PC";
                 Stats.Pads = helloPads < 0 ? "non prises en charge par l'app TV" : helloPads == 0 ? "désactivées sur la TV" : padsOn ? "aucune manette détectée sur la TV" : "désactivées sur le PC";
@@ -347,7 +367,8 @@ namespace TVScreenPlus
                 // ahead of the PC's own speakers that the player (browser…) syncs its video to.
                 int vpc = (plan.Enc.Name.Contains("nvenc") ? (Settings.GameMode ? 0 : 2) : 1) * 1000 / plan.Fps + 8 + 15;
                 Stats.PcVideoMs = vpc;
-                string features = $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)};vpc={vpc};apc=5";
+                // avsync=0 in game mode: the TV never delays the image for the sound (lowest image latency first).
+                string features = $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)};vpc={vpc};apc=5;avsync={(Settings.GameMode ? 0 : 1)}";
                 if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}" + features));
                 else { var ok = Encoding.ASCII.GetBytes($"OK;codec={enc.Codec};w={target.Width};h={target.Height}\n"); ns.Write(ok, 0, ok.Length); }
                 string info = $"{target.Width}x{target.Height} {plan.Fps} i/s {enc.Codec.ToUpper()} {kbps / 1000} Mb/s";

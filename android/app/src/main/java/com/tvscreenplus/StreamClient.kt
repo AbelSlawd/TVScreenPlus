@@ -9,6 +9,8 @@ import android.view.Surface
 import java.io.BufferedInputStream
 import java.io.DataInputStream
 import java.io.OutputStream
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -62,6 +64,11 @@ class StreamClient(
     /** PC-side delay of the image compared with the sound (capture + encoding), from the PC config; -1 = old PC. */
     @Volatile private var pcVideoMs = -1
     @Volatile private var pcAudioMs = 5
+    /** The PC lets us delay the image for the sound (avsync=1); 0 in its game mode: image latency first. */
+    @Volatile private var syncImage = true
+    /** Sound from the PC over UDP: never stuck behind a large video frame in the TCP stream. */
+    private var udp: DatagramSocket? = null
+    private val audioLock = Any()
     @Volatile private var frameMs = 17
     /** Smoothed decoder delay (us). */
     @Volatile private var decAvgUs = 12_000.0
@@ -142,7 +149,8 @@ class StreamClient(
             s.connect(InetSocketAddress(host, PORT), 4000)
             out = s.getOutputStream()
             Thread({ feedLoop() }, "video-delay").start()
-            send(hello)
+            val port = startUdp()
+            send(if (port > 0) "$hello;audioudp=$port" else hello)
             diagnostics.forEach { log(it) }
             val input = DataInputStream(BufferedInputStream(s.getInputStream(), 256 shl 10))
             startStats()
@@ -181,6 +189,7 @@ class StreamClient(
             audio?.release()
             audio = null
             synchronized(vLock) { vq.clear(); vLock.notifyAll() }
+            try { udp?.close() } catch (_: Exception) {}
             listener.onEnded(error)
         }
     }
@@ -230,6 +239,29 @@ class StreamClient(
      * sound = PC capture delay + measured write -> speaker delay (TV audio hardware included).
      * Sound later -> delay the image; sound earlier -> delay the sound. Plus the user's correction.
      */
+    /** The sound player, created on first use (TCP or UDP thread). */
+    private fun player(): AudioPlayer = synchronized(audioLock) { audio ?: AudioPlayer { log(it) }.also { audio = it } }
+
+    /** UDP socket for the sound; returns its port (0 = unavailable: the PC then keeps the sound in TCP). */
+    private fun startUdp(): Int = try {
+        val u = DatagramSocket(0)
+        u.receiveBufferSize = 256 shl 10
+        udp = u
+        Thread({
+            boost()
+            val b = ByteArray(8192)
+            val pk = DatagramPacket(b, b.size)
+            try {
+                while (running) {
+                    pk.length = b.size // receive() shrinks it to the last datagram's size
+                    u.receive(pk)
+                    if (pk.length > 12 && b[0].toInt() == 1 && audioOn && running) player().offer(b, pk.length)
+                }
+            } catch (_: Exception) {}
+        }, "audio-udp").start()
+        u.localPort
+    } catch (e: Exception) { log("audio: no UDP socket (${e.javaClass.simpleName}), sound stays in TCP"); 0 }
+
     private fun syncTick() {
         if (!audioOn) { videoDelayMs = 0; return } // no sound: never delay the image
         val a = audio ?: return
@@ -239,7 +271,7 @@ class StreamClient(
         val imageMs = pcVideo + (decAvgUs / 1000).toInt() + frameMs
         val soundMs = pcAudioMs + (out - a.extraDelayMs).coerceAtLeast(0)
         val late = soundMs - imageMs - userOffsetMs // > 0: sound behind the image
-        val newVideo = late.coerceIn(0, 250)
+        val newVideo = if (syncImage) late.coerceIn(0, 250) else 0
         val newExtra = (-late).coerceIn(0, 200)
         if (Math.abs(newVideo - videoDelayMs) >= 4) videoDelayMs = newVideo
         if (Math.abs(newExtra - a.extraDelayMs) >= 4) a.extraDelayMs = newExtra
@@ -249,7 +281,7 @@ class StreamClient(
     private fun extension(b: ByteArray, len: Int) {
         if (len < 1) return
         when (b[0].toInt()) {
-            1 -> if (audioOn) (audio ?: AudioPlayer { log(it) }.also { audio = it }).offer(b, len)
+            1 -> if (audioOn) player().offer(b, len)
             2 -> if (len >= 4) listener.onRumble(b[1].toInt() and 0xFF, b[2].toInt() and 0xFF, b[3].toInt() and 0xFF)
         }
     }
@@ -269,6 +301,7 @@ class StreamClient(
         audioOn = c["audio"] == "1"
         pcVideoMs = c["vpc"]?.toIntOrNull() ?: -1
         pcAudioMs = c["apc"]?.toIntOrNull() ?: 5
+        syncImage = c["avsync"] != "0"
         frameMs = 1000 / (c["fps"]?.toIntOrNull()?.coerceIn(10, 240) ?: 60)
         synchronized(vLock) { vq.clear() } // frames of the previous stream must not reach the new decoder
         pads = c["pads"] == "1"

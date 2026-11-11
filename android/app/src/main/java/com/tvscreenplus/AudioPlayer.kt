@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
  *
  * - The amount of sound waiting in the AudioTrack is regulated to a target = jitter buffer + extra delay:
  *   the jitter buffer starts at 20 ms (getMinBufferSize is very conservative: 96 ms on a TCL/MediaTek TV),
- *   grows 5 ms after an underrun and shrinks 2 ms after 10 s without trouble. Sound piling up above the target
+ *   grows 5 ms after an underrun (max 60) and shrinks 5 ms after 5 s without trouble. Sound piling up above the target
  *   is trimmed instead of being played late.
  * - The extra delay is set by the A/V sync when the sound would otherwise be ahead of the image.
  * - [outputMs] is the real write -> speaker delay (AudioTrack.getTimestamp), TV audio hardware included.
@@ -163,13 +163,14 @@ class AudioPlayer(private val log: (String) -> Unit) {
                     lastUnderruns = u
                     grew
                 } else flowing && queued <= 0
-                if (underrun) {
+                // The first 2 s (track start-up) don't count; one burst must not keep the delay high for minutes.
+                if (underrun && lastWrite - startedAt > 2_000_000_000L) {
                     synchronized(statLock) { underruns++ }
                     steadySince = lastWrite
-                    baseMs = minOf(80, baseMs + 5)
-                } else if (lastWrite - steadySince > 10_000_000_000L && baseMs > 10) {
+                    baseMs = minOf(60, baseMs + 5)
+                } else if (lastWrite - steadySince > 5_000_000_000L && baseMs > 10) {
                     steadySince = lastWrite
-                    baseMs = maxOf(10, baseMs - 2)
+                    baseMs = maxOf(10, baseMs - 5)
                 }
                 latencyMs = ((written - tr.playbackHeadPosition).coerceAtLeast(0) * 1000L / rate).toInt()
 

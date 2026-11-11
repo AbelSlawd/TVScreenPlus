@@ -190,6 +190,11 @@ class Gamepads(context: Context, private val client: StreamClient) : InputManage
         /** A real gamepad / joystick (not the remote, not a virtual device). */
         fun isGamepad(d: InputDevice): Boolean {
             if (d.isVirtual) return false
+            // TV makers inject the remote as uinput devices that claim to be gamepads
+            // (TCL: "virtual-remote", "virtual-search"): no USB/Bluetooth ids, telling names.
+            val name = d.name.lowercase()
+            if ("virtual" in name || "remote" in name || "search" in name || "keyboard" in name) return false
+            if (d.vendorId == 0 && d.productId == 0) return false
             val s = d.sources
             val joystick = (s and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK &&
                 d.getMotionRange(MotionEvent.AXIS_X) != null && d.getMotionRange(MotionEvent.AXIS_Y) != null
