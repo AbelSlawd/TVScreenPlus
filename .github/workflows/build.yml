@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build PC app
-        run: dotnet build windows/TVScreenPlus/TVScreenPlus.csproj -c Release -o out -p:Version=1.0.${{ github.run_number }}
+        run: dotnet build windows/TVScreenPlus/TVScreenPlus.csproj -c Release -o out -p:Version=1.1.${{ github.run_number }}
       - name: Package (app + ffmpeg + virtual display driver + gamepad driver setup)
         shell: pwsh
         run: |
@@ -58,7 +58,8 @@ jobs:
           path: TVScreenPlus-TV.apk
 
   release:
-    if: github.event_name != 'pull_request'
+    # Only main publishes: every PC and TV auto-installs the "latest" release.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: [windows, android]
     runs-on: ubuntu-latest
     permissions: { contents: write }
@@ -69,8 +70,8 @@ jobs:
           cp TVScreenPlus-TV/TVScreenPlus-TV.apk .
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: TVScreenPlus 1.0.${{ github.run_number }}
+          tag_name: v1.1.${{ github.run_number }}
+          name: TVScreenPlus 1.1.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |

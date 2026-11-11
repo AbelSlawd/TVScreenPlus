@@ -10,7 +10,7 @@
     <RootNamespace>TVScreenPlus</RootNamespace>
     <Optimize>true</Optimize>
     <DebugType>none</DebugType>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
