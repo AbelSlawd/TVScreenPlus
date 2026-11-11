@@ -40,6 +40,24 @@ namespace TVScreenPlus
             Log.W("Server listening");
         }
 
+        /// <summary>
+        /// Drops the current TV session (the TV reconnects by itself) and re-opens the network
+        /// listeners (useful after a network change or a stuck stream).
+        /// </summary>
+        public void Restart()
+        {
+            Log.W("Connection restart requested");
+            current?.Close();
+            try { udp?.Close(); } catch { }
+            try { tcp?.Stop(); } catch { }
+            for (int i = 0; ; i++)
+            {
+                Thread.Sleep(300);
+                try { Start(); return; }
+                catch (SocketException) when (i < 10) { try { udp?.Close(); } catch { } try { tcp?.Stop(); } catch { } }
+            }
+        }
+
         public void Stop()
         {
             try { udp?.Close(); } catch { }

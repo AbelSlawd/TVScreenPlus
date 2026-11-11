@@ -80,7 +80,7 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 | **OK** ou **Menu** | Afficher / masquer les statistiques (résolution, débit, images/s) |
 | **Retour** | Se déconnecter. L'écran disparaît de Windows |
 
-**Menu de l'icône sur le PC** (clic droit) : résolution, qualité, démarrage avec Windows, mises à jour, recalibrage, journal.
+**Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, démarrage avec Windows, mises à jour, recalibrage, journal.
 
 > Astuce : pour placer la TV à gauche ou à droite de votre écran principal, faites-la glisser dans *Paramètres › Système › Affichage*.
 
@@ -106,6 +106,7 @@ Toutes les versions sont listées dans les [Releases](https://github.com/AbelSla
 | Problème | Solution |
 |---|---|
 | La TV ne trouve pas le PC | Vérifiez que les deux sont sur le **même réseau** (pas de réseau « invité » ni d'isolation Wi-Fi). Sinon, saisissez l'adresse IP du PC sur la TV (`ipconfig` dans un terminal Windows). |
+| Image figée, écran noir ou connexion bloquée | Clic droit sur l'icône › *Redémarrer la connexion* : la TV se reconnecte automatiquement en quelques secondes. |
 | Image saccadée | Préférez l'Ethernet ou le Wi-Fi 5 GHz, rapprochez la TV de la box. Les statistiques (touche OK) montrent le débit réel. |
 | Image floue | Clic droit sur l'icône › *Qualité / débit › Maximale*, et vérifiez que *Résolution* est sur *Automatique* ou *Native*. |
 | « Mise à jour impossible : autre signature » sur la TV | Désinstallez l'application de la TV puis réinstallez l'APK une fois. Les mises à jour suivantes fonctionneront. |

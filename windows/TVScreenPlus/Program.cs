@@ -101,6 +101,7 @@ namespace TVScreenPlus
             var menu = new ContextMenuStrip();
             status = new ToolStripMenuItem("Démarrage…") { Enabled = false };
             menu.Items.Add(status);
+            menu.Items.Add("Redémarrer la connexion", null, (s, e) => Task.Run(RestartConnection));
             menu.Items.Add(new ToolStripSeparator());
 
             var res = new ToolStripMenuItem("Résolution");
@@ -198,6 +199,24 @@ namespace TVScreenPlus
                 Log.W("Startup failed: " + e);
                 SetStatus("Erreur : " + e.Message);
                 Notify("TVScreenPlus – erreur", e.Message);
+            }
+        }
+
+        void RestartConnection()
+        {
+            try
+            {
+                bool hadTv = server != null && server.Busy;
+                if (server == null) { Start(); return; }
+                SetStatus("Redémarrage de la connexion…");
+                server.Restart();
+                SetStatus("Prêt – en attente d'une TV (" + Environment.MachineName + ")");
+                Notify("TVScreenPlus", hadTv ? "Connexion redémarrée : la TV va se reconnecter automatiquement." : "Connexion redémarrée.");
+            }
+            catch (Exception e)
+            {
+                Log.W("Restart failed: " + e);
+                SetStatus("Erreur : " + e.Message);
             }
         }
 
