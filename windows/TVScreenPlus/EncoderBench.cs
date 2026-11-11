@@ -21,6 +21,8 @@ namespace TVScreenPlus
         [DllImport("kernel32.dll")] static extern nint GetStdHandle(int n);
         [DllImport("dwmapi.dll")] static extern int DwmFlush();
 
+        static int BenchFps = 60;
+
         static void Out(string s)
         {
             Console.WriteLine(s);
@@ -42,6 +44,7 @@ namespace TVScreenPlus
             if (args.Contains("noflush")) DesktopCapture.FlushAfterConvert = false;
             if (args.Contains("coarse")) NativeSession.FineTimer = false;
             if (args.Contains("bufbits")) MfEncoder.BufferDivisor = 1;
+            foreach (var a in args) if (a.StartsWith("fps=")) int.TryParse(a.Substring(4), out BenchFps);
             foreach (var a in args)
             {
                 if (a.StartsWith("prio=")) int.TryParse(a.Substring(5), out DesktopCapture.GpuPriorityLevel);
@@ -77,7 +80,7 @@ namespace TVScreenPlus
 
         static void Bench(int adapter, int output, bool hevc, int seconds, int kbps, Form anim)
         {
-            const int fps = 60;
+            int fps = BenchFps;
             using (var s = new NativeSession(adapter, output, hevc, fps, kbps))
             {
                 var cap = s.Cap; var enc = s.Enc;

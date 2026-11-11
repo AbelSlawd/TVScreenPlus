@@ -657,14 +657,34 @@ namespace TVScreenPlus
                 if (!inflight.TryRemove(t, out var i)) return;
                 var copy = new byte[len + 5];
                 Buffer.BlockCopy(b, 5, copy, 5, len);
-                outQueue.Add(new Packet { Buf = copy, Len = len, Key = key, Acquired = i[0], Submitted = i[1], Fresh = i[2] == 1 });
+                outQueue.Add(new Packet { Buf = copy, Len = len, Key = key, Acquired = i[0], Submitted = i[1], Fresh = i[2] == 1, Event = Enc.EventQpc });
             };
             Enc.OnError = e => { error = e; stop = true; };
             sender = new Thread(SendLoop) { IsBackground = true, Name = "native send", Priority = ThreadPriority.AboveNormal };
             sender.Start();
         }
 
-        struct Packet { public byte[] Buf; public int Len; public bool Key, Fresh; public long Acquired, Submitted; }
+        struct Packet { public byte[] Buf; public int Len; public bool Key, Fresh; public long Acquired, Submitted, Event; }
+
+        // Where the time goes, per frame (QPC ticks summed since the last Stages() call).
+        long stHold, stEncode, stQueue, stSend, stBytes, stMaxTotal; int stFresh, stAll;
+        readonly object stLock = new object();
+
+        /// <summary>
+        /// Average ms per stage since the last call: hold (captured -> submitted, new images only), encode
+        /// (submitted -> encoder output: GPU conversion + encoding), queue (-> sender thread), send (socket write).
+        /// </summary>
+        public string Stages()
+        {
+            lock (stLock)
+            {
+                double f = 1000.0 / Stopwatch.Frequency;
+                string r = stAll == 0 ? "no frame" : FormattableString.Invariant(
+                    $"hold {stHold * f / Math.Max(1, stFresh):0.0} ms, encode {stEncode * f / stAll:0.0}, queue {stQueue * f / stAll:0.0}, send {stSend * f / stAll:0.0}, total max {stMaxTotal * f:0}, {stBytes / stAll / 1024} KB/frame");
+                stHold = stEncode = stQueue = stSend = stBytes = stMaxTotal = 0; stFresh = stAll = 0;
+                return r;
+            }
+        }
         readonly System.Collections.Concurrent.BlockingCollection<Packet> outQueue = new System.Collections.Concurrent.BlockingCollection<Packet>(30); // 0.5 s: then back-pressure again
         readonly Thread sender;
 
@@ -673,7 +693,18 @@ namespace TVScreenPlus
             try
             {
                 foreach (var p in outQueue.GetConsumingEnumerable())
+                {
+                    long dq = Stopwatch.GetTimestamp();
                     OnPacket?.Invoke(p.Buf, p.Len, p.Key, p.Acquired, p.Submitted, p.Fresh);
+                    long sent = Stopwatch.GetTimestamp();
+                    lock (stLock)
+                    {
+                        if (p.Fresh) { stHold += p.Submitted - p.Acquired; stFresh++; }
+                        stEncode += p.Event - p.Submitted; stQueue += dq - p.Event; stSend += sent - dq;
+                        stBytes += p.Len; stAll++;
+                        if (p.Fresh) stMaxTotal = Math.Max(stMaxTotal, sent - p.Acquired);
+                    }
+                }
             }
             catch (Exception e) { error = error ?? e; stop = true; }
         }

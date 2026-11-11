@@ -217,7 +217,7 @@ namespace TVScreenPlus
                 int count = 0;
                 s.OnPacket = (b, len, key, acq, sub, fresh) =>
                 {
-                    if (++count % 600 == 0) Log.W($"native: {s.NewFrames} new, {s.Repeats} repeated, {s.Dropped} dropped");
+                    if (++count % 600 == 0) Log.W($"native: {s.NewFrames} new, {s.Repeats} repeated, {s.Dropped} dropped | {s.Stages()}");
                     // [u32 BE length][flags][Annex-B AU]: the encoder left 5 free bytes before the AU.
                     b[0] = (byte)(len >> 24); b[1] = (byte)(len >> 16); b[2] = (byte)(len >> 8); b[3] = (byte)len;
                     b[4] = (byte)((key ? 1 : 0) | (first ? 2 : 0));
