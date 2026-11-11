@@ -658,7 +658,7 @@ namespace TVScreenPlus
             Enc.OnOutput = (b, len, key, t) =>
             {
                 if (!inflight.TryRemove(t, out var i)) return;
-                var copy = new byte[len + 5];
+                var copy = Rent(len + 5);
                 Buffer.BlockCopy(b, 5, copy, 5, len);
                 outQueue.Add(new Packet { Buf = copy, Len = len, Key = key, Acquired = i[0], Submitted = i[1], Fresh = i[2] == 1, Event = Enc.EventQpc });
             };
@@ -690,6 +690,14 @@ namespace TVScreenPlus
         }
         readonly System.Collections.Concurrent.BlockingCollection<Packet> outQueue = new System.Collections.Concurrent.BlockingCollection<Packet>(30); // 0.5 s: then back-pressure again
         readonly Thread sender;
+        readonly System.Collections.Concurrent.ConcurrentBag<byte[]> pool = new System.Collections.Concurrent.ConcurrentBag<byte[]>();
+
+        byte[] Rent(int size)
+        {
+            // A buffer too small for this frame is dropped: the pool converges on keyframe-sized buffers.
+            while (pool.TryTake(out var b)) if (b.Length >= size) return b;
+            return new byte[Math.Max(size, 256 << 10)];
+        }
 
         void SendLoop()
         {
@@ -700,6 +708,7 @@ namespace TVScreenPlus
                     long dq = Stopwatch.GetTimestamp();
                     OnPacket?.Invoke(p.Buf, p.Len, p.Key, p.Acquired, p.Submitted, p.Fresh);
                     long sent = Stopwatch.GetTimestamp();
+                    if (pool.Count < 40) pool.Add(p.Buf); // reused: no 90 KB allocation per frame
                     lock (stLock)
                     {
                         if (p.Fresh) { stHold += p.Submitted - p.Acquired; stFresh++; }
