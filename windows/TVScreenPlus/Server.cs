@@ -163,7 +163,9 @@ namespace TVScreenPlus
         readonly object sendLock = new object();
         NetworkStream ns;
         volatile bool closed;
-        volatile Streamer streamer;
+        volatile Streamer streamer;       // encoder currently streaming
+        volatile Streamer streamerNext;   // encoder starting to replace it (seamless switch)
+        readonly AutoResetEvent wake = new AutoResetEvent(false);
         bool v2;
         volatile bool tvAudio;        // the TV announced audio=1
         volatile bool streaming;      // the TV is showing the stream
@@ -187,6 +189,8 @@ namespace TVScreenPlus
             closed = true;
             try { client.Close(); } catch { }
             try { streamer?.Dispose(); } catch { }
+            try { streamerNext?.Dispose(); } catch { }
+            try { wake.Set(); } catch { }
             SetAudio(false);
             try { pads?.Dispose(); } catch { }
             try { cursor?.Dispose(); } catch { }
@@ -215,7 +219,7 @@ namespace TVScreenPlus
         {
             if (!streaming || closed) return;
             modeSwitch = true;
-            try { streamer?.Dispose(); } catch { }
+            wake.Set(); // the streaming loop starts the new encoder; the current one keeps going until it takes over
         }
 
         /// <summary>Starts / stops sending the PC sound (only to a TV that supports it, once streaming).</summary>
@@ -442,99 +446,163 @@ namespace TVScreenPlus
                 }
 
                 // ---- 4. Stream with congestion control ----
+                // Encoder changes (bitrate, mode) are seamless: the new ffmpeg starts while the current one keeps
+                // streaming and takes over at its first frame (a keyframe). Restarting in place froze the image for
+                // ~1 s each time (measured 926-963 ms on the TV), which the learned ceiling would make frequent.
                 int quickFails = 0, congested = 0, healthy = 0;
                 var window = Stopwatch.StartNew();
                 var cleanSince = Stopwatch.StartNew();
                 long blockedTicks = 0, bytes = 0;
                 int frames = 0;
+                var genLock = new object();
+                int genCounter = 0, activeGen = 0, nextGen = 0;
+                Streamer activeSt = null, nextSt = null;
+                bool configOnSwitch = false;
+                DateTime activeStarted = DateTime.UtcNow;
+
+                byte[] ConfigPacket() => Encoding.ASCII.GetBytes(
+                    $"codec={plan.Enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}" + Features());
+
+                void SendFrame(byte[] buf, int o, int l, uint cap)
+                {
+                    if (tvStamp)
+                    {
+                        // [len+4][flags|0x04][u32 capture ms][payload]: the TV measures capture -> screen.
+                        int plen = l - 5;
+                        var h = new byte[9];
+                        h[0] = (byte)((plen + 4) >> 24); h[1] = (byte)((plen + 4) >> 16); h[2] = (byte)((plen + 4) >> 8); h[3] = (byte)(plen + 4);
+                        h[4] = (byte)(buf[o + 4] | 0x04);
+                        h[5] = (byte)(cap >> 24); h[6] = (byte)(cap >> 16); h[7] = (byte)(cap >> 8); h[8] = (byte)cap;
+                        lock (sendLock) { ns.Write(h, 0, 9); ns.Write(buf, o + 5, plen); }
+                    }
+                    else lock (sendLock) ns.Write(buf, o, l);
+                }
+
+                // Starts an encoder that will replace the current one at its first keyframe.
+                void StartNext(int k, bool sendConfig)
+                {
+                    Streamer st, superseded; int gen;
+                    lock (genLock)
+                    {
+                        superseded = nextSt;
+                        gen = ++genCounter; nextGen = gen;
+                        st = nextSt = streamerNext = new Streamer();
+                        if (sendConfig) configOnSwitch = true;
+                    }
+                    if (superseded != null) try { superseded.Dispose(); } catch { } // a newer change wins
+                    new Thread(() =>
+                    {
+                        try { st.Run(plan, target, k, (b, o, l, c) => Deliver(gen, b, o, l, c), cursor == null); }
+                        catch (IOException) { Close(); }               // TV gone
+                        catch (ObjectDisposedException) { }
+                        catch (Exception e) { Log.W("encoder: " + e.Message); }
+                        finally { st.Done = true; wake.Set(); }
+                    }) { IsBackground = true, Name = "encoder " + gen }.Start();
+                }
+
+                void Deliver(int gen, byte[] buf, int o, int l, uint cap)
+                {
+                    Streamer replaced = null;
+                    lock (genLock)
+                    {
+                        if (gen == nextGen && gen != activeGen)
+                        {
+                            if ((buf[o + 4] & 1) == 0) return;          // wait for its first keyframe
+                            replaced = activeSt;
+                            activeSt = nextSt; nextSt = null; activeGen = gen; activeStarted = DateTime.UtcNow;
+                            streamer = activeSt; streamerNext = null;
+                            if (configOnSwitch) { configOnSwitch = false; if (v2) Send(0x20, ConfigPacket()); }
+                        }
+                        else if (gen != activeGen) return;               // last frames of the replaced encoder
+                        // Sent under the lock: a frame of the old encoder can never follow the new one's keyframe.
+                        long t0 = Stopwatch.GetTimestamp();
+                        SendFrame(buf, o, l, cap);
+                        blockedTicks += Stopwatch.GetTimestamp() - t0;
+                    }
+                    if (replaced != null) ThreadPool.QueueUserWorkItem(_ => { try { replaced.Dispose(); } catch { } });
+                    Stats.AddPcCapture(Wrap31((long)NowMs() - cap));
+                    frames++; bytes += l;
+                    if (window.ElapsedMilliseconds < 1000) return;
+                    // >25 % of the time blocked on the socket = network can't keep up.
+                    double secs = window.Elapsed.TotalSeconds;
+                    double blocked = blockedTicks / (double)Stopwatch.Frequency / secs;
+                    Stats.SentFps = frames / secs; Stats.SentKbps = bytes * 8 / secs / 1000; Stats.Blocked = blocked;
+                    frames = 0; bytes = 0;
+                    blockedTicks = 0; window.Restart();
+                    congested = blocked > 0.25 ? congested + 1 : 0;
+                    // Perfectly healthy second: socket never waits, steady pings and sound, no frame lost on the TV.
+                    bool good = blocked < 0.03 && Stats.Jitter < 8 && (Stats.TvAudioJitter < 0 || Stats.TvAudioJitter <= 20) && Stats.TvDropsDelta == 0;
+                    healthy = good ? healthy + 1 : 0;
+                    if (blocked > 0.1) cleanSince.Restart();
+                    bool change = false;
+                    if (congested >= 2 && kbps > ideal * 0.35)
+                    {
+                        kbps = (int)Math.Max(ideal * 0.35, kbps * 0.7);
+                        Log.W($"Congestion ({blocked:P0} blocked) -> {kbps} kb/s");
+                        if (capKey != null)
+                        {
+                            // This link can't take the ceiling: remember a lower one for next time too.
+                            maxKbps = (int)Math.Max(ideal * 0.35, maxKbps * 0.85);
+                            Settings.Set(capKey, maxKbps.ToString());
+                            Log.W($"Learned ceiling lowered to {maxKbps} kb/s ({capKey})");
+                        }
+                        healthy = 0; congested = 0;
+                        Stats.BitrateDown++;
+                        change = true;
+                    }
+                    else if (kbps < maxKbps && cleanSince.Elapsed.TotalSeconds > 45)
+                    {
+                        kbps = Math.Min(maxKbps, (int)(kbps * 1.25));
+                        Log.W($"Network OK -> {kbps} kb/s");
+                        cleanSince.Restart();
+                        change = true;
+                    }
+                    else if (capKey != null && kbps >= maxKbps && maxKbps < Math.Min(desired, hardCap) && healthy >= 30)
+                    {
+                        // 30 s without the slightest sign of saturation while the ceiling limits the quality:
+                        // try 15 % more, and remember it.
+                        maxKbps = Math.Min(Math.Min(desired, hardCap), (int)(maxKbps * 1.15));
+                        kbps = maxKbps;
+                        Settings.Set(capKey, maxKbps.ToString());
+                        Log.W($"Network healthy for 30 s -> ceiling raised to {kbps} kb/s ({capKey})");
+                        healthy = 0; cleanSince.Restart();
+                        change = true;
+                    }
+                    if (change)
+                    {
+                        Stats.TargetKbps = kbps;
+                        status($"Diffusion vers {tv} – {target.Width}x{target.Height} {kbps / 1000} Mb/s");
+                        StartNext(kbps, false);
+                    }
+                }
+
+                StartNext(kbps, false);
                 while (!closed)
                 {
-                    bool restart = false;
-                    int kbpsNow = kbps;
-                    using (var st = new Streamer())
+                    wake.WaitOne(500);
+                    if (closed) break;
+                    if (modeSwitch)
                     {
-                        streamer = st;
-                        try
-                        {
-                            st.Run(plan, target, kbpsNow, (buf, o, l, cap) =>
-                            {
-                                long t0 = Stopwatch.GetTimestamp();
-                                Stats.AddPcCapture(Wrap31((long)NowMs() - cap));
-                                if (tvStamp)
-                                {
-                                    // [len+4][flags|0x04][u32 capture ms][payload]: the TV measures capture -> screen.
-                                    int plen = l - 5;
-                                    var h = new byte[9];
-                                    h[0] = (byte)((plen + 4) >> 24); h[1] = (byte)((plen + 4) >> 16); h[2] = (byte)((plen + 4) >> 8); h[3] = (byte)(plen + 4);
-                                    h[4] = (byte)(buf[o + 4] | 0x04);
-                                    h[5] = (byte)(cap >> 24); h[6] = (byte)(cap >> 16); h[7] = (byte)(cap >> 8); h[8] = (byte)cap;
-                                    lock (sendLock) { ns.Write(h, 0, 9); ns.Write(buf, o + 5, plen); }
-                                }
-                                else lock (sendLock) ns.Write(buf, o, l);
-                                blockedTicks += Stopwatch.GetTimestamp() - t0;
-                                frames++; bytes += l;
-                                if (window.ElapsedMilliseconds < 1000) return;
-                                // >25 % of the time blocked on the socket = network can't keep up.
-                                double secs = window.Elapsed.TotalSeconds;
-                                double blocked = blockedTicks / (double)Stopwatch.Frequency / secs;
-                                Stats.SentFps = frames / secs; Stats.SentKbps = bytes * 8 / secs / 1000; Stats.Blocked = blocked;
-                                frames = 0; bytes = 0;
-                                blockedTicks = 0; window.Restart();
-                                congested = blocked > 0.25 ? congested + 1 : 0;
-                                // Perfectly healthy second: socket never waits, steady pings and sound, no frame lost on the TV.
-                                bool good = blocked < 0.03 && Stats.Jitter < 8 && (Stats.TvAudioJitter < 0 || Stats.TvAudioJitter <= 20) && Stats.TvDropsDelta == 0;
-                                healthy = good ? healthy + 1 : 0;
-                                if (blocked > 0.1) cleanSince.Restart();
-                                if (congested >= 2 && kbps > ideal * 0.35)
-                                {
-                                    kbps = (int)Math.Max(ideal * 0.35, kbps * 0.7);
-                                    Log.W($"Congestion ({blocked:P0} blocked) -> {kbps} kb/s");
-                                    if (capKey != null)
-                                    {
-                                        // This link can't take the ceiling: remember a lower one for next time too.
-                                        maxKbps = (int)Math.Max(ideal * 0.35, maxKbps * 0.85);
-                                        Settings.Set(capKey, maxKbps.ToString());
-                                        Log.W($"Learned ceiling lowered to {maxKbps} kb/s ({capKey})");
-                                    }
-                                    healthy = 0;
-                                    Stats.TargetKbps = kbps; Stats.BitrateDown++;
-                                    restart = true; congested = 0; st.Dispose();
-                                }
-                                else if (kbps < maxKbps && cleanSince.Elapsed.TotalSeconds > 45)
-                                {
-                                    kbps = Math.Min(maxKbps, (int)(kbps * 1.25));
-                                    Log.W($"Network OK -> {kbps} kb/s");
-                                    Stats.TargetKbps = kbps;
-                                    restart = true; cleanSince.Restart(); st.Dispose();
-                                }
-                                else if (capKey != null && kbps >= maxKbps && maxKbps < Math.Min(desired, hardCap) && healthy >= 30)
-                                {
-                                    // 30 s without the slightest sign of saturation while the ceiling limits the
-                                    // quality: try 15 % more, and remember it.
-                                    maxKbps = Math.Min(Math.Min(desired, hardCap), (int)(maxKbps * 1.15));
-                                    kbps = maxKbps;
-                                    Settings.Set(capKey, maxKbps.ToString());
-                                    Log.W($"Network healthy for 30 s -> ceiling raised to {kbps} kb/s ({capKey})");
-                                    Stats.TargetKbps = kbps;
-                                    restart = true; healthy = 0; cleanSince.Restart(); st.Dispose();
-                                }
-                            }, cursor == null);
-                        }
-                        catch (IOException) { if (!restart && !modeSwitch) break; }
-                        catch (ObjectDisposedException) { if (!restart && !modeSwitch) break; }
-                        if (closed) break;
-                        if (modeSwitch)
-                        {
-                            modeSwitch = false;
-                            Stats.Encoder = plan.ToString();
-                            Log.W("Mode switched to " + (Settings.GameMode ? "game (minimum latency)" : "fluid (steady 60 fps)"));
-                            if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={plan.Enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}" + Features()));
-                            continue;
-                        }
-                        if (restart) { status($"Diffusion vers {tv} – {target.Width}x{target.Height} {kbps / 1000} Mb/s"); continue; }
-                        // ffmpeg ended (display change, secure desktop, driver reset…): restart it.
-                        quickFails = (DateTime.UtcNow - st.Started).TotalSeconds < 3 ? quickFails + 1 : 0;
+                        modeSwitch = false;
+                        Stats.Encoder = plan.ToString();
+                        Log.W("Mode switched to " + (Settings.GameMode ? "game (minimum latency)" : "fluid (steady 60 fps)"));
+                        StartNext(kbps, true); // the TV gets the new config right before the new encoder's keyframe
+                        continue;
                     }
+                    Streamer cur, nxt;
+                    lock (genLock) { cur = activeSt; nxt = nextSt; }
+                    if (nxt != null && nxt.Done)
+                    {
+                        // The replacement died before its first frame: keep the current encoder.
+                        lock (genLock) { if (nextSt == nxt) { nextSt = null; nextGen = activeGen; streamerNext = null; } }
+                        Log.W("New encoder ended before its first frame");
+                        quickFails++;
+                        if (cur != null && !cur.Done) continue;
+                        nxt = null;
+                    }
+                    if (nxt != null || (cur != null && !cur.Done)) continue;
+                    // No encoder running (it ended: display change, secure desktop, driver reset…): start another.
+                    if (cur != null) quickFails = (DateTime.UtcNow - activeStarted).TotalSeconds < 3 ? quickFails + 1 : 0;
                     if (quickFails >= 3)
                     {
                         Log.W("Encoder keeps failing, re-probing");
@@ -542,10 +610,16 @@ namespace TVScreenPlus
                         target = Dxgi.Find(target.GdiName) ?? VirtualDisplay.Attach(target.Width, target.Height, plan.Fps);
                         var e2 = Streamer.Pick(target, hevcTv);
                         plan = new EncodePlan { Enc = e2, Quality = false, Fps = plan.Fps };
-                        if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={e2.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={e2.Name}" + Features()));
                         quickFails = 0;
+                        lock (genLock) { activeSt = null; activeGen = 0; }
+                        StartNext(kbps, true);
                     }
-                    Thread.Sleep(300);
+                    else
+                    {
+                        lock (genLock) { activeSt = null; activeGen = 0; }
+                        Thread.Sleep(300);
+                        StartNext(kbps, false);
+                    }
                 }
             }
             catch (Exception e)

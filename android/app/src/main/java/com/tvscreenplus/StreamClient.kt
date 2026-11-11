@@ -136,15 +136,25 @@ class StreamClient(
     @Volatile private var e2eAt = 0L
     @Volatile private var audioAt = 0L
     private var e2eRejected = 0
+    // Latency measurement diagnosis, logged once 10 s after each new stream config.
+    @Volatile private var dFramesTimed = 0
+    @Volatile private var dQueued = 0
+    @Volatile private var dRendered = 0
+    @Volatile private var dMatched = 0
+    @Volatile private var dOk = 0
+    @Volatile private var diagAt = 0L
 
     /** A frame reached the screen (TV compositor timestamp). */
     private fun onRendered(ptsUs: Long, nanoTime: Long) {
+        dRendered++
         val cap = synchronized(capMap) { capMap.remove(ptsUs) } ?: return
+        dMatched++
         val e2e = ageMs(cap, nanoTime / 1_000_000) ?: return
         if (e2e !in 0L..2000L) {
             if (e2eRejected++ % 300 == 0) upstream { log("latency sample rejected: $e2e ms (clock offset $clockOffset)") }
             return
         }
+        dOk++
         synchronized(e2eLock) { e2eSum += e2e; e2eCount++; e2eMax = maxOf(e2eMax, e2e) }
         // Image delay WITHOUT our own delay line, frame by frame: the A/V sync must never feed on its own output
         // (v1.0.21 on Wi-Fi: a stale average minus a growing delay ran the image delay up to 250 ms).
@@ -316,6 +326,7 @@ class StreamClient(
      * hands it over when due. The delay moves by at most 2 ms per frame, so changes are invisible.
      */
     private fun video(buf: ByteArray, len: Int, key: Boolean, cap: Long) {
+        if (cap >= 0) dFramesTimed++
         synchronized(vLock) {
             if (videoDelayMs > 0 || appliedDelayNs > 0 || vq.isNotEmpty() || feeding) {
                 vq.addLast(VFrame(buf.copyOf(len), key, System.nanoTime(), cap))
@@ -442,6 +453,7 @@ class StreamClient(
         audio?.game = gameMode
         frameMs = 1000 / (c["fps"]?.toIntOrNull()?.coerceIn(10, 240) ?: 60)
         streamW = w; streamH = h
+        dFramesTimed = 0; dQueued = 0; dRendered = 0; dMatched = 0; dOk = 0; diagAt = System.nanoTime() + 10_000_000_000L
         cursorOn = c["cursor"] == "1"
         pcPlaybackMs = c["lpc"]?.toIntOrNull() ?: 15
         if (!cursorOn) listener.onCursorMove(0, 0, false, w, h)
@@ -466,6 +478,12 @@ class StreamClient(
                 val r = Triple(if (decCount > 0) decSumUs / decCount / 1000 else -1L, decMaxUs / 1000, waitNs * 100 / 2_000_000_000L)
                 decSumUs = 0; decCount = 0; decMaxUs = 0; waitNs = 0
                 r
+            }
+            if (diagAt != 0L && System.nanoTime() > diagAt) {
+                diagAt = 0L
+                log("latency diag (10 s): frames with capture time $dFramesTimed, queued $dQueued, rendered callbacks $dRendered, " +
+                    "matched $dMatched, accepted $dOk, rejected $e2eRejected, clock ${if (clockOffset == Long.MIN_VALUE) "unknown" else "ok"}, " +
+                    "image delay $appliedVideoDelayMs ms, API ${Build.VERSION.SDK_INT}")
             }
             val a = (audio?.stats() ?: "") + ";vdel=$appliedVideoDelayMs;avoff=$userOffsetMs"
             val e = synchronized(e2eLock) {
@@ -523,6 +541,7 @@ class StreamClient(
             codec.queueInputBuffer(idx, 0, len, pts, flags)
             if (cap >= 0 && flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) synchronized(capMap) {
                 capMap[pts] = cap
+                dQueued++
                 if (capMap.size > 120) capMap.remove(capMap.keys.first())
                 Unit
             }

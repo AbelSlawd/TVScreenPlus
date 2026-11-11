@@ -69,6 +69,8 @@ namespace TVScreenPlus
     {
         Process proc;
         public DateTime Started;
+        /// <summary>Run() has returned (ffmpeg ended or was stopped).</summary>
+        public volatile bool Done;
 
         /// <summary>Find a working encoder for this display (result cached per GPU/codec).</summary>
         public static Encoder Pick(DisplayTarget t, bool hevc)
