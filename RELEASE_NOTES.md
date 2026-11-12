@@ -1,3 +1,10 @@
+**Nouveau en 1.1.6**
+- WiFi : image aussi nette qu'en Ethernet. Le débit ne baisse plus définitivement après chaque petit à-coup du WiFi et remonte quand le réseau va bien (mesuré : 63 Mb/s au lieu de 30 Mb/s, ~45-50 ms de latence, aucune perte d'image ni coupure de son).
+- WiFi : un à-coup ne fait plus rejouer une demi-seconde d'image en accéléré ; l'image revient au direct plus vite.
+- Connexion à la TV ~0,7 s plus rapide.
+- Plus de coupure du son quand on passe du mode jeu au mode fluide (TV avec sortie audio directe).
+- Astuce : sur certaines Google TV, les services Google balaient le WiFi toutes les 30 minutes (à-coup d'environ 0,5 s). Désactiver la localisation de la TV le supprime.
+
 **Nouveau en 1.1.5**
 - Correction : avec les cartes NVIDIA, l'image pouvait se figer 5 secondes de temps en temps (1.1.3 et 1.1.4). Le réglage d'encodage en cause est retiré ; la latence d'image revient à celle de la 1.1.2 (quelques ms de plus), le son reste aussi rapide qu'en 1.1.4.
 
