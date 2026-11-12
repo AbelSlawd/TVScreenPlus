@@ -144,6 +144,9 @@ class StreamClient(
     @Volatile private var dRendered = 0
     @Volatile private var dMatched = 0
     @Volatile private var dOk = 0
+    /** Capture -> arrival on the TV (PC + network), summed over the diagnosis window. */
+    @Volatile private var dArrSum = 0L
+    @Volatile private var dArrN = 0
     /** Last rendered-listener call (nanoTime); without one for 1 s, frames are timed at the decoder output. */
     @Volatile private var renderCbAt = 0L
     private val renderCb get() = System.nanoTime() - renderCbAt < 1_000_000_000L
@@ -330,7 +333,10 @@ class StreamClient(
      * hands it over when due. The delay moves by at most 2 ms per frame, so changes are invisible.
      */
     private fun video(buf: ByteArray, len: Int, key: Boolean, cap: Long) {
-        if (cap >= 0) dFramesTimed++
+        if (cap >= 0) {
+            dFramesTimed++
+            ageMs(cap, System.nanoTime() / 1_000_000)?.let { if (it in 0L..2000L) { dArrSum += it; dArrN++ } }
+        }
         synchronized(vLock) {
             if (videoDelayMs > 0 || appliedDelayNs > 0 || vq.isNotEmpty() || feeding) {
                 vq.addLast(VFrame(buf.copyOf(len), key, System.nanoTime(), cap))
@@ -457,7 +463,7 @@ class StreamClient(
         audio?.game = gameMode
         frameMs = 1000 / (c["fps"]?.toIntOrNull()?.coerceIn(10, 240) ?: 60)
         streamW = w; streamH = h
-        dFramesTimed = 0; dQueued = 0; dRendered = 0; dMatched = 0; dOk = 0; diagAt = System.nanoTime() + 10_000_000_000L
+        dFramesTimed = 0; dQueued = 0; dRendered = 0; dMatched = 0; dOk = 0; dArrSum = 0; dArrN = 0; diagAt = System.nanoTime() + 10_000_000_000L
         cursorOn = c["cursor"] == "1"
         pcPlaybackMs = c["lpc"]?.toIntOrNull() ?: 15
         if (!cursorOn) listener.onCursorMove(0, 0, false, w, h)
@@ -498,10 +504,13 @@ class StreamClient(
                 r
             }
             if (diagAt != 0L && System.nanoTime() > diagAt) {
-                diagAt = 0L
-                log("latency diag (10 s): frames with capture time $dFramesTimed, queued $dQueued, rendered callbacks $dRendered, " +
+                val arr = if (dArrN > 0) dArrSum / dArrN else -1
+                log("latency diag: frames with capture time $dFramesTimed, queued $dQueued, rendered callbacks $dRendered, " +
                     "matched $dMatched, accepted $dOk, rejected $e2eRejected, clock ${if (clockOffset == Long.MIN_VALUE) "unknown" else "ok"}, " +
-                    "image delay $appliedVideoDelayMs ms, timed at ${if (renderCb) "screen" else "decoder output + 1 frame"}, API ${Build.VERSION.SDK_INT}")
+                    "capture->arrival $arr ms, image delay $appliedVideoDelayMs ms, timed at ${if (renderCb) "screen" else "decoder output + 1 frame"}, API ${Build.VERSION.SDK_INT}")
+                // Again every minute (counts restart): follows the network part as the load changes.
+                dFramesTimed = 0; dQueued = 0; dRendered = 0; dMatched = 0; dOk = 0; dArrSum = 0; dArrN = 0
+                diagAt = System.nanoTime() + 60_000_000_000L
             }
             val a = (audio?.stats() ?: "") + ";vdel=$appliedVideoDelayMs;avoff=$userOffsetMs"
             val e = synchronized(e2eLock) {
