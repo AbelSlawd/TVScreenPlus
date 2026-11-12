@@ -144,11 +144,13 @@ class StreamClient(
     @Volatile private var dRendered = 0
     @Volatile private var dMatched = 0
     @Volatile private var dOk = 0
+    /** Last rendered-listener call (nanoTime); without one for 1 s, frames are timed at the decoder output. */
+    @Volatile private var renderCbAt = 0L
+    private val renderCb get() = System.nanoTime() - renderCbAt < 1_000_000_000L
     @Volatile private var diagAt = 0L
 
     /** A frame reached the screen (TV compositor timestamp). */
     private fun onRendered(ptsUs: Long, nanoTime: Long) {
-        dRendered++
         val cap = synchronized(capMap) { capMap.remove(ptsUs) } ?: return
         dMatched++
         val e2e = ageMs(cap, nanoTime / 1_000_000) ?: return
@@ -499,7 +501,7 @@ class StreamClient(
                 diagAt = 0L
                 log("latency diag (10 s): frames with capture time $dFramesTimed, queued $dQueued, rendered callbacks $dRendered, " +
                     "matched $dMatched, accepted $dOk, rejected $e2eRejected, clock ${if (clockOffset == Long.MIN_VALUE) "unknown" else "ok"}, " +
-                    "image delay $appliedVideoDelayMs ms, API ${Build.VERSION.SDK_INT}")
+                    "image delay $appliedVideoDelayMs ms, timed at ${if (renderCb) "screen" else "decoder output + 1 frame"}, API ${Build.VERSION.SDK_INT}")
             }
             val a = (audio?.stats() ?: "") + ";vdel=$appliedVideoDelayMs;avoff=$userOffsetMs"
             val e = synchronized(e2eLock) {
@@ -523,7 +525,7 @@ class StreamClient(
             // When each frame really reaches the screen (Android 6+): measured capture -> screen latency.
             if (Build.VERSION.SDK_INT >= 23) try {
                 val l = renderThread?.looper
-                if (l != null) codec.setOnFrameRenderedListener({ _, ptsUs, nano -> onRendered(ptsUs, nano) }, Handler(l))
+                if (l != null) codec.setOnFrameRenderedListener({ _, ptsUs, nano -> dRendered++; renderCbAt = System.nanoTime(); onRendered(ptsUs, nano) }, Handler(l))
             } catch (_: Exception) {}
         }
 
@@ -583,6 +585,9 @@ class StreamClient(
                         // presentationTimeUs = time the frame was queued: input -> output delay of the decoder.
                         val lat = System.nanoTime() / 1000 - info.presentationTimeUs
                         codec.releaseOutputBuffer(idx, System.nanoTime()); rendered++
+                        // MediaTek decoders (TCL MT9689, API 34) don't call the rendered listener in low-latency (game)
+                        // mode: measure up to the decoder output and add one frame to reach the screen.
+                        if (!renderCb) onRendered(info.presentationTimeUs, System.nanoTime() + frameMs * 1_000_000L)
                         if (lat in 0L..2_000_000L) {
                             synchronized(decLock) { decSumUs += lat; decCount++; decMaxUs = maxOf(decMaxUs, lat) }
                             decAvgUs = decAvgUs * 0.98 + lat * 0.02

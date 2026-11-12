@@ -32,6 +32,8 @@ android {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             signingConfig = signingConfigs.getByName(if (ksFile != null) "release" else "debug")
+            // -Pdev: local test build (debug key) installed next to the released app instead of over it.
+            if (project.hasProperty("dev")) applicationIdSuffix = ".dev"
         }
     }
     compileOptions {
