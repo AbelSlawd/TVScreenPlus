@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -521,10 +521,12 @@ namespace TVScreenPlus
 
         /// <summary>
         /// The NVIDIA MFT keeps each encoded frame until the next input arrives (+1 frame period: encode 16 ms p50
-        /// instead of 3 ms, bench RTX 5080 at 5120x1440; 4K stream 2 ms). A drain after every frame makes it emit at once; bitrate, frame
-        /// sizes and keyframes unchanged. Only NVIDIA is measured, so other vendors keep the plain flow.
+        /// instead of 3 ms, bench RTX 5080 at 5120x1440; 4K stream 2 ms). A drain after every frame makes it emit at once
+        /// (bitrate, frame sizes and keyframes unchanged), BUT about once a minute to once in 10 min the driver holds
+        /// a drained frame exactly 5 s: 5 s freezes in 1.1.3-1.1.4, also on the TV side. The stuck call is inside
+        /// the driver, so a watchdog cannot cut it short. Off by default; bench option "drain" to try it again.
         /// </summary>
-        public static bool AllowDrain = true;
+        public static bool AllowDrain = false;
         bool drainEachFrame;
 
         /// <summary>Encoder ready for one more frame within waitMs?</summary>

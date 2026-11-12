@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -44,7 +44,7 @@ namespace TVScreenPlus
             if (args.Contains("noflush")) DesktopCapture.FlushAfterConvert = false;
             if (args.Contains("coarse")) NativeSession.FineTimer = false;
             if (args.Contains("bufbits")) MfEncoder.BufferDivisor = 1;
-            if (args.Contains("nodrain")) MfEncoder.AllowDrain = false;
+            if (args.Contains("drain")) MfEncoder.AllowDrain = true;
             foreach (var a in args) if (a.StartsWith("fps=")) int.TryParse(a.Substring(4), out BenchFps);
             foreach (var a in args)
             {
@@ -68,6 +68,16 @@ namespace TVScreenPlus
             ui.SetApartmentState(ApartmentState.STA);
             ui.IsBackground = true;
             if (animate) { ui.Start(); ready.Wait(5000); }
+            if (args.Contains("animonly"))
+            {
+                // Content only, no encoder: loads a real streaming session without a second encoder on the GPU.
+                int x, y;
+                using (var c = new DesktopCapture(adapter, output)) { x = c.Left + 40; y = c.Top + 40; }
+                anim?.BeginInvoke(new Action(() => anim.Location = new Point(x, y)));
+                Thread.Sleep(seconds * 1000);
+                try { anim?.BeginInvoke(new Action(anim.Close)); } catch { }
+                return;
+            }
             try
             {
                 foreach (bool hevc in codecs)
