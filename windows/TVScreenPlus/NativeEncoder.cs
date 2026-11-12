@@ -673,7 +673,8 @@ namespace TVScreenPlus
                 if (!inflight.TryRemove(t, out var i)) return;
                 var copy = Rent(len + 5);
                 Buffer.BlockCopy(b, 5, copy, 5, len);
-                outQueue.Add(new Packet { Buf = copy, Len = len, Key = key, Acquired = i[0], Submitted = i[1], Fresh = i[2] == 1, Event = Enc.EventQpc });
+                try { outQueue.Add(new Packet { Buf = copy, Len = len, Key = key, Acquired = i[0], Submitted = i[1], Fresh = i[2] == 1, Event = Enc.EventQpc }); }
+                catch (InvalidOperationException) { } // session closing: the queue no longer takes packets
             };
             Enc.OnError = e => { error = e; stop = true; };
             sender = new Thread(SendLoop) { IsBackground = true, Name = "native send", Priority = ThreadPriority.AboveNormal };
@@ -799,8 +800,10 @@ namespace TVScreenPlus
         public void Dispose()
         {
             stop = true;
-            Enc?.Dispose();
+            // Before the encoder: its event thread may be blocked adding to the full queue (TV gone, sender stopped).
+            // Released only afterwards, it resumed on a disposed MFT: access violation in ntdll (1.1.42, queue of 8).
             outQueue.CompleteAdding();
+            Enc?.Dispose();
             if (Thread.CurrentThread != sender) sender.Join(1000);
             Cap.Dispose();
             if (FineTimer) Native.timeEndPeriod(1);
