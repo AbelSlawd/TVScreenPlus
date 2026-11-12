@@ -568,17 +568,23 @@ namespace TVScreenPlus
                     healthy = good ? healthy + 1 : Math.Max(0, healthy - 5);
                     if (blocked > 0.1) cleanSince.Restart();
                     bool change = false;
-                    if (congested >= 2 && kbps > ideal * 0.35)
+                    bool repeated = lastCongestion != null && lastCongestion.Elapsed.TotalMinutes < 5;
+                    if (congested >= 2 && kbps > ideal * 0.35 && net == "wifi" && !repeated)
+                    {
+                        // Wi-Fi: every isolated "congestion" measured (6 in 3 h, at 30-139 Mb/s) was the TV's own
+                        // Wi-Fi scan (Google Play services, every 30 min, ~2 s off channel): not a capacity limit,
+                        // and a lower bitrate doesn't help. Keep bitrate and ceiling; a real saturation repeats
+                        // within seconds and is handled below.
+                        Log.W($"Isolated Wi-Fi hiccup ({blocked:P0} blocked): bitrate and ceiling kept at {kbps} kb/s");
+                        lastCongestion = Stopwatch.StartNew();
+                        congested = 0; healthy = 0;
+                    }
+                    else if (congested >= 2 && kbps > ideal * 0.35)
                     {
                         kbps = (int)Math.Max(ideal * 0.35, kbps * 0.7);
                         Log.W($"Congestion ({blocked:P0} blocked) -> {kbps} kb/s");
-                        // Wi-Fi: an isolated hiccup (two in 30 min at 30-36 Mb/s on a 245-438 Mb/s link) is not a capacity
-                        // limit; lowering the ceiling on each one made the picture blurrier for good. Only a repeat
-                        // within 5 min lowers it there; the bitrate itself still drops now and recovers after 45 s.
-                        bool repeated = lastCongestion != null && lastCongestion.Elapsed.TotalMinutes < 5;
                         lastCongestion = Stopwatch.StartNew();
-                        if (capKey != null && net == "wifi" && !repeated) Log.W($"Isolated Wi-Fi hiccup: ceiling kept at {maxKbps} kb/s");
-                        else if (capKey != null)
+                        if (capKey != null)
                         {
                             // This link can't take the ceiling: remember a lower one for next time too.
                             maxKbps = (int)Math.Max(ideal * 0.35, maxKbps * 0.85);
