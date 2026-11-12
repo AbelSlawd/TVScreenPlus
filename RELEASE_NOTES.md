@@ -1,6 +1,6 @@
-**Nouveau en 1.1.3**
-- Latence réduite de 5 à 10 ms avec les cartes NVIDIA : l'encodeur rend chaque image dès qu'elle est prête au lieu d'attendre la suivante (encodage ~3 ms au lieu de ~14 ms en 4K).
-- La TV mesure maintenant vraiment sa latence (capture → écran), y compris sur les TV MediaTek qui ne signalent pas l'affichage des images ; mesuré sur TCL : ~30-45 ms en mode jeu.
+**Nouveau en 1.1.4**
+- Son beaucoup plus rapide sur la TV : il passe par la sortie audio directe d'Android (AAudio) quand la TV la propose. Mesuré sur une TV TCL : ~45 ms au lieu de ~200 ms, le son est maintenant presque synchrone avec l'image. Si la TV refuse cette sortie, l'ancien chemin est utilisé automatiquement.
+- Mode fluide bien plus réactif : comme le son n'est plus en retard, l'image n'a presque plus besoin d'être retardée pour rester synchronisée (~45 ms au lieu de ~140 ms).
 
 **Encodeur vidéo TVScreenPlus** (depuis 1.1, sans ffmpeg) — 60 images/s régulières et latence réduite, y compris en mode jeu.
 ✅ Testé et validé sur carte **NVIDIA** (GeForce RTX 5080, 4K 60 i/s).
