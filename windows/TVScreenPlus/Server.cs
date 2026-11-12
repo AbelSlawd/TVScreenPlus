@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -464,9 +464,10 @@ namespace TVScreenPlus
                 // Encoder changes (bitrate, mode) are seamless: the new ffmpeg starts while the current one keeps
                 // streaming and takes over at its first frame (a keyframe). Restarting in place froze the image for
                 // ~1 s each time (measured 926-963 ms on the TV), which the learned ceiling would make frequent.
-                int quickFails = 0, congested = 0, healthy = 0;
+                int quickFails = 0, congested = 0, healthy = 0, lastUnderruns = 0;
                 var window = Stopwatch.StartNew();
                 var cleanSince = Stopwatch.StartNew();
+                Stopwatch lastCongestion = null;
                 long blockedTicks = 0, bytes = 0;
                 int frames = 0;
                 var genLock = new object();
@@ -551,16 +552,27 @@ namespace TVScreenPlus
                     frames = 0; bytes = 0;
                     blockedTicks = 0; window.Restart();
                     congested = blocked > 0.25 ? congested + 1 : 0;
-                    // Perfectly healthy second: socket never waits, steady pings and sound, no frame lost on the TV.
-                    bool good = blocked < 0.03 && Stats.Jitter < 8 && (Stats.TvAudioJitter < 0 || Stats.TvAudioJitter <= 20) && Stats.TvDropsDelta == 0;
-                    healthy = good ? healthy + 1 : 0;
+                    // Healthy second: socket rarely waits, steady pings, no frame lost and no sound cut on the TV.
+                    // Not the sound packets' jitter: Wi-Fi delivers in bursts (64-75 ms measured, 5 GHz Wi-Fi 6, no cut),
+                    // so a Wi-Fi ceiling never rose again and each hiccup lowered it for good (50 -> 30 Mb/s, blurrier).
+                    bool soundOk = Stats.TvAudioUnderruns <= lastUnderruns;
+                    lastUnderruns = Stats.TvAudioUnderruns;
+                    bool good = blocked < 0.10 && Stats.Jitter < 20 && soundOk && Stats.TvDropsDelta == 0;
+                    // A single busy second (frequent on Wi-Fi) costs 5 s of credit instead of the whole run.
+                    healthy = good ? healthy + 1 : Math.Max(0, healthy - 5);
                     if (blocked > 0.1) cleanSince.Restart();
                     bool change = false;
                     if (congested >= 2 && kbps > ideal * 0.35)
                     {
                         kbps = (int)Math.Max(ideal * 0.35, kbps * 0.7);
                         Log.W($"Congestion ({blocked:P0} blocked) -> {kbps} kb/s");
-                        if (capKey != null)
+                        // Wi-Fi: an isolated hiccup (two in 30 min at 30-36 Mb/s on a 245-438 Mb/s link) is not a capacity
+                        // limit; lowering the ceiling on each one made the picture blurrier for good. Only a repeat
+                        // within 5 min lowers it there; the bitrate itself still drops now and recovers after 45 s.
+                        bool repeated = lastCongestion != null && lastCongestion.Elapsed.TotalMinutes < 5;
+                        lastCongestion = Stopwatch.StartNew();
+                        if (capKey != null && net == "wifi" && !repeated) Log.W($"Isolated Wi-Fi hiccup: ceiling kept at {maxKbps} kb/s");
+                        else if (capKey != null)
                         {
                             // This link can't take the ceiling: remember a lower one for next time too.
                             maxKbps = (int)Math.Max(ideal * 0.35, maxKbps * 0.85);
@@ -580,7 +592,7 @@ namespace TVScreenPlus
                     }
                     else if (capKey != null && kbps >= maxKbps && maxKbps < Math.Min(desired, hardCap) && healthy >= 30)
                     {
-                        // 30 s without the slightest sign of saturation while the ceiling limits the quality:
+                        // ~30 s without sign of saturation while the ceiling limits the quality:
                         // try 15 % more, and remember it.
                         maxKbps = Math.Min(Math.Min(desired, hardCap), (int)(maxKbps * 1.15));
                         kbps = maxKbps;
