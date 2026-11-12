@@ -143,6 +143,13 @@ class AudioPlayer(private val log: (String) -> Unit) {
         try {
             while (running) {
                 val p = queue.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                if (t is AOut && p.rate == rate && p.channels == channels && trackGame != game) {
+                    // Mode switch on AAudio: same low-latency stream, only the jitter buffer changes. Recreating it
+                    // cut the sound ~0.7 s (packets dropped meanwhile) for a routing hint that changes nothing here.
+                    trackGame = game
+                    baseMs = if (trackGame) 20 else 30
+                    steadySince = System.nanoTime()
+                }
                 if (t == null || p.rate != rate || p.channels != channels || trackGame != game) {
                     t?.close()
                     t = null; track = null
