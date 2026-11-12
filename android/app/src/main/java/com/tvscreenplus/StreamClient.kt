@@ -164,8 +164,13 @@ class StreamClient(
     }
 
     /** A frame reached the screen (TV compositor timestamp). */
+    /** No latency sample until then (nanoTime): the frames queued while a new decoder starts are ~250 ms old and
+     *  made the A/V sync delay the sound for a moment after each mode switch (228 ms in the TV's buffer). */
+    @Volatile private var e2eIgnoreUntil = 0L
+
     private fun onRendered(ptsUs: Long, nanoTime: Long) {
         val cap = synchronized(capMap) { capMap.remove(ptsUs) } ?: return
+        if (nanoTime < e2eIgnoreUntil) return
         dMatched++
         val e2e = ageMs(cap, nanoTime / 1_000_000) ?: return
         if (e2e !in 0L..2000L) {
@@ -476,6 +481,7 @@ class StreamClient(
         audio?.game = gameMode
         frameMs = 1000 / (c["fps"]?.toIntOrNull()?.coerceIn(10, 240) ?: 60)
         streamW = w; streamH = h
+        e2eIgnoreUntil = System.nanoTime() + 1_000_000_000L
         dFramesTimed = 0; dQueued = 0; dRendered = 0; dMatched = 0; dOk = 0; dArrSum = 0; dArrN = 0; dTransitN = 0; diagAt = System.nanoTime() + 10_000_000_000L
         cursorOn = c["cursor"] == "1"
         pcPlaybackMs = c["lpc"]?.toIntOrNull() ?: 15

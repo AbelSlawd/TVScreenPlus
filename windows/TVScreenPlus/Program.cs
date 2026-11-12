@@ -205,8 +205,9 @@ namespace TVScreenPlus
         /// <summary>Checks GitHub every 6 h (or on demand) and installs when no TV is connected.</summary>
         void CheckUpdate(bool manual)
         {
-            // Test channel: every 2 min, and installed even while streaming (the TV reconnects by itself).
-            var every = Updater.TestChannel ? TimeSpan.FromMinutes(2) : TimeSpan.FromHours(6);
+            // Test channel: every 5 min (GitHub allows 60 anonymous API calls per hour per address), and installed
+            // even while streaming (the TV reconnects by itself).
+            var every = Updater.TestChannel ? TimeSpan.FromMinutes(5) : TimeSpan.FromHours(6);
             if (!manual && (!Settings.AutoUpdate || DateTime.UtcNow - lastCheck < every)) return;
             if (Interlocked.Exchange(ref updating, 1) == 1) return;
             try
