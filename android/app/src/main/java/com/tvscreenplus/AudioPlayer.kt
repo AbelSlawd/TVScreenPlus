@@ -21,10 +21,45 @@ import java.util.concurrent.TimeUnit
  *   so the buffer settles where it stops happening rather than chasing the smallest value. Sound piling up above the target
  *   is trimmed instead of being played late.
  * - The extra delay is set by the A/V sync when the sound would otherwise be ahead of the image.
- * - [outputMs] is the real write -> speaker delay (AudioTrack.getTimestamp), TV audio hardware included.
+ * - [outputMs] is the write -> speaker delay from the output's timestamps. AAudio is used when the TV offers it:
+ *   on a TCL/MediaTek TV (mic loopback) AudioTrack took 196-198 ms, 86 ms more than its timestamps said; AAudio 17-19 ms.
  */
 class AudioPlayer(private val log: (String) -> Unit) {
     private class Packet(val rate: Int, val channels: Int, val pcm: ByteArray)
+
+    /** Sound output: AAudio when the TV offers a low-latency stream, else AudioTrack. */
+    private interface Out {
+        fun write(b: ByteArray, off: Int, len: Int): Int
+        /** Frames consumed by the device; wraps like [Int], as the written count does. */
+        val played: Int
+        fun setBuffer(frames: Int)
+        val underruns: Int
+        /** (frame position since start, CLOCK_MONOTONIC ns of that frame at the speaker), when known. */
+        fun timestamp(): Pair<Long, Long>?
+        fun close()
+    }
+
+    private class TrackOut(val t: AudioTrack) : Out {
+        private val ts = AudioTimestamp()
+        override fun write(b: ByteArray, off: Int, len: Int) = t.write(b, off, len).also { if (it < 0) throw IllegalStateException("AudioTrack.write $it") }
+        override val played get() = t.playbackHeadPosition
+        override fun setBuffer(frames: Int) { if (Build.VERSION.SDK_INT >= 24) t.setBufferSizeInFrames(frames) }
+        override val underruns get() = if (Build.VERSION.SDK_INT >= 24) t.underrunCount else 0
+        override fun timestamp() = if (t.getTimestamp(ts)) ts.framePosition to ts.nanoTime else null
+        override fun close() { try { t.stop() } catch (_: Exception) {}; t.release() }
+    }
+
+    private class AOut(val a: AAudioOut) : Out {
+        override fun write(b: ByteArray, off: Int, len: Int) = a.write(b, off, len)
+        override val played get() = a.framesRead.toInt()
+        override fun setBuffer(frames: Int) = a.setBufferSizeInFrames(frames)
+        override val underruns get() = a.underrunCount
+        override fun timestamp() = a.timestamp()
+        override fun close() = a.close()
+    }
+
+    /** Set after an AAudio failure: AudioTrack for the rest of this session. */
+    @Volatile private var aaudioBroken = false
 
     private val queue = ArrayBlockingQueue<Packet>(64)
     @Volatile private var running = true
@@ -84,7 +119,7 @@ class AudioPlayer(private val log: (String) -> Unit) {
 
     private fun loop() {
         try { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) } catch (_: Exception) {}
-        var t: AudioTrack? = null
+        var t: Out? = null
         var rate = 48000
         var channels = 0
         var frameBytes = 4
@@ -104,13 +139,12 @@ class AudioPlayer(private val log: (String) -> Unit) {
         var lastTs = 0L
         var startedAt = 0L
         var reported = false
-        val ts = AudioTimestamp()
         var failed = false
         try {
             while (running) {
                 val p = queue.poll(200, TimeUnit.MILLISECONDS) ?: continue
                 if (t == null || p.rate != rate || p.channels != channels || trackGame != game) {
-                    t?.let { try { it.stop() } catch (_: Exception) {}; it.release() }
+                    t?.close()
                     t = null; track = null
                     rate = p.rate; channels = p.channels; frameBytes = 2 * channels
                     trackGame = game
@@ -120,26 +154,26 @@ class AudioPlayer(private val log: (String) -> Unit) {
                         failed = true; null
                     } ?: continue
                     t = n.first; capacity = n.second
-                    track = t
+                    track = (t as? TrackOut)?.t
                     written = 0; writtenTotal = 0; lastUnderruns = 0; steadySince = System.nanoTime()
                     appliedTarget = -1; levelAvg = -1.0; outputMs = -1; startedAt = System.nanoTime(); reported = false
-                    t.play()
                 }
                 val tr = t ?: continue
                 val now = System.nanoTime()
 
                 // Target fill level = jitter buffer + extra delay for the A/V sync.
-                val margin = rate * 30 / 1000
+                // AAudio blocks writes at the buffer size and fills it: keep its margin to two bursts (8 ms).
+                val margin = if (tr is AOut) tr.a.burst * 2 else rate * 30 / 1000
                 val target = minOf(capacity - margin, rate * (baseMs + extraDelayMs) / 1000).coerceAtLeast(rate / 100)
-                if (target != appliedTarget && Build.VERSION.SDK_INT >= 24) {
+                if (target != appliedTarget) {
                     // Room above the target so that writes never block in normal operation.
-                    tr.setBufferSizeInFrames(minOf(capacity, target + margin))
+                    tr.setBuffer(minOf(capacity, target + margin))
                 }
                 appliedTarget = target
                 bufferMs = baseMs
 
                 val pktFrames = p.pcm.size / frameBytes
-                val queued = written - tr.playbackHeadPosition
+                val queued = written - tr.played
                 val flowing = now - lastWrite < 60_000_000L
                 var skip = 0
                 if (!flowing || queued <= 0) {
@@ -166,15 +200,20 @@ class AudioPlayer(private val log: (String) -> Unit) {
                     if (toSkip > 0) { skip = minOf(pktFrames, toSkip); toSkip -= skip }
                 }
                 if (skip < pktFrames) {
-                    val r = tr.write(p.pcm, skip * frameBytes, (pktFrames - skip) * frameBytes)
-                    if (r < 0) throw IllegalStateException("AudioTrack.write $r")
+                    val r = try { tr.write(p.pcm, skip * frameBytes, (pktFrames - skip) * frameBytes) } catch (e: Exception) {
+                        if (tr !is AOut) throw e
+                        // AAudio stream lost (output device change...): carry on with AudioTrack.
+                        log("audio: AAudio failed (${e.message}), back to AudioTrack")
+                        aaudioBroken = true; tr.close(); t = null
+                        continue
+                    }
                     written += r / frameBytes; writtenTotal += r / frameBytes
                 }
                 lastWrite = System.nanoTime()
 
                 // Underruns while sound is flowing = jitter buffer too small for this network: grow it.
-                val underrun = if (Build.VERSION.SDK_INT >= 24) {
-                    val u = tr.underrunCount
+                val underrun = if (Build.VERSION.SDK_INT >= 24 || tr is AOut) {
+                    val u = tr.underruns
                     val grew = u > lastUnderruns && flowing
                     lastUnderruns = u
                     grew
@@ -188,13 +227,14 @@ class AudioPlayer(private val log: (String) -> Unit) {
                     steadySince = lastWrite
                     baseMs = maxOf(if (trackGame) 15 else 25, baseMs - 2)
                 }
-                latencyMs = ((written - tr.playbackHeadPosition).coerceAtLeast(0) * 1000L / rate).toInt()
+                latencyMs = ((written - tr.played).coerceAtLeast(0) * 1000L / rate).toInt()
 
                 // Real delay until the speaker: frames not yet presented, per the audio hardware's own clock.
-                if (lastWrite - lastTs > 250_000_000L && tr.getTimestamp(ts)) {
+                val ts = if (lastWrite - lastTs > 250_000_000L) tr.timestamp() else null
+                if (ts != null) {
                     lastTs = lastWrite
-                    val pending = writtenTotal - ts.framePosition
-                    val ms = pending * 1000.0 / rate - (System.nanoTime() - ts.nanoTime) / 1e6
+                    val pending = writtenTotal - ts.first
+                    val ms = pending * 1000.0 / rate - (System.nanoTime() - ts.second) / 1e6
                     if (ms in 0.0..1000.0) outputMs = if (outputMs < 0) ms.toInt() else (outputMs * 0.8 + ms * 0.2).toInt()
                 }
                 if (!reported && lastWrite - startedAt > 4_000_000_000L) {
@@ -206,12 +246,21 @@ class AudioPlayer(private val log: (String) -> Unit) {
             if (running) log("audio error: ${e.javaClass.simpleName}: ${e.message}")
         } finally {
             track = null
-            t?.let { try { it.stop() } catch (_: Exception) {}; it.release() }
+            t?.close()
         }
     }
 
-    /** (track, allocated frames). */
-    private fun create(rate: Int, channels: Int, game: Boolean): Pair<AudioTrack, Int> {
+    /** (output, allocated frames): AAudio when possible (TCL/MediaTek: 18 ms to the speaker instead of 197), else AudioTrack. */
+    private fun create(rate: Int, channels: Int, game: Boolean): Pair<Out, Int> {
+        if (!aaudioBroken && AAudioOut.available) {
+            val a = AAudioOut.open(rate, channels, game, rate * 320 / 1000)
+            if (a != null) {
+                log("audio: AAudio $rate Hz $channels ch ${if (a.exclusive) "exclusive" else "shared"} ${if (game) "game" else "media"} path, burst ${a.burst * 1000 / rate} ms, capacity ${a.capacity * 1000 / rate} ms")
+                return AOut(a) to a.capacity
+            }
+            log("audio: AAudio unavailable (${AAudioOut.lastError}), using AudioTrack")
+            aaudioBroken = true
+        }
         val mask = if (channels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
         val frameBytes = 2 * channels
         val min = AudioTrack.getMinBufferSize(rate, mask, AudioFormat.ENCODING_PCM_16BIT)
@@ -240,7 +289,8 @@ class AudioPlayer(private val log: (String) -> Unit) {
         if (Build.VERSION.SDK_INT >= 24) t.setBufferSizeInFrames(rate * 50 / 1000) // the loop then follows its target
         val mode = if (Build.VERSION.SDK_INT >= 26) (if (t.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) " low-latency" else " normal") else ""
         log("audio: AudioTrack $rate Hz ${channels} ch$mode ${if (game) "game" else "media"} path, min ${min / frameBytes * 1000 / rate} ms, capacity ${alloc * 1000 / rate} ms")
-        return t to alloc
+        t.play()
+        return TrackOut(t) to alloc
     }
 
     private fun u32(b: ByteArray, o: Int): Long =

@@ -6,6 +6,8 @@ plugins {
 android {
     namespace = "com.tvscreenplus"
     compileSdk = 35
+    ndkVersion = "27.2.12479018"
+    externalNativeBuild { ndkBuild { path = file("src/main/jni/Android.mk") } }
     defaultConfig {
         applicationId = "com.tvscreenplus"
         minSdk = 21
@@ -14,6 +16,9 @@ android {
         versionCode = build
         // Shown to people: the VERSION file (CI passes it); versionCode = CI run, compared by the updater.
         versionName = (project.findProperty("versionName") as String?) ?: "1.1.$build"
+        // AAudio needs API 26; the library is only loaded there (minSdk stays 21 for the Java side).
+        externalNativeBuild { ndkBuild { arguments("APP_PLATFORM=android-26") } }
+        ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") } // TVs are ARM
     }
     // Fixed key (from CI secrets) so every release installs over the previous one; debug key otherwise.
     val ksFile = System.getenv("ANDROID_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
