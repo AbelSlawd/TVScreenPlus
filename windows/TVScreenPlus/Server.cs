@@ -563,9 +563,13 @@ namespace TVScreenPlus
                     // so a Wi-Fi ceiling never rose again and each hiccup lowered it for good (50 -> 30 Mb/s, blurrier).
                     bool soundOk = Stats.TvAudioUnderruns <= lastUnderruns;
                     lastUnderruns = Stats.TvAudioUnderruns;
-                    bool good = blocked < 0.10 && Stats.Jitter < 20 && soundOk && Stats.TvDropsDelta == 0;
+                    // Ethernet keeps the strict test of 1.1.2 (untested otherwise: a 100 Mb/s TV port saturates at
+                    // 77 Mb/s, 43 % blocked, so a looser test there could cycle up/saturate/down).
+                    bool good = net == "wifi"
+                        ? blocked < 0.10 && Stats.Jitter < 20 && soundOk && Stats.TvDropsDelta == 0
+                        : blocked < 0.03 && Stats.Jitter < 8 && (Stats.TvAudioJitter < 0 || Stats.TvAudioJitter <= 20) && Stats.TvDropsDelta == 0;
                     // A single busy second (frequent on Wi-Fi) costs 5 s of credit instead of the whole run.
-                    healthy = good ? healthy + 1 : Math.Max(0, healthy - 5);
+                    healthy = good ? healthy + 1 : net == "wifi" ? Math.Max(0, healthy - 5) : 0;
                     if (blocked > 0.1) cleanSince.Restart();
                     bool change = false;
                     bool repeated = lastCongestion != null && lastCongestion.Elapsed.TotalMinutes < 5;
