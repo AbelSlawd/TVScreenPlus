@@ -1,244 +1,266 @@
 # TVScreenPlus
 
-**Transformez votre TV Google TV / Android TV en écran secondaire de votre PC Windows, sans câble.**
+**English** | [Français](README.fr.md)
 
-La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenêtres, la souris y passe, comme si elle était branchée en HDMI. L'image est encodée par la carte graphique du PC et décodée par la puce vidéo de la TV, pour une image nette et fluide avec très peu de latence.
+**Turn your Google TV / Android TV into a wireless secondary display for your Windows PC.**
 
-[![Télécharger pour Windows](https://img.shields.io/badge/T%C3%A9l%C3%A9charger-PC%20Windows-0078D6?style=for-the-badge&logo=windows)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)
-[![Télécharger pour Google TV](https://img.shields.io/badge/T%C3%A9l%C3%A9charger-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk)
+The TV becomes a real second monitor (*extend* mode): you drag windows onto it and the mouse moves across, as if it were plugged in over HDMI. The picture is encoded by the PC's graphics card and decoded by the TV's video chip, for a sharp, smooth image with very little latency.
+
+[![Download - Windows PC](https://img.shields.io/badge/Download-Windows%20PC-0078D6?style=for-the-badge&logo=windows)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)
+[![Download - Google TV](https://img.shields.io/badge/Download-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk)
 
 ---
 
-## Sommaire
-- [Points forts](#points-forts)
-- [Configuration requise](#configuration-requise)
+## Table of contents
+- [Highlights](#highlights)
+- [Requirements](#requirements)
 - [Installation](#installation)
-- [Utilisation](#utilisation)
-- [Réglage automatique de la qualité](#réglage-automatique-de-la-qualité)
-- [Mises à jour](#mises-à-jour)
-- [Dépannage](#dépannage)
-- [Désinstallation](#désinstallation)
-- [Fonctionnement technique](#fonctionnement-technique)
-- [Compiler soi-même](#compiler-soi-même)
-- [Crédits](#crédits)
+- [Usage](#usage)
+- [Automatic quality tuning](#automatic-quality-tuning)
+- [Updates](#updates)
+- [Troubleshooting](#troubleshooting)
+- [Uninstalling](#uninstalling)
+- [How it works](#how-it-works)
+- [Building from source](#building-from-source)
+- [Credits](#credits)
 
 ---
 
-## Points forts
-- **Plug & play** : la TV trouve toute seule les PC du réseau et se connecte automatiquement.
-- **Vrai écran étendu** : Windows voit un moniteur supplémentaire, visible dans *Paramètres › Affichage*. Il n'existe que pendant la connexion.
-- **Qualité et fluidité** : jusqu'en 4K à 60 i/s. Encodage matériel NVIDIA / AMD / Intel, HEVC ou H.264, décodage matériel faible latence sur la TV.
-- **Réglage automatique** : le réseau, le PC et la TV sont mesurés à chaque connexion pour choisir la meilleure résolution et le meilleur débit. Le débit s'adapte en continu si le réseau faiblit.
-- **Le son du PC sur la TV** : ce que joue Windows sort par les haut-parleurs de la TV, avec très peu de retard et calé sur l'image.
-- **Manettes sur la TV = manettes du PC** : les manettes Bluetooth ou USB connectées à la TV sont vues par Windows comme des manettes Xbox (jusqu'à 4), vibrations comprises. Les jeux PC les reconnaissent directement.
-- **Léger** : le programme PC pèse environ 100 Ko (hors ffmpeg) et l'application TV moins de 150 Ko. Aucun runtime à installer.
-- **Mises à jour automatiques** sur le PC et proposées sur la TV.
+## Highlights
+- **Plug & play**: the TV finds the PCs on the network by itself and connects automatically.
+- **A real extended display**: Windows sees an additional monitor, visible in *Settings › Display*. It only exists while connected.
+- **Quality and smoothness**: up to 4K at 60 fps. NVIDIA / AMD / Intel hardware encoding, HEVC or H.264, low-latency hardware decoding on the TV.
+- **In-house encoder (new in 1.1)**: TVScreenPlus encodes the picture itself with the graphics card's hardware encoder, without going through ffmpeg, for a steady 60 fps stream. ffmpeg (the 1.0 encoder) remains available as an automatic fallback.
+- **Automatic tuning**: the network, the PC and the TV are measured at every connection to pick the best resolution and bitrate. The bitrate keeps adapting if the network weakens.
+- **PC sound on the TV**: whatever Windows plays comes out of the TV's speakers, with very little delay and in sync with the picture.
+- **TV gamepads = PC gamepads**: Bluetooth or USB gamepads connected to the TV are seen by Windows as Xbox controllers (up to 4), rumble included. PC games recognize them directly.
+- **Lightweight**: the PC program is a few hundred KB (excluding ffmpeg) and the TV app is under 150 KB. No runtime to install.
+- **Automatic updates** on the PC, offered on the TV.
 
-## Configuration requise
-| | Minimum | Recommandé |
+## Requirements
+| | Minimum | Recommended |
 |---|---|---|
-| **PC** | Windows 10 (2004+) ou 11, 64 bits | Carte graphique NVIDIA GTX 900+, AMD RX 400+ ou Intel 6ᵉ gén.+ |
-| **TV** | Google TV / Android TV 5.0+ | Chromecast avec Google TV, Shield, TV Sony/TCL/Philips récentes |
-| **Réseau** | PC et TV sur le même réseau local | PC en Ethernet et TV en Ethernet ou Wi-Fi 5 GHz / Wi-Fi 6 |
+| **PC** | Windows 10 (2004+) or 11, 64-bit | NVIDIA GTX 900+, AMD RX 400+ or Intel 6th gen+ graphics |
+| **TV** | Google TV / Android TV 5.0+ | Chromecast with Google TV, Shield, recent Sony/TCL/Philips TVs |
+| **Network** | PC and TV on the same local network | PC on Ethernet and TV on Ethernet or 5 GHz Wi-Fi / Wi-Fi 6 |
 
-> Sans carte graphique compatible, le processeur prend le relais (qualité et fluidité réduites).
+> The in-house encoder needs a graphics card with a hardware H.264 / HEVC encoder (reachable through Media Foundation). It is validated on NVIDIA; AMD and Intel still need testing, with ffmpeg as an automatic fallback. Without a compatible graphics card, only ffmpeg can use the processor (x264), with reduced quality and smoothness.
 
 ## Installation
 
-### 1. Sur le PC Windows
-1. Téléchargez **[TVScreenPlus-PC.zip](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)** et décompressez-le n'importe où.
-2. Lancez **`TVScreenPlus.exe`** et acceptez la demande d'autorisation administrateur.
-   - Si Windows SmartScreen affiche « Windows a protégé votre ordinateur » : cliquez sur *Informations complémentaires*, puis *Exécuter quand même* (le programme n'est pas signé numériquement).
-3. C'est installé. Le programme :
-   - s'installe dans `C:\Program Files\TVScreenPlus` et remplace l'ancienne version s'il y en a une ;
-   - installe le pilote d'écran virtuel et autorise le pare-feu Windows ;
-   - se lance à chaque démarrage de Windows, avec une icône 📺 près de l'horloge ;
-   - apparaît dans *Paramètres › Applications*.
+### 1. On the Windows PC
+1. Download **[TVScreenPlus-PC.zip](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)** and unzip it anywhere.
+2. Run **`TVScreenPlus.exe`** and accept the administrator permission prompt.
+   - If Windows SmartScreen shows "Windows protected your PC": click *More info*, then *Run anyway* (the program is not digitally signed).
+3. That's it. The program:
+   - installs itself in `C:\Program Files\TVScreenPlus` and replaces any previous version;
+   - installs the virtual display driver and allows it through the Windows firewall;
+   - starts with Windows, with a 📺 icon near the clock;
+   - shows up in *Settings › Apps*.
 
-   Vous pouvez supprimer le dossier décompressé.
+   You can delete the unzipped folder.
 
-### 2. Sur la TV
-L'application n'est pas sur le Play Store : il faut installer le fichier APK.
+### 2. On the TV
+The app is not on the Play Store: you need to install the APK file.
 
-**Méthode simple, avec l'appli *Downloader*** (gratuite sur le Play Store de la TV) :
-1. Installez *Downloader* depuis le Play Store de la TV.
-2. Autorisez-la à installer des applications : *Paramètres › Applications › Sécurité et restrictions › Sources inconnues › Downloader*.
-3. Dans *Downloader*, saisissez l'adresse :
+**Easy method, with the *Downloader* app** (free on the TV's Play Store):
+1. Install *Downloader* from the TV's Play Store.
+2. Allow it to install apps: *Settings › Apps › Security & restrictions › Unknown sources › Downloader*.
+3. In *Downloader*, enter the address:
    `https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk`
-4. Installez, puis ouvrez **TVScreenPlus** depuis l'accueil de la TV.
+4. Install, then open **TVScreenPlus** from the TV's home screen.
 
-*Autres méthodes : l'appli « Send Files to TV » depuis le PC, ou `adb install TVScreenPlus-TV.apk`.*
+*Other methods: the "Send Files to TV" app from the PC, or `adb install TVScreenPlus-TV.apk`.*
 
-## Utilisation
-1. Le PC doit être allumé, avec TVScreenPlus lancé (icône près de l'horloge).
-2. Ouvrez **TVScreenPlus** sur la TV : les PC du réseau s'affichent.
-   - S'il n'y a qu'un PC, ou si c'est le dernier utilisé, la connexion est **automatique**.
-   - Sinon, choisissez le PC avec la télécommande.
-3. La première connexion prend quelques secondes de plus (calibrage). Le nouvel écran apparaît ensuite dans Windows.
+## Usage
+1. The PC must be on, with TVScreenPlus running (icon near the clock).
+2. Open **TVScreenPlus** on the TV: the PCs on the network are listed.
+   - If there is only one PC, or if it is the last one used, the connection is **automatic**.
+   - Otherwise, pick the PC with the remote.
+3. The first connection takes a few extra seconds (calibration). The new display then appears in Windows.
 
-**Télécommande pendant la diffusion**
-| Touche | Action |
+**Remote control while streaming**
+| Key | Action |
 |---|---|
-| **OK** ou **Menu** | Afficher / masquer les statistiques (résolution, débit, images/s, son, manettes) |
-| **Retour** | Se déconnecter. L'écran disparaît de Windows |
-| **▲ / ▼** | Mode **fluide** (60 i/s réguliers, son synchronisé) / mode **jeu** (latence minimale). Appliqué en une fraction de seconde, sans déconnexion |
-| **◀ / ▶** | Avancer / retarder le son de 10 ms (réglage de la synchronisation à l'oreille, mémorisé) |
+| **OK** or **Menu** | Show / hide the statistics (resolution, bitrate, frames/s, sound, gamepads) |
+| **Back** | Disconnect. The display disappears from Windows |
+| **▲ / ▼** | **Fluid** mode (steady 60 fps, synced sound) / **game** mode (minimal latency). Applied within a fraction of a second, without disconnecting |
+| **◀ / ▶** | Advance / delay the sound by 10 ms (by-ear sync adjustment, remembered) |
 
-Les touches des **manettes** ne pilotent pas la TV pendant la diffusion : elles vont au PC (le bouton B ne déconnecte pas). La télécommande garde toujours ses touches.
+**Gamepad** buttons do not control the TV while streaming: they go to the PC (the B button does not disconnect). The remote always keeps its keys.
 
-**Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, **mode jeu**, **son sur la TV**, **couper le son du PC pendant la diffusion**, **manettes de la TV**, démarrage avec Windows, mises à jour, recalibrage, **mode debug**, journal.
+**PC tray icon menu** (right-click): *Restart the connection*, resolution, quality, **game mode**, **video encoder** (TVScreenPlus / ffmpeg), **sound on the TV**, **mute PC sound while streaming**, **TV gamepads**, start with Windows, updates, recalibration, **debug mode**, log.
 
-### Mode fluide ou mode jeu (PC)
-Par défaut, TVScreenPlus est en **mode fluide** : l'encodeur garde une ou deux images d'avance pour tenir **60 images/s régulières**, ce qui ajoute au plus une trentaine de millisecondes de latence. Idéal pour le bureau, la navigation et la vidéo.
+### Fluid mode or game mode (PC)
+With the **TVScreenPlus encoder** (the default), both modes keep a **steady 60 frames/s** and neither holds back any frame: the roughly 30 ms of pipelining of the old ffmpeg encoder is gone. The difference lies in the sound and in the encoder setting:
+- **Fluid mode** (default): the image may be slightly delayed to stay in sync with the sound, and the encoder is tuned for quality. Ideal for the desktop, browsing and video.
+- **Game mode**: the image is never delayed to wait for the sound, and the encoder is set to its fastest setting. Useful for gaming.
 
-Touche **▼** de la télécommande pendant la diffusion, ou clic droit sur l'icône › *Mode jeu (latence minimale)* : chaque image est envoyée dès qu'elle est encodée et l'image n'est jamais retardée pour attendre le son. La latence est la plus faible possible, mais quelques images peuvent être sautées (environ 55 à 58 i/s en 4K). Utile pour jouer. **▲** revient au mode fluide. Le changement s'applique en une fraction de seconde, sans déconnexion, et le menu du PC suit.
+Press **▼** on the remote while streaming, or right-click the icon › *Game mode (minimal latency)*; **▲** goes back to fluid mode. The change is applied within a fraction of a second, without disconnecting, and the PC menu follows.
 
-### Son du PC sur la TV
-Activé par défaut. Pendant la diffusion, tout ce que joue Windows (jeux, vidéos, musique, notifications) est envoyé à la TV et sort par ses haut-parleurs (ou sa barre de son).
-- Le son est capturé sur la **sortie audio par défaut de Windows** : si vous changez de sortie (casque…), la TV suit automatiquement.
-- Le PC continue aussi de jouer le son sur ses propres haut-parleurs. Pour ne l'entendre que sur la TV : clic droit sur l'icône › *Couper le son du PC pendant la diffusion* (le son du PC est rétabli à la déconnexion).
-- Pour désactiver le son sur la TV : clic droit › *Son sur la TV*, ou dans les paramètres de la TV.
-- Le son voyage sur son propre canal (UDP, environ 1,5 Mb/s, pris en compte dans le réglage du débit) : il n'attend jamais derrière une grosse image. La TV garde un tampon d'environ 30 ms, agrandi automatiquement si le réseau est irrégulier, puis réduit lentement quand il redevient stable (sans descendre sous 25 ms, 15 ms en mode jeu, pour éviter les coupures). L'excès de son n'est retiré que s'il dure (niveau minimal sur une seconde) : les rafales du Wi-Fi ne provoquent plus de coupure. En mode jeu, le son passe aussi par le canal « jeu » d'Android, que certaines TV traitent avec moins d'effets, donc plus vite.
-- L'application demande à la TV son mode « jeu » (faible latence, ALLM) quand elle le prend en charge : moins de traitements, donc moins de retard de l'image et du son.
-- **Synchronisation automatique** : la TV mesure le délai réel du son (capture → haut-parleurs ou barre de son) et celui de l'image (capture → écran), et les compare. Si le son arrive après l'image, l'image est légèrement retardée ; s'il arrive avant, c'est le son. Les changements sont progressifs et invisibles. En **mode jeu** (PC), l'image n'est jamais retardée pour attendre le son : la réactivité passe en premier.
-- **Réglage à l'oreille** : pendant la diffusion, les touches **◀ ▶** de la télécommande avancent ou retardent le son de 10 ms (mémorisé). *Paramètres de la TV › Synchronisation du son* le remet à 0. Pratique avec une vidéo de test de synchronisation labiale.
+With the **ffmpeg fallback**, the old behavior applies: in fluid mode, the encoder keeps one or two frames ahead to hold a steady 60 frames/s, which adds at most about thirty milliseconds; in game mode, each frame is sent as soon as it is encoded, but a few frames may be skipped (about 55 to 58 fps in 4K).
 
-### Manettes
-Activées par défaut. Connectez vos manettes à la TV (*Paramètres de la TV › Télécommandes et accessoires › Ajouter un accessoire* pour le Bluetooth), puis connectez la TV au PC : chaque manette apparaît dans Windows comme une **manette Xbox 360** (jusqu'à 4). Les jeux et Steam la reconnaissent comme une manette branchée sur le PC.
-- Toute manette reconnue par la TV comme manette de jeu fonctionne : Xbox, PlayStation (DualShock 4, DualSense), 8BitDo, Stadia, manettes Bluetooth « Android » génériques, manettes USB…
-- Sticks, gâchettes analogiques, croix directionnelle, tous les boutons (le bouton central Xbox / PS devient le bouton *Guide*, souvent réservé par le système de la TV).
-- **Vibrations** : quand un jeu fait vibrer la manette Xbox virtuelle, la manette de la TV vibre (si elle et la TV le permettent ; meilleure prise en charge à partir d'Android 12).
-- Une manette connectée ou déconnectée pendant la diffusion apparaît ou disparaît aussitôt sur le PC.
-- **Première utilisation** : le PC installe automatiquement (et silencieusement) le pilote **ViGEmBus**, qui crée les manettes virtuelles. Cela prend quelques secondes, une seule fois.
-- Pour désactiver : clic droit sur l'icône › *Manettes de la TV*, ou dans les paramètres de la TV.
+### Video encoder (PC)
+Right-click the icon › *Video encoder*: **TVScreenPlus** (in-house encoder, default) or **ffmpeg** (the 1.0 encoder).
+- If the in-house encoder fails or is too slow, ffmpeg takes over automatically.
+- The in-house encoder is only used when the TV app draws the mouse cursor itself (the current TV app does); otherwise ffmpeg is used.
+- Validated on NVIDIA (GeForce RTX 5080, 4K 60 fps). AMD, Intel, other NVIDIA generations and dual-GPU laptops are **not tested yet**: if you run into trouble, choose *ffmpeg* and report it in an [issue](https://github.com/AbelSlawd/TVScreenPlus/issues).
 
-### Paramètres de la TV (⚙ en haut à droite, ou touche Menu)
-| Paramètre | Rôle |
+### PC sound on the TV
+Enabled by default. While streaming, everything Windows plays (games, videos, music, notifications) is sent to the TV and comes out of its speakers (or its soundbar).
+- Sound is captured from the **Windows default audio output**: if you switch outputs (headphones…), the TV follows automatically.
+- The PC also keeps playing the sound on its own speakers. To hear it only on the TV: right-click the icon › *Mute PC sound while streaming* (PC sound is restored on disconnect).
+- To turn off sound on the TV: right-click › *Sound on the TV*, or in the TV's settings.
+- Sound travels on its own channel (UDP, about 1.5 Mb/s, counted in the bitrate tuning): it never waits behind a large frame. The TV keeps a buffer of about 30 ms, automatically enlarged if the network is irregular, then slowly reduced when it becomes stable again (never below 25 ms, 15 ms in game mode, to avoid dropouts). Excess sound is only trimmed if it persists (minimum level over one second): Wi-Fi bursts no longer cause dropouts. In game mode, sound also goes through Android's "game" channel, which some TVs process with fewer effects, and therefore faster.
+- The app asks the TV for its "game" mode (low latency, ALLM) when supported: less processing, so less picture and sound delay.
+- **Automatic sync**: the TV measures the real sound delay (capture → speakers or soundbar) and the picture delay (capture → screen), and compares them. If sound arrives after the picture, the picture is slightly delayed; if it arrives before, the sound is. Changes are gradual and invisible. In **game mode** (PC), the picture is never delayed to wait for the sound: responsiveness comes first.
+- **By-ear adjustment**: while streaming, the **◀ ▶** keys on the remote advance or delay the sound by 10 ms (remembered). *TV settings › Sound sync* resets it to 0. Handy with a lip-sync test video.
+
+### Gamepads
+Enabled by default. Connect your gamepads to the TV (*TV settings › Remotes & accessories › Add accessory* for Bluetooth), then connect the TV to the PC: each gamepad appears in Windows as an **Xbox 360 controller** (up to 4). Games and Steam recognize it as a gamepad plugged into the PC.
+- Any gamepad the TV recognizes as a game controller works: Xbox, PlayStation (DualShock 4, DualSense), 8BitDo, Stadia, generic Bluetooth "Android" gamepads, USB gamepads…
+- Sticks, analog triggers, D-pad, all buttons (the central Xbox / PS button becomes the *Guide* button, often reserved by the TV's system).
+- **Rumble**: when a game makes the virtual Xbox controller vibrate, the TV's gamepad vibrates (if it and the TV allow it; better support from Android 12).
+- A gamepad connected or disconnected while streaming appears or disappears on the PC right away.
+- **First use**: the PC automatically (and silently) installs the **ViGEmBus** driver, which creates the virtual gamepads. It takes a few seconds, once.
+- To disable: right-click the icon › *TV gamepads*, or in the TV's settings.
+
+### TV settings (⚙ at the top right, or the Menu key)
+| Setting | Purpose |
 |---|---|
-| **Langue** | Langue du système, ou Français / English / Español / Deutsch |
-| **Priorité de l'image** | *Automatique*, *Fluidité* (débit prudent, 1080p max) ou *Qualité maximale* (débit plus élevé) |
-| **Résolution maximale** | Automatique, 720p, 1080p, 1440p ou 4K |
-| **Connexion automatique** | Se connecter seule au dernier PC utilisé |
-| **Statistiques pendant la diffusion** | Les afficher d'office (sinon : touche OK) |
-| **Son de l'ordinateur sur la TV** | Jouer le son du PC sur la TV (activé par défaut) |
-| **Manettes de la TV utilisées par l'ordinateur** | Envoyer les manettes de la TV au PC (activé par défaut). Désactivé, elles pilotent la TV comme avant |
-| **Test du matériel de la TV** | Mesure ce que la puce vidéo décode vraiment (voir ci-dessous) |
-| **Rechercher les mises à jour** | Vérifie et installe la dernière version |
-| **Oublier les ordinateurs mémorisés** | Efface le dernier PC et l'IP saisie |
-| **À propos** | Version, modèle, Android, adresse IP, type de réseau (Ethernet / Wi-Fi 2,4-5-6 GHz) |
+| **Language** | System language, or Français / English / Español / Deutsch |
+| **Picture priority** | *Automatic*, *Smoothness* (cautious bitrate, 1080p max) or *Maximum quality* (higher bitrate) |
+| **Maximum resolution** | Automatic, 720p, 1080p, 1440p or 4K |
+| **Automatic connection** | Connect by itself to the last PC used |
+| **Statistics while streaming** | Show them by default (otherwise: OK key) |
+| **Computer sound on the TV** | Play PC sound on the TV (enabled by default) |
+| **TV gamepads used by the computer** | Send the TV's gamepads to the PC (enabled by default). When off, they control the TV as before |
+| **TV hardware test** | Measures what the video chip really decodes (see below) |
+| **Check for updates** | Checks for and installs the latest version |
+| **Forget saved computers** | Clears the last PC and the typed IP |
+| **About** | Version, model, Android, IP address, network type (Ethernet / Wi-Fi 2.4-5-6 GHz) |
 
-La version de l'application est affichée en haut de l'écran d'accueil.
+The app version is shown at the top of the home screen.
 
-### Curseur de la souris
-Le curseur n'est plus incrusté dans la vidéo : le PC envoie sa position (plusieurs centaines de fois par seconde) et sa forme, et la TV le dessine elle-même par-dessus l'image. Il suit la souris presque instantanément, sans attendre l'encodage et le décodage de la vidéo. Avec une ancienne application TV, le curseur reste dans la vidéo.
+### Mouse cursor
+The cursor is no longer burned into the video: the PC sends its position (several hundred times per second) and its shape, and the TV draws it itself on top of the picture. It follows the mouse almost instantly, without waiting for video encoding and decoding. With an older TV app, the cursor stays in the video (and ffmpeg then does the encoding).
 
-### Mode debug (PC)
-Clic droit sur l'icône › *Mode debug* : une fenêtre affiche en direct
-- la **stabilité du signal** (score sur 100, saturation du réseau, gigue de latence, images perdues par la TV, baisses de débit) ;
-- les **images par seconde** envoyées par le PC et affichées par la TV ;
-- la **résolution**, le codec, l'encodeur et le débit ;
-- la **latence** : aller-retour réseau mesuré chaque seconde, latence de décodage **mesurée en direct sur la TV** (moyenne et maximum) et estimation de la latence totale PC → écran ;
-- la **saturation du décodeur de la TV** : part du temps où la puce vidéo ne suit plus le flux ;
-- la **latence mesurée capture → écran** : chaque image porte son heure de capture, et la TV note quand elle s'affiche (horloges du PC et de la TV recalées en continu grâce aux pings). Le traitement d'image propre à la TV n'est pas inclus : mettez la TV en mode d'image « Jeu » pour le réduire ;
-- le **son** : format capturé, débit, tampon de la TV, coupures, paquets jetés pour rattraper le retard, gigue ;
-- les **manettes** connectées sur la TV et leur manette Xbox virtuelle.
+### Debug mode (PC)
+Right-click the icon › *Debug mode*: a window shows live
+- **signal stability** (score out of 100, network saturation, latency jitter, frames lost by the TV, bitrate drops);
+- the **frames per second** sent by the PC and displayed by the TV;
+- the **resolution**, codec, encoder and bitrate;
+- **latency**: network round trip measured every second, decoding latency **measured live on the TV** (average and maximum) and an estimate of the total PC → screen latency;
+- **TV decoder saturation**: the share of time the video chip can no longer keep up with the stream;
+- the **measured capture → screen latency**: each frame carries its capture time, and the TV notes when it is displayed (PC and TV clocks continuously aligned using the pings). The TV's own image processing is not included: set the TV to its "Game" picture mode to reduce it;
+- **sound**: captured format, bitrate, TV buffer, dropouts, packets discarded to catch up, jitter;
+- the **gamepads** connected to the TV and their virtual Xbox controller.
 
-Les mêmes chiffres sont écrits dans le journal toutes les 10 secondes (lignes `Stats:`), avec les informations envoyées par la TV à chaque connexion (lignes `TV:` : modèle, décodeur utilisé, détail du test du matériel). On peut ainsi analyser une session après coup, sans outil de développement sur la TV.
+The same figures are written to the log every 10 seconds (`Stats:` lines), along with the information the TV sends at each connection (`TV:` lines: model, decoder used, hardware test details). A session can thus be analyzed afterwards, without any development tool on the TV.
 
-> Astuce : pour placer la TV à gauche ou à droite de votre écran principal, faites-la glisser dans *Paramètres › Système › Affichage*.
+> Tip: to place the TV to the left or right of your main display, drag it in *Settings › System › Display*.
 
-## Réglage automatique de la qualité
-À chaque connexion, en 2 à 5 secondes :
-1. **Réseau** : la latence et le débit réel entre le PC et la TV sont mesurés.
-2. **TV** : l'application indique la résolution de l'écran, sa fréquence (50 ou 60 Hz), le type de réseau et la résolution maximale que sa puce vidéo décode à 60 i/s. Après le **test du matériel** (Paramètres de la TV), ce sont les valeurs **mesurées** qui sont envoyées, avec la latence de décodage. Le test encode un court clip sur la TV puis le décode en HEVC et en H.264, de la 4K à la 720p.
-3. **PC** : l'encodeur de la carte graphique est détecté puis **testé en conditions réelles** (résultat mémorisé). Le réglage « qualité » est préféré, et le réglage « rapide » sert si le PC n'est pas assez puissant.
-4. TVScreenPlus choisit la **résolution la plus élevée** que l'ensemble supporte, avec le débit adapté.
+## Automatic quality tuning
+At every connection, within 2 to 5 seconds:
+1. **Network**: the latency and the real throughput between the PC and the TV are measured.
+2. **TV**: the app reports the screen resolution, its refresh rate (50 or 60 Hz), the network type and the maximum resolution its video chip decodes at 60 fps. After the **hardware test** (TV settings), the **measured** values are sent instead, along with the decoding latency. The test encodes a short clip on the TV and then decodes it in HEVC and H.264, from 4K down to 720p.
+3. **PC**: the graphics card's encoder is detected, then **tested in real conditions** (result remembered). The "quality" setting is preferred, and the "fast" setting is used if the PC is not powerful enough.
+4. TVScreenPlus picks the **highest resolution** the whole chain supports, with a suitable bitrate.
 
-Pendant la diffusion, si le réseau sature (micro-ondes, autre appareil qui télécharge…), le débit **baisse automatiquement** pour éviter les saccades, puis **remonte** quand la connexion redevient stable.
+While streaming, if the network saturates (microwave, another device downloading…), the bitrate **drops automatically** to avoid stutter, then **rises again** when the connection becomes stable. With the in-house encoder, the bitrate changes live, without restarting the encoder.
 
-Pour forcer une valeur : clic droit sur l'icône › *Résolution* ou *Qualité / débit*. Même forcé, le débit ne dépasse jamais un **plafond appris pour chaque TV et chaque type de réseau (Ethernet ou Wi-Fi)** : il part d'une valeur prudente (50 Mb/s au plus, et 60 % du débit mesuré sur un lien lent comme le port Ethernet 100 Mb/s de beaucoup de TV, 50 % en Wi-Fi, 85 % sur un réseau filaire rapide), monte de 15 % après 30 secondes sans aucun signe de saturation (socket, pings, son, images perdues), redescend dès qu'il sature, et reste mémorisé pour les connexions suivantes. Une installation plus performante obtient donc d'elle-même un plafond plus haut, sans jamais dépasser 85 % du débit mesuré. *Recalibrer* efface ces plafonds appris. Si vous changez de carte graphique, utilisez *Recalibrer*.
+To force a value: right-click the icon › *Resolution* or *Quality / bitrate*. Even when forced, the bitrate never exceeds a **ceiling learned for each TV and each network type (Ethernet or Wi-Fi)**: it starts from a cautious value (50 Mb/s at most, and 60% of the measured throughput on a slow link such as the 100 Mb/s Ethernet port of many TVs, 50% on Wi-Fi, 85% on a fast wired network), rises by 15% after 30 seconds without any sign of saturation (socket, pings, sound, lost frames), drops as soon as it saturates, and is remembered for later connections. A more capable setup therefore gets a higher ceiling on its own, never exceeding 85% of the measured throughput. *Recalibrate* clears these learned ceilings. If you change graphics card, use *Recalibrate*.
 
-## Mises à jour
-- **PC** : le programme vérifie toutes les 6 heures et s'installe tout seul quand aucune TV n'est connectée. Vérification manuelle : clic droit › *Rechercher une mise à jour*.
-- **TV** : au lancement, l'application propose la nouvelle version. Android demande toujours une confirmation.
-- **Installation manuelle** : lancer une version plus récente du `.exe` ou de l'`.apk` remplace automatiquement l'ancienne.
+## Updates
+- **PC**: the program checks every 6 hours and installs itself when no TV is connected. Manual check: right-click › *Check for updates*.
+- **TV**: at launch, the app offers the new version. Android always asks for confirmation.
+- **Manual installation**: running a newer `.exe` or `.apk` automatically replaces the old one.
 
-Toutes les versions sont listées dans les [Releases](https://github.com/AbelSlawd/TVScreenPlus/releases).
+All versions are listed in the [Releases](https://github.com/AbelSlawd/TVScreenPlus/releases).
 
-## Dépannage
-| Problème | Solution |
+## Troubleshooting
+| Problem | Solution |
 |---|---|
-| La TV ne trouve pas le PC | Vérifiez que les deux sont sur le **même réseau** (pas de réseau « invité » ni d'isolation Wi-Fi). Sinon, saisissez l'adresse IP du PC sur la TV (`ipconfig` dans un terminal Windows). |
-| Image figée, écran noir ou connexion bloquée | La TV se reconnecte d'elle-même si aucune image n'arrive pendant 6 secondes. Sinon : clic droit sur l'icône › *Redémarrer la connexion*. |
-| Image saccadée | Préférez l'Ethernet ou le Wi-Fi 5 GHz, rapprochez la TV de la box. Les statistiques (touche OK) montrent le débit réel. |
-| Image floue | Clic droit sur l'icône › *Qualité / débit › Maximale*, et vérifiez que *Résolution* est sur *Automatique* ou *Native*. |
-| « Mise à jour impossible : autre signature » sur la TV | Désinstallez l'application de la TV puis réinstallez l'APK une fois. Les mises à jour suivantes fonctionneront. |
-| Rien ne s'affiche après la connexion | Clic droit › *Recalibrer*, puis reconnectez la TV. Mettez à jour le pilote de la carte graphique. |
-| Pas de son sur la TV | Vérifiez *Son sur la TV* (icône du PC) et le réglage de la TV, puis le volume de la TV. Le son capturé est celui de la **sortie par défaut** de Windows : un logiciel qui joue sur une autre sortie, ou en mode exclusif, n'est pas transmis. Mettez aussi l'application TV à jour (les anciennes versions n'ont pas le son). |
-| Plus aucun son quand *Couper le son du PC* est activé | Sur certains PC (volume géré par la carte son elle-même), couper le son coupe aussi la capture : désactivez cette option et baissez plutôt le volume des haut-parleurs du PC. |
-| Son haché ou en retard | Préférez l'Ethernet ou le Wi-Fi 5 GHz. Le mode debug (lignes *Son*) montre le tampon et les coupures de la TV. Une barre de son en Bluetooth ajoute toujours du retard. |
-| Manette non reconnue par le PC | Elle doit d'abord fonctionner sur la TV (appariée dans ses paramètres). Le mode debug liste les manettes vues. Si le pilote ViGEmBus n'a pas pu s'installer, une notification l'indique : relancez TVScreenPlus, ou installez [ViGEmBus 1.22](https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0) à la main. Au-delà de 4 manettes, les suivantes restent sur la TV. |
-| La manette pilote la TV au lieu du PC | Activez *Manettes* dans les paramètres de la TV et sur l'icône du PC, et mettez les deux applications à jour. |
-| Pas de vibrations | La manette et la version d'Android de la TV doivent permettre les vibrations à distance (Android 12+ conseillé). Toutes les manettes Bluetooth ne le permettent pas. |
-| Autre souci | Clic droit › *Ouvrir le journal* (`C:\ProgramData\TVScreenPlus\log.txt`) et joignez-le à une [issue](https://github.com/AbelSlawd/TVScreenPlus/issues). Il contient aussi les informations de la TV (lignes `TV:`) et les statistiques de la diffusion (lignes `Stats:`). |
+| The TV can't find the PC | Check that both are on the **same network** (no "guest" network or Wi-Fi isolation). Otherwise, type the PC's IP address on the TV (`ipconfig` in a Windows terminal). |
+| Frozen image, black screen or stuck connection | The TV reconnects by itself if no frame arrives for 6 seconds. Otherwise: right-click the icon › *Restart the connection*. |
+| Image problems, black screen or poor smoothness after updating to 1.1 | Try *Video encoder › ffmpeg* in the tray icon menu, then report it in an [issue](https://github.com/AbelSlawd/TVScreenPlus/issues) with the log attached. |
+| Choppy image | Prefer Ethernet or 5 GHz Wi-Fi, move the TV closer to the router. The statistics (OK key) show the real bitrate. |
+| Blurry image | Right-click the icon › *Quality / bitrate › Maximum*, and check that *Resolution* is set to *Automatic* or *Native*. |
+| "Update impossible: different signature" on the TV | Uninstall the app from the TV, then reinstall the APK once. Later updates will work. |
+| Nothing is displayed after connecting | Right-click › *Recalibrate*, then reconnect the TV. Update the graphics card driver. |
+| No sound on the TV | Check *Sound on the TV* (PC icon) and the TV setting, then the TV volume. The captured sound is that of Windows' **default output**: software playing on another output, or in exclusive mode, is not transmitted. Also update the TV app (older versions have no sound). |
+| No sound at all when *Mute PC sound* is on | On some PCs (volume handled by the sound card itself), muting also mutes the capture: turn this option off and lower the PC speakers' volume instead. |
+| Choppy or delayed sound | Prefer Ethernet or 5 GHz Wi-Fi. Debug mode (*Sound* lines) shows the TV's buffer and dropouts. A Bluetooth soundbar always adds delay. |
+| Gamepad not recognized by the PC | It must first work on the TV (paired in its settings). Debug mode lists the gamepads seen. If the ViGEmBus driver could not be installed, a notification says so: restart TVScreenPlus, or install [ViGEmBus 1.22](https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0) by hand. Beyond 4 gamepads, the extra ones stay on the TV. |
+| The gamepad controls the TV instead of the PC | Enable *Gamepads* in the TV settings and on the PC icon, and update both apps. |
+| No rumble | The gamepad and the TV's Android version must allow remote rumble (Android 12+ recommended). Not all Bluetooth gamepads allow it. |
+| Other issue | Right-click › *Open the log* (`C:\ProgramData\TVScreenPlus\log.txt`) and attach it to an [issue](https://github.com/AbelSlawd/TVScreenPlus/issues). It also contains the TV's information (`TV:` lines) and the streaming statistics (`Stats:` lines). |
 
-## Désinstallation
-- **PC** : *Paramètres › Applications › TVScreenPlus › Désinstaller*. Le pilote d'écran virtuel, la règle du pare-feu et le démarrage automatique sont aussi supprimés, ainsi que le pilote de manettes ViGEmBus s'il a été installé par TVScreenPlus (s'il était déjà là pour un autre logiciel, il est conservé).
-- **TV** : *Paramètres › Applications › TVScreenPlus › Désinstaller*.
+## Uninstalling
+- **PC**: *Settings › Apps › TVScreenPlus › Uninstall*. The virtual display driver, the firewall rule and the automatic startup are also removed, as is the ViGEmBus gamepad driver if it was installed by TVScreenPlus (if it was already there for other software, it is kept).
+- **TV**: *Settings › Apps › TVScreenPlus › Uninstall*.
 
-## Fonctionnement technique
+## How it works
 ```
-PC Windows                                                   TV Google TV
-┌─────────────────────────────────────────────┐   réseau    ┌──────────────────────────────┐
-│ Écran virtuel (pilote IddCx)                │   local     │ Décodeur matériel MediaCodec │
-│   → capture GPU (Desktop Duplication)       │  ───────▶   │   (mode faible latence)      │
-│   → encodeur GPU NVENC / AMF / Quick Sync   │   TCP       │   → affichage direct (60 Hz) │
-└─────────────────────────────────────────────┘             └──────────────────────────────┘
+Windows PC                                                       Google TV
+┌───────────────────────────────────────────────┐   local     ┌──────────────────────────────┐
+│ Virtual display (IddCx driver)                │   network   │ MediaCodec hardware decoder  │
+│   → DXGI Desktop Duplication capture          │  ───────▶   │   (low-latency mode)         │
+│   → GPU conversion BGRA → NV12                │   TCP       │   → direct display (60 Hz)   │
+│   → hardware encoder via Media Foundation     │             └──────────────────────────────┘
+│     (NVENC / AMF / Quick Sync)                │
+└───────────────────────────────────────────────┘
+        (fallback: ffmpeg ddagrab + NVENC / AMF / Quick Sync)
 ```
-| Étape | Technique |
+| Stage | Technique |
 |---|---|
-| Écran virtuel | [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (IddCx, MIT), activé uniquement pendant la connexion |
-| Capture | DXGI Desktop Duplication (`ddagrab`), image restant dans la mémoire du GPU, curseur inclus |
-| Encodage | FFmpeg avec NVENC, AMF ou Quick Sync en **zéro copie** (repli x264). HEVC si la TV le décode, sinon H.264. Qualité constante plafonnée (texte net), AQ spatiale, sans B-frames, tampon court |
-| Transport | TCP sans algorithme de Nagle, une image = un paquet, tampons dimensionnés à environ 40 ms |
-| Contrôle | Mesure du débit et de la latence à la connexion, débit adaptatif selon la saturation du réseau, statistiques remontées par la TV |
-| Décodage TV | MediaCodec matériel en mode *low-latency* (+ options constructeur), rendu immédiat, Wi-Fi en mode faible latence, affichage calé sur la fréquence de la TV |
-| Son | Capture WASAPI *loopback* de la sortie par défaut de Windows, converti en PCM 16 bits stéréo (mixage des voies surround, 96/192 kHz ramenés à 48/44,1 kHz) et envoyé sans compression par paquets de 10 à 20 ms dans la même connexion que l'image. Sur la TV : AudioTrack en mode *low-latency* (Android 8+), tampon adaptatif (environ 30 ms au départ), le son en retard est jeté plutôt que joué tard |
-| Manettes | La TV envoie l'état de chaque manette (boutons, sticks, gâchettes, croix) à chaque changement. Le PC crée une manette Xbox 360 virtuelle par manette avec le pilote [ViGEmBus](https://github.com/nefarius/ViGEmBus), piloté directement (sans DLL). Les vibrations demandées par le jeu sont renvoyées à la TV |
+| Virtual display | [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (IddCx, MIT), enabled only while connected |
+| Capture | DXGI Desktop Duplication, image staying in GPU memory, then BGRA → NV12 conversion on the GPU (D3D11 video processor). The cursor is not burned in: the TV draws it. A new image is encoded as soon as it is captured; on a still desktop, the last image is re-encoded so the TV always gets a steady 60 fps |
+| Encoding | TVScreenPlus encoder: Windows Media Foundation hardware encoder (NVENC, AMF or Quick Sync behind a single API), low-latency mode, no B-frames, CBR with a short buffer (1/6 s), bitrate changed live without restarting, keyframe forced when the TV reports dropped frames. HEVC if the TV decodes it, otherwise H.264. **Fallback**: FFmpeg (`ddagrab` + NVENC, AMF or Quick Sync in zero-copy, x264 fallback), chosen automatically if the in-house encoder fails or is too slow, or manually |
+| Timestamps | Capture times use a precise clock (QPC, anchored on the system time) |
+| Transport | TCP without Nagle's algorithm, one frame = one packet, buffers sized to about 40 ms |
+| Control | Throughput and latency measured at connection, adaptive bitrate based on network saturation, statistics reported by the TV |
+| TV decoding | Hardware MediaCodec in *low-latency* mode (+ vendor options), immediate rendering, Wi-Fi in low-latency mode, display synced to the TV's refresh rate |
+| Sound | WASAPI *loopback* capture of Windows' default output, converted to 16-bit stereo PCM (surround channels downmixed, 96/192 kHz brought down to 48/44.1 kHz) and sent uncompressed in 10 to 20 ms packets in the same connection as the picture. On the TV: AudioTrack in *low-latency* mode (Android 8+), adaptive buffer (about 30 ms at start), late sound is discarded rather than played late |
+| Gamepads | The TV sends the state of each gamepad (buttons, sticks, triggers, D-pad) at every change. The PC creates one virtual Xbox 360 controller per gamepad with the [ViGEmBus](https://github.com/nefarius/ViGEmBus) driver, driven directly (no DLL). Rumble requested by the game is sent back to the TV |
 
-**Ports réseau** : UDP 47801 (découverte), TCP 47800 (flux). La règle de pare-feu est ajoutée automatiquement.
+**Network ports**: UDP 47801 (discovery), TCP 47800 (stream). The firewall rule is added automatically.
 
 <details>
-<summary>Protocole</summary>
+<summary>Protocol</summary>
 
-- **Découverte** : la TV diffuse `TVSP?` en UDP et le PC répond `TVSP!\nname=…\nbusy=0|1\nver=…`.
-- **Connexion** : la TV envoie `TVSP1;v=2;name=…;w=…;h=…;hz=…;hevc=<hauteur max>;avc=<hauteur max>;…`.
-- **Flux** : paquets `[u32 taille][u8 flags][données]`. Flags : `0x80` remplissage (test de débit), `0x40` ping (la TV répond `ACK`), `0x20` configuration, `0x10` message d'état, sinon une image vidéo Annex-B (`1` = image clé).
-- **Retour TV → PC** : `STAT;fps=…;kbps=…;drop=…;dec=…;decmax=…;wait=…` toutes les 2 secondes (`dec`/`decmax` : latence du décodeur en ms, `wait` : % du temps où son entrée est pleine), `LOG;…` (diagnostic écrit dans le journal du PC), et `ACK` en réponse aux pings envoyés chaque seconde pour mesurer la latence.
-- **Champs supplémentaires de la connexion** : `lang`, `tested`, `lat` (latence de décodage en ms), `net`/`band`/`link` (réseau), `pref` (priorité), `maxh` (résolution max), `audio=0|1` (la TV joue le son), `pads=0|1` (la TV envoie ses manettes).
-- **Fonctions optionnelles** : le PC ne les utilise que si la TV les annonce dans sa ligne de connexion, et confirme ce qu'il accepte dans son paquet de configuration (`…;audio=0|1;pads=0|1`). La TV indique aussi `audioudp=<port>` : le PC lui envoie alors le son en datagrammes UDP de 5 ms (même contenu que les paquets 0x08), sinon dans le flux TCP. `avsync=0` (mode jeu) interdit de retarder l'image ; `mode=fluid|game` indique le mode actif, et la TV demande un changement avec la ligne `MODE;fluid|game` (touches ▲ ▼). `ts=1` : chaque image vidéo porte le drapeau `0x04` et commence par son heure de capture (u32, ms depuis 1970 modulo 2³¹) ; les pings portent l'heure du PC ; la TV renvoie `e2e`/`e2emax` (capture → écran) dans `STAT`. `cursor=1` : la TV dessine le curseur ; le PC envoie sa position (`[3][visible][u16 x][u16 y][u32 heure]`, en UDP) et sa forme (`[4][u16 l][u16 h][u16 point chaud x][u16 y][BGRA]`, paquet 0x08). Une ancienne application TV ou un ancien programme PC continuent donc de fonctionner (sans son ni manettes).
-- **Paquets `0x08` (extension)** : le premier octet donne le type. Une ancienne TV ne les reçoit jamais (ils seraient pris pour de la vidéo).
-  - `1` = son : `[1][format 1 = PCM 16 bits LE][voies][0][fréquence u32][horodatage PC en ms u32][échantillons]`, 10 à 20 ms par paquet.
-  - `2` = vibrations : `[2][emplacement 0-3][moteur gros 0-255][moteur petit 0-255]`.
-- **Manettes, TV → PC** : `PADON;<emplacement>;<nom>` (manette apparue), `PADOFF;<emplacement>`, et à chaque changement `PAD;<emplacement>;<boutons hexa, bits XInput>;<gâchette G 0-255>;<gâchette D>;<stick G x>;<stick G y>;<stick D x>;<stick D y>` (sticks de -32768 à 32767, y vers le haut).
-- **Statistiques du son** : `STAT;…;alat=<tampon TV en ms>;aund=<coupures>;adrop=<paquets jetés>;ajit=<gigue en ms>;aout=<délai écriture → haut-parleur en ms>;abuf=<tampon visé>;aext=<retard ajouté au son>;vdel=<retard ajouté à l'image>;avoff=<réglage utilisateur>`.
-- **Synchronisation** : le paquet de configuration du PC indique `vpc` (retard de l'image sur le son au départ du PC, en ms) et `apc` (délai de capture du son).
+- **Discovery**: the TV broadcasts `TVSP?` over UDP and the PC answers `TVSP!\nname=…\nbusy=0|1\nver=…`.
+- **Connection**: the TV sends `TVSP1;v=2;name=…;w=…;h=…;hz=…;hevc=<max height>;avc=<max height>;…`.
+- **Stream**: packets `[u32 size][u8 flags][data]`. Flags: `0x80` padding (throughput test), `0x40` ping (the TV answers `ACK`), `0x20` configuration, `0x10` status message, otherwise an Annex-B video frame (`1` = keyframe).
+- **TV → PC feedback**: `STAT;fps=…;kbps=…;drop=…;dec=…;decmax=…;wait=…` every 2 seconds (`dec`/`decmax`: decoder latency in ms, `wait`: % of time its input is full), `LOG;…` (diagnostics written to the PC log), and `ACK` in reply to the pings sent every second to measure latency.
+- **Additional connection fields**: `lang`, `tested`, `lat` (decoding latency in ms), `net`/`band`/`link` (network), `pref` (priority), `maxh` (max resolution), `audio=0|1` (the TV plays sound), `pads=0|1` (the TV sends its gamepads).
+- **Optional features**: the PC only uses them if the TV announces them in its connection line, and confirms what it accepts in its configuration packet (`…;audio=0|1;pads=0|1`). The TV also gives `audioudp=<port>`: the PC then sends it the sound as 5 ms UDP datagrams (same content as the 0x08 packets), otherwise in the TCP stream. `avsync=0` (game mode) forbids delaying the picture; `mode=fluid|game` gives the active mode, and the TV requests a change with the line `MODE;fluid|game` (▲ ▼ keys). `ts=1`: each video frame carries the `0x04` flag and starts with its capture time (u32, ms since 1970 modulo 2³¹); pings carry the PC's time; the TV sends back `e2e`/`e2emax` (capture → screen) in `STAT`. `cursor=1`: the TV draws the cursor; the PC sends its position (`[3][visible][u16 x][u16 y][u32 time]`, over UDP) and its shape (`[4][u16 w][u16 h][u16 hotspot x][u16 y][BGRA]`, 0x08 packet). An older TV app or an older PC program therefore keeps working (without sound or gamepads).
+- **`0x08` packets (extension)**: the first byte gives the type. An older TV never receives them (they would be taken for video).
+  - `1` = sound: `[1][format 1 = 16-bit LE PCM][channels][0][frequency u32][PC timestamp in ms u32][samples]`, 10 to 20 ms per packet.
+  - `2` = rumble: `[2][slot 0-3][large motor 0-255][small motor 0-255]`.
+- **Gamepads, TV → PC**: `PADON;<slot>;<name>` (gamepad appeared), `PADOFF;<slot>`, and at every change `PAD;<slot>;<buttons hex, XInput bits>;<left trigger 0-255>;<right trigger>;<left stick x>;<left stick y>;<right stick x>;<right stick y>` (sticks from -32768 to 32767, y up).
+- **Sound statistics**: `STAT;…;alat=<TV buffer in ms>;aund=<dropouts>;adrop=<discarded packets>;ajit=<jitter in ms>;aout=<write → speaker delay in ms>;abuf=<target buffer>;aext=<delay added to sound>;vdel=<delay added to picture>;avoff=<user setting>`.
+- **Synchronization**: the PC's configuration packet gives `vpc` (picture delay relative to sound at the PC's output, in ms) and `apc` (sound capture delay).
 </details>
 
-## Compiler soi-même
+## Building from source
 ```bash
-# Programme PC (.NET Framework 4.8, inclus dans Windows)
+# PC program (.NET Framework 4.8, included in Windows)
 dotnet build windows/TVScreenPlus -c Release
 
-# Application TV
+# TV app
 cd android && ./gradlew assembleRelease
 ```
-Sans `ffmpeg.exe` ni pilote à côté du programme, ils sont téléchargés au premier lancement.
+Without `ffmpeg.exe` or the driver next to the program, they are downloaded on first launch.
 
-**Intégration continue** (`.github/workflows/build.yml`) : chaque push compile les deux applications, ajoute ffmpeg, le pilote d'écran et l'installateur ViGEmBus (signature vérifiée), puis publie une Release `v1.0.N`.
-Pour que les mises à jour de l'APK s'installent par-dessus les précédentes, la CI signe l'APK avec une clé fixe fournie par deux secrets du dépôt : `ANDROID_KEYSTORE_BASE64` (keystore en base64, alias `tvsp`) et `ANDROID_KEYSTORE_PASSWORD`.
+**Local benchmark**: `TVScreenPlus.exe --bench-encoder [seconds] [adapter/output] [kbps]` measures the in-house encoder pipeline without a TV (fps held, capture → encoded packet latency).
 
-## Crédits
-- [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (licence MIT) : écran virtuel Windows.
-- [FFmpeg](https://ffmpeg.org/), version [BtbN](https://github.com/BtbN/FFmpeg-Builds) (licence GPL) : capture et encodage.
-- [ViGEmBus](https://github.com/nefarius/ViGEmBus) 1.22 (licence BSD 3 clauses, © 2016-2020 Nefarius Software Solutions e.U.) : manettes Xbox virtuelles. Le programme d'installation signé est inclus tel quel dans `TVScreenPlus-PC.zip`, avec sa licence (`ViGEmBus_LICENSE.txt`). Les requêtes envoyées au pilote suivent celles de [ViGEmClient](https://github.com/nefarius/ViGEmClient) (licence MIT). Le projet ViGEm n'est plus développé, mais le pilote reste signé et fonctionne sous Windows 10 et 11.
+**Continuous integration** (`.github/workflows/build.yml`): every push, on any branch, builds both apps (adding ffmpeg, the display driver and the ViGEmBus installer, signature verified). Only the `main` branch publishes a GitHub Release (marked "latest"), which PCs install automatically and TVs offer.
+- The version shown to users comes from the `VERSION` file (for example 1.1.2); the Release text comes from `RELEASE_NOTES.md`.
+- The tag is `v<major>.<minor>.<CI run number>` (for example v1.1.30), because installed apps compare it (the TV reads its last number as its update code).
+- So that APK updates install over the previous ones, CI signs the APK with a fixed key provided by two repository secrets: `ANDROID_KEYSTORE_BASE64` (base64 keystore, alias `tvsp`) and `ANDROID_KEYSTORE_PASSWORD`.
+
+## Credits
+- [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT license): Windows virtual display.
+- [FFmpeg](https://ffmpeg.org/), [BtbN](https://github.com/BtbN/FFmpeg-Builds) build (GPL license): fallback encoder, still bundled.
+- [ViGEmBus](https://github.com/nefarius/ViGEmBus) 1.22 (BSD 3-clause license, © 2016-2020 Nefarius Software Solutions e.U.): virtual Xbox gamepads. The signed installer is included as-is in `TVScreenPlus-PC.zip`, with its license (`ViGEmBus_LICENSE.txt`). The requests sent to the driver follow those of [ViGEmClient](https://github.com/nefarius/ViGEmClient) (MIT license). The ViGEm project is no longer developed, but the driver remains signed and works on Windows 10 and 11.
