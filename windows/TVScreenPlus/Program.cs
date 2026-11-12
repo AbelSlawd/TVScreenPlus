@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -195,7 +195,7 @@ namespace TVScreenPlus
             var quit = new EventWaitHandle(false, EventResetMode.AutoReset, Program.QuitEvent);
             ThreadPool.RegisterWaitForSingleObject(quit, (s, t) => ui.Post(_ => Quit(), null), null, -1, true);
             Task.Run(Start);
-            updateTimer = new System.Threading.Timer(_ => CheckUpdate(false), null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(30));
+            updateTimer = new System.Threading.Timer(_ => CheckUpdate(false), null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(Updater.TestChannel ? 1 : 30));
         }
 
         readonly System.Threading.Timer updateTimer;
@@ -205,7 +205,9 @@ namespace TVScreenPlus
         /// <summary>Checks GitHub every 6 h (or on demand) and installs when no TV is connected.</summary>
         void CheckUpdate(bool manual)
         {
-            if (!manual && (!Settings.AutoUpdate || DateTime.UtcNow - lastCheck < TimeSpan.FromHours(6))) return;
+            // Test channel: every 2 min, and installed even while streaming (the TV reconnects by itself).
+            var every = Updater.TestChannel ? TimeSpan.FromMinutes(2) : TimeSpan.FromHours(6);
+            if (!manual && (!Settings.AutoUpdate || DateTime.UtcNow - lastCheck < every)) return;
             if (Interlocked.Exchange(ref updating, 1) == 1) return;
             try
             {
@@ -217,7 +219,7 @@ namespace TVScreenPlus
                     if (manual) Notify("TVScreenPlus", "Vous avez la dernière version (" + Program.DisplayVersion + ").");
                     return;
                 }
-                if (server != null && server.Busy && !manual)
+                if (server != null && server.Busy && !manual && !Updater.TestChannel)
                 {
                     lastCheck = DateTime.MinValue; // retry at next tick, once the TV is disconnected
                     return;

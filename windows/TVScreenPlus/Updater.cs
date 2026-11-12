@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -183,6 +183,14 @@ namespace TVScreenPlus
     static class Updater
     {
         const string Api = "https://api.github.com/repos/AbelSlawd/TVScreenPlus/releases/latest";
+        /// <summary>Newest release first, pre-releases included (test channel).</summary>
+        const string ApiAll = "https://api.github.com/repos/AbelSlawd/TVScreenPlus/releases?per_page=5";
+
+        /// <summary>
+        /// Test builds ("1.1.6-test" from the VERSION file of the test branch) follow the GitHub pre-releases, so a
+        /// test PC updates itself (no UAC: the updater already runs elevated). Everyone else follows "latest".
+        /// </summary>
+        public static readonly bool TestChannel = Program.DisplayVersion.Contains("-test");
 
         public static bool Newer(Version v) =>
             v.Major != Program.Version.Major ? v.Major > Program.Version.Major :
@@ -197,7 +205,7 @@ namespace TVScreenPlus
             {
                 wc.Headers[HttpRequestHeader.UserAgent] = "TVScreenPlus-Updater";
                 wc.Headers[HttpRequestHeader.Accept] = "application/vnd.github+json";
-                string json = wc.DownloadString(Api);
+                string json = wc.DownloadString(TestChannel ? ApiAll : Api); // list: its first entry is the newest
                 var tag = Regex.Match(json, "\"tag_name\"\\s*:\\s*\"v?([0-9]+(\\.[0-9]+){1,3})\"");
                 var url = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"([^\"]+/TVScreenPlus-PC\\.zip)\"");
                 return tag.Success && url.Success ? Tuple.Create(new Version(tag.Groups[1].Value), url.Groups[1].Value) : null;
