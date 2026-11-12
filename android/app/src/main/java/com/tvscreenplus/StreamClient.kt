@@ -147,6 +147,11 @@ class StreamClient(
     /** Capture -> arrival on the TV (PC + network), summed over the diagnosis window. */
     @Volatile private var dArrSum = 0L
     @Volatile private var dArrN = 0
+    /** Frame arrival regularity: late = more than 1.5 frame periods after the previous one, bunched = < 1/4. */
+    @Volatile private var dLate = 0
+    @Volatile private var dBunched = 0
+    @Volatile private var dGapMax = 0L
+    private var lastArrival = 0L
     /** Last rendered-listener call (nanoTime); without one for 1 s, frames are timed at the decoder output. */
     @Volatile private var renderCbAt = 0L
     private val renderCb get() = System.nanoTime() - renderCbAt < 1_000_000_000L
@@ -335,7 +340,15 @@ class StreamClient(
     private fun video(buf: ByteArray, len: Int, key: Boolean, cap: Long) {
         if (cap >= 0) {
             dFramesTimed++
-            ageMs(cap, System.nanoTime() / 1_000_000)?.let { if (it in 0L..2000L) { dArrSum += it; dArrN++ } }
+            val now = System.nanoTime()
+            ageMs(cap, now / 1_000_000)?.let { if (it in 0L..2000L) { dArrSum += it; dArrN++ } }
+            if (lastArrival != 0L) {
+                val gap = now - lastArrival
+                val period = frameMs * 1_000_000L
+                if (gap > period * 3 / 2) dLate++ else if (gap < period / 4) dBunched++
+                if (gap > dGapMax) dGapMax = gap
+            }
+            lastArrival = now
         }
         synchronized(vLock) {
             if (videoDelayMs > 0 || appliedDelayNs > 0 || vq.isNotEmpty() || feeding) {
@@ -463,7 +476,7 @@ class StreamClient(
         audio?.game = gameMode
         frameMs = 1000 / (c["fps"]?.toIntOrNull()?.coerceIn(10, 240) ?: 60)
         streamW = w; streamH = h
-        dFramesTimed = 0; dQueued = 0; dRendered = 0; dMatched = 0; dOk = 0; dArrSum = 0; dArrN = 0; diagAt = System.nanoTime() + 10_000_000_000L
+        dFramesTimed = 0; dQueued = 0; dRendered = 0; dMatched = 0; dOk = 0; dArrSum = 0; dArrN = 0; dLate = 0; dBunched = 0; dGapMax = 0; diagAt = System.nanoTime() + 10_000_000_000L
         cursorOn = c["cursor"] == "1"
         pcPlaybackMs = c["lpc"]?.toIntOrNull() ?: 15
         if (!cursorOn) listener.onCursorMove(0, 0, false, w, h)
@@ -507,9 +520,10 @@ class StreamClient(
                 val arr = if (dArrN > 0) dArrSum / dArrN else -1
                 log("latency diag: frames with capture time $dFramesTimed, queued $dQueued, rendered callbacks $dRendered, " +
                     "matched $dMatched, accepted $dOk, rejected $e2eRejected, clock ${if (clockOffset == Long.MIN_VALUE) "unknown" else "ok"}, " +
-                    "capture->arrival $arr ms, image delay $appliedVideoDelayMs ms, timed at ${if (renderCb) "screen" else "decoder output + 1 frame"}, API ${Build.VERSION.SDK_INT}")
+                    "capture->arrival $arr ms, arrivals late $dLate bunched $dBunched max gap ${dGapMax / 1_000_000} ms, image delay $appliedVideoDelayMs ms, timed at ${if (renderCb) "screen" else "decoder output + 1 frame"}, API ${Build.VERSION.SDK_INT}")
                 // Again every minute (counts restart): follows the network part as the load changes.
                 dFramesTimed = 0; dQueued = 0; dRendered = 0; dMatched = 0; dOk = 0; dArrSum = 0; dArrN = 0
+                dLate = 0; dBunched = 0; dGapMax = 0
                 diagAt = System.nanoTime() + 60_000_000_000L
             }
             val a = (audio?.stats() ?: "") + ";vdel=$appliedVideoDelayMs;avoff=$userOffsetMs"
