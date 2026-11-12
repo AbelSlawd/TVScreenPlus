@@ -292,6 +292,7 @@ namespace TVScreenPlus
         public void Run()
         {
             DisplayTarget target = null;
+            System.Threading.Tasks.Task<DisplayTarget> early = null; // virtual display prepared during the network test
             try
             {
                 client.NoDelay = true;
@@ -329,6 +330,14 @@ namespace TVScreenPlus
                       $"tested={Int(hello, "tested", 0)} lat={Stats.TvLatencyMs}ms net={Stats.Network} pref={pref} maxh={tvMaxH} audio={helloAudio} pads={helloPads}");
                 StartReader();
 
+                // The virtual display takes ~0.7 s to appear (attach + mode set): prepare it at the highest resolution
+                // this TV can get while the network is measured (1 s); a slow network then resizes it.
+                int fps = hz >= 49 && hz <= 51 ? 50 : 60;  // match the TV refresh: no judder
+                bool hevcTv = hevcMax >= 720;
+                int decMax = Math.Max(hevcTv ? hevcMax : 0, avcMax);
+                var heights = Heights();
+                early = System.Threading.Tasks.Task.Run(() => VirtualDisplay.Attach(W(heights[0]), heights[0], fps));
+
                 // ---- 1. Network: latency + throughput (v2 TVs) ----
                 double mbps = 60, rtt = 0;
                 if (v2)
@@ -340,9 +349,6 @@ namespace TVScreenPlus
                 bool auto = Settings.Res < 0, autoQ = Settings.Quality <= 0;
 
                 // ---- 2. Resolution + bitrate budget ----
-                bool hevcTv = hevcMax >= 720;
-                int decMax = Math.Max(hevcTv ? hevcMax : 0, avcMax);
-                int fps = hz >= 49 && hz <= 51 ? 50 : 60;  // match the TV refresh: no judder
                 // Headroom for fluctuations: wired is steady, 2.4 GHz Wi-Fi is not. TV priority adjusts it.
                 double share = net == "eth" ? 0.7 : band == "2.4" ? 0.45 : 0.55;
                 if (pref == "smooth") share *= 0.7; else if (pref == "quality") share = Math.Min(0.8, share * 1.3);
@@ -351,18 +357,22 @@ namespace TVScreenPlus
                 int audioKbps = tvAudio && Settings.Audio ? AudioLoopback.Kbps : 0;
                 budget = Math.Max(budget * 0.5, budget - audioKbps);
                 Stats.MeasuredMbps = mbps; Stats.RttMs = rtt;
-                var heights = new List<int>();
-                foreach (int hh in new[] { 2160, 1440, 1080, 900, 720 })
-                    if (hh <= Math.Min(tvH, Math.Max(decMax, 720)) || hh == 720) heights.Add(hh);
-                if (tvMaxH > 0) heights.RemoveAll(hh => hh > Math.Max(tvMaxH, 720));
-                if (pref == "smooth") heights.RemoveAll(hh => hh > 1080 && heights.Count > 1);
-                if (!auto)
+                List<int> Heights()
                 {
-                    int want = Settings.Res == 0 ? tvH : Settings.Res;
-                    heights.RemoveAll(hh => hh > want);
-                    if (heights.Count == 0) heights.Add(720);
+                    var hs = new List<int>();
+                    foreach (int hh in new[] { 2160, 1440, 1080, 900, 720 })
+                        if (hh <= Math.Min(tvH, Math.Max(decMax, 720)) || hh == 720) hs.Add(hh);
+                    if (tvMaxH > 0) hs.RemoveAll(hh => hh > Math.Max(tvMaxH, 720));
+                    if (pref == "smooth") hs.RemoveAll(hh => hh > 1080 && hs.Count > 1);
+                    if (Settings.Res >= 0)
+                    {
+                        int want = Settings.Res == 0 ? tvH : Settings.Res;
+                        hs.RemoveAll(hh => hh > want);
+                        if (hs.Count == 0) hs.Add(720);
+                    }
+                    return hs;
                 }
-                else
+                if (auto)
                 {
                     // Highest resolution whose "high quality" bitrate fits in the measured budget.
                     while (heights.Count > 1 && Ideal(W(heights[0]), heights[0], fps, hevcTv) > budget) heights.RemoveAt(0);
@@ -370,7 +380,8 @@ namespace TVScreenPlus
 
                 // ---- 3. Virtual display + encoder + live calibration ----
                 TvStatus("screen");
-                target = VirtualDisplay.Attach(W(heights[0]), heights[0], fps);
+                target = early.GetAwaiter().GetResult(); early = null;
+                if (target.Height != heights[0]) target = VirtualDisplay.Resize(target, W(heights[0]), heights[0], fps);
                 var enc = Streamer.Pick(target, hevcTv, tvCursor && Settings.NativeEncoder);
                 if (!enc.Hardware) heights.RemoveAll(hh => hh > 1080 && heights.Count > 1);
                 EncodePlan plan = null;
@@ -691,6 +702,7 @@ namespace TVScreenPlus
             finally
             {
                 Close();
+                try { early?.Wait(5000); } catch { } // a display still being prepared must not appear after Detach
                 VirtualDisplay.Detach();
                 Log.W("Session closed");
             }
