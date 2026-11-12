@@ -432,6 +432,7 @@ namespace TVScreenPlus
             finally { if (list != null) Native.CoTaskMemFree((nint)list); Com.Release(ref attrs); }
 
             Name = Com.GetString(activate, MFT_FRIENDLY_NAME_Attribute) ?? "MFT";
+            drainEachFrame = AllowDrain && Name.IndexOf("NVIDIA", StringComparison.OrdinalIgnoreCase) >= 0;
             void* t = null; Guid iid = IID_IMFTransform;
             Com.Check(Com.C(activate, 33, (nint)(&iid), (nint)(&t)), "ActivateObject");
             mft = t;
@@ -518,6 +519,14 @@ namespace TVScreenPlus
         /// <summary>The next submitted frame becomes an IDR.</summary>
         public void ForceKeyFrame() => Com.SetCodec(codec, CODECAPI_AVEncVideoForceKeyFrame, 1);
 
+        /// <summary>
+        /// The NVIDIA MFT keeps each encoded frame until the next input arrives (+1 frame period: encode 16 ms p50
+        /// instead of 3 ms, bench RTX 5080 at 5120x1440; 4K stream 2 ms). A drain after every frame makes it emit at once; bitrate, frame
+        /// sizes and keyframes unchanged. Only NVIDIA is measured, so other vendors keep the plain flow.
+        /// </summary>
+        public static bool AllowDrain = true;
+        bool drainEachFrame;
+
         /// <summary>Encoder ready for one more frame within waitMs?</summary>
         public bool WaitInput(int waitMs) => needInput.Wait(waitMs);
 
@@ -536,6 +545,7 @@ namespace TVScreenPlus
                 Com.C(s, 36, (nint)time100ns);
                 Com.C(s, 38, (nint)(10000000L / fps));
                 Com.Check(Com.C(mft, 24, 0, (nint)s, 0), "ProcessInput");
+                if (drainEachFrame) Com.C(mft, 23, 1 /*COMMAND_DRAIN*/, 0);
             }
             finally { Com.Release(ref s); Com.Release(ref b); }
         }
@@ -554,6 +564,7 @@ namespace TVScreenPlus
                     Com.Release(ref ev);
                     if (type == METransformNeedInput) needInput.Release();
                     else if (type == METransformHaveOutput) { EventQpc = Stopwatch.GetTimestamp(); Drain(); }
+                    else if (type == 603 /*METransformDrainComplete*/ && drainEachFrame) Com.C(mft, 23, 0x10000003 /*NOTIFY_START_OF_STREAM*/, 0); // drained: accept input again
                 }
             }
             catch (Exception e) { if (!stopping) OnError?.Invoke(e); }

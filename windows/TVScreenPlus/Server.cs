@@ -882,11 +882,12 @@ namespace TVScreenPlus
             }
         }
 
-        /// <summary>Capture + encode (~1 frame) + network (RTT/2) + TV decode + display (~1 frame).</summary>
+        /// <summary>Measured by the TV when it can; else capture + encode (~1 frame) + network (RTT/2) + TV decode + display (~1 frame).</summary>
         public double EndToEndMs
         {
             get
             {
+                if (TvE2eMs >= 0) return TvE2eMs;
                 double frame = 1000.0 / Math.Max(1, TargetFps);
                 return frame + 4 + RttMs / 2 + (DecodeMs >= 0 ? DecodeMs : frame) + frame + TvVideoDelayMs;
             }

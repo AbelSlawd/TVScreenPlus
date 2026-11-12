@@ -44,6 +44,7 @@ namespace TVScreenPlus
             if (args.Contains("noflush")) DesktopCapture.FlushAfterConvert = false;
             if (args.Contains("coarse")) NativeSession.FineTimer = false;
             if (args.Contains("bufbits")) MfEncoder.BufferDivisor = 1;
+            if (args.Contains("nodrain")) MfEncoder.AllowDrain = false;
             foreach (var a in args) if (a.StartsWith("fps=")) int.TryParse(a.Substring(4), out BenchFps);
             foreach (var a in args)
             {
