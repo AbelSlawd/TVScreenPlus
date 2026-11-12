@@ -701,7 +701,9 @@ namespace TVScreenPlus
                 return r;
             }
         }
-        readonly System.Collections.Concurrent.BlockingCollection<Packet> outQueue = new System.Collections.Concurrent.BlockingCollection<Packet>(30); // 0.5 s: then back-pressure again
+        readonly System.Collections.Concurrent.BlockingCollection<Packet> outQueue = new System.Collections.Concurrent.BlockingCollection<Packet>(8);
+        // ~130 ms: when the link stalls (Wi-Fi hiccup) new captures are skipped before encoding (safe for the
+        // stream) instead of 0.5 s of stale frames being replayed in a burst afterwards (87 fps measured).
         readonly Thread sender;
         readonly System.Collections.Concurrent.ConcurrentBag<byte[]> pool = new System.Collections.Concurrent.ConcurrentBag<byte[]>();
 

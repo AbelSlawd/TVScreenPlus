@@ -412,6 +412,9 @@ namespace TVScreenPlus
                     // healthy and drops on congestion, and is remembered per TV and network type, so a better
                     // setup (gigabit port, clean Wi-Fi) earns a higher one.
                     hardCap = (int)(mbps * 1000 * 0.85) - audioKbps;
+                    // Wi-Fi: never above 70 Mb/s (the Ethernet level, plenty for 4K HEVC). Once the ceiling could rise
+                    // it went to 139 Mb/s on a 300 Mb/s link: +10 ms of latency and saturation hiccups, no visible gain.
+                    if (net == "wifi") hardCap = Math.Min(hardCap, 70000);
                     // Keyed by network TYPE, not by the measured speed: one wrong measurement (481 Mb/s once on a
                     // 94 Mb/s port) must not bypass what this TV has learned (it then aimed at 139 Mb/s and froze).
                     string tvKey = "netcap_" + new string(tv.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray()) + "_";
