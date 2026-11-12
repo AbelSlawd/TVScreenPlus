@@ -425,7 +425,10 @@ namespace TVScreenPlus
                     if (kbps > netCap) { capped = $", capped to network {netCap}{(learned > 0 ? " (learned)" : "")}"; kbps = netCap; }
                 }
                 int maxKbps = kbps;
-                client.SendBufferSize = Math.Max(64 << 10, kbps * 1000 / 8 / 50); // ~20 ms of video: little hidden queue
+                // ~20 ms of video: little hidden queue. Wi-Fi acknowledges in bursts (aggregation, TV power save):
+                // with 20 ms the socket blocked 4-10 % of the time at 40 Mb/s on a 245-438 Mb/s link, read as
+                // saturation. 60 ms there: the queue only fills when the link really stalls.
+                client.SendBufferSize = Math.Max(64 << 10, kbps * 1000 / 8 / (net == "wifi" ? 16 : 50));
                 Log.W($"Plan: {target.Width}x{target.Height} {plan} {kbps} kb/s (budget {budget:0}, ideal {ideal:0}{capped})");
                 Stats.Width = target.Width; Stats.Height = target.Height; Stats.Codec = enc.Codec.ToUpper();
                 Stats.Encoder = plan.ToString(); Stats.TargetFps = plan.Fps; Stats.TargetKbps = kbps;
