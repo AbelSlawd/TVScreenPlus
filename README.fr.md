@@ -135,6 +135,7 @@ Activées par défaut. Connectez vos manettes à la TV (*Paramètres de la TV �
 | **Connexion automatique** | Se connecter seule au dernier PC utilisé |
 | **Statistiques pendant la diffusion** | Les afficher d'office (sinon : touche OK) |
 | **Son de l'ordinateur sur la TV** | Jouer le son du PC sur la TV (activé par défaut) |
+| **Sortie du son** | *Rapide* (latence minimale, par défaut ; sans les effets sonores de la TV sur les TV où ce chemin va droit aux haut-parleurs), *Stable* (pareil avec plus de marge : plus de micro-coupures, ~30 ms de plus) ou *Qualité TV* (passe par les effets sonores de la TV comme le Dolby, ~200 ms : idéal en mode fluide, où l'image attend le son ; en mode jeu le son arrive en retard). Appliqué à la prochaine connexion |
 | **Manettes de la TV utilisées par l'ordinateur** | Envoyer les manettes de la TV au PC (activé par défaut). Désactivé, elles pilotent la TV comme avant |
 | **Test du matériel de la TV** | Mesure ce que la puce vidéo décode vraiment (voir ci-dessous) |
 | **Rechercher les mises à jour** | Vérifie et installe la dernière version |

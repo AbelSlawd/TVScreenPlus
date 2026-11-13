@@ -135,6 +135,7 @@ Enabled by default. Connect your gamepads to the TV (*TV settings › Remotes & 
 | **Automatic connection** | Connect by itself to the last PC used |
 | **Statistics while streaming** | Show them by default (otherwise: OK key) |
 | **Computer sound on the TV** | Play PC sound on the TV (enabled by default) |
+| **Sound output** | *Fast* (lowest latency, default; skips the TV's sound effects on TVs where the fast path goes straight to the speakers), *Steady* (same with more margin: no tiny cuts, ~30 ms more) or *TV quality* (through the TV's sound effects such as Dolby, ~200 ms: best in fluid mode, where the image waits for the sound; in game mode the sound lags). Applied at the next connection |
 | **TV gamepads used by the computer** | Send the TV's gamepads to the PC (enabled by default). When off, they control the TV as before |
 | **TV hardware test** | Measures what the video chip really decodes (see below) |
 | **Check for updates** | Checks for and installs the latest version |

@@ -1,3 +1,9 @@
+**Nouveau en 1.2.1 : qualité du son** (application TV)
+- Nouveau réglage *Paramètres de la TV › Sortie du son* :
+  - **Rapide** (par défaut, comme en 1.2.0) : latence minimale. Sur certaines TV (TCL/MediaTek), ce chemin rapide envoie le son directement aux haut-parleurs, sans les effets sonores de la TV (Dolby, égaliseur) : c'est pourquoi le son paraissait moins riche depuis la 1.1.4.
+  - **Stable** : comme Rapide, avec plus de marge ; plus de micro-coupures (~30 ms de latence en plus).
+  - **Qualité TV** : le son passe par les effets sonores de la TV (Dolby…), ~200 ms. Idéal pour les films et la musique en mode fluide, où l'image attend le son. En mode jeu, le son arrive en retard. Le réglage de synchro ◀ ▶ est mémorisé à part pour ce choix.
+
 **Nouveau en 1.2.0 : sécurité** — ⚠️ mettez à jour le PC **et** l'application TV (l'ancienne application TV est refusée et vous demande de la mettre à jour).
 - **Jumelage des TV** : seules les TV acceptées sur le PC reçoivent son écran. À la première connexion, la TV affiche un code à 6 chiffres et le PC ouvre une fenêtre avec le même code : cliquez *Autoriser*. Ensuite, la TV se reconnecte seule, comme avant. Menu de l'icône → *Oublier les TV autorisées* pour tout annuler.
 - Le PC ne répond qu'aux appareils du réseau local, et une TV inconnue ne peut plus couper la diffusion en cours.

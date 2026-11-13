@@ -255,14 +255,21 @@ class MainActivity : Activity() {
 
         section(L.t("audio_pads"))
         toggle(L.t("audio"), "audio", true)
+        var sync: Button? = null
+        choice(L.t("sound_out"), listOf(AudioPlayer.FAST, AudioPlayer.STABLE, AudioPlayer.QUALITY),
+            listOf(L.t("snd_fast"), L.t("snd_stable"), L.t("snd_quality")), "sound", AudioPlayer.FAST) {
+            sync?.text = L.t("av_offset", prefs.getInt(offsetKey(), 0)) // each output keeps its own correction
+        }
+        note(L.t("sound_note"))
         toggle(L.t("pads"), "pads", true)
         note(L.t("pads_note"))
-        val sync = button(L.t("av_offset", prefs.getInt("av_offset", 0))) {}
-        sync.setOnClickListener {
-            prefs.edit().putInt("av_offset", 0).apply()
-            sync.text = L.t("av_offset", 0)
+        val syncButton = button(L.t("av_offset", prefs.getInt(offsetKey(), 0))) {}
+        sync = syncButton
+        syncButton.setOnClickListener {
+            prefs.edit().putInt(offsetKey(), 0).apply()
+            syncButton.text = L.t("av_offset", 0)
         }
-        p.addView(sync, LinearLayout.LayoutParams(w, -2))
+        p.addView(syncButton, LinearLayout.LayoutParams(w, -2))
         note(L.t("av_offset_note"))
 
         section(L.t("hwtest"))
@@ -313,6 +320,12 @@ class MainActivity : Activity() {
         note(L.t("about_text", versionName, Build.MODEL, Build.VERSION.RELEASE, localIp() ?: "?", networkLabel()))
         overlay.post { p.getChildAt(2)?.requestFocus() } // first setting
     }
+
+    /**
+     * Sound sync correction, kept per sound output: the TV's own sound processing (QUALITY) can add a delay its
+     * timestamps don't show (86 ms on a TCL/MediaTek TV), which the other outputs don't have.
+     */
+    private fun offsetKey() = if (prefs.getString("sound", AudioPlayer.FAST) == AudioPlayer.QUALITY) "av_offset_q" else "av_offset"
 
     private fun hwSummary(): String {
         if (prefs.getInt("hw_ver", 0) == 0) return L.t("hwtest_never")
@@ -584,7 +597,8 @@ class MainActivity : Activity() {
                 }
             }
         }, pairing)
-        c.userOffsetMs = prefs.getInt("av_offset", 0)
+        c.userOffsetMs = prefs.getInt(offsetKey(), 0)
+        c.soundMode = prefs.getString("sound", AudioPlayer.FAST) ?: AudioPlayer.FAST
         client = c
         c.start()
     }
@@ -634,8 +648,8 @@ class MainActivity : Activity() {
         if (c != null && overlay.visibility == View.GONE &&
             (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             // Fine lip-sync by ear: < sound earlier, > sound later (10 ms steps, remembered).
-            val v = (prefs.getInt("av_offset", 0) + if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 10 else -10).coerceIn(-200, 300)
-            prefs.edit().putInt("av_offset", v).apply()
+            val v = (prefs.getInt(offsetKey(), 0) + if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 10 else -10).coerceIn(-200, 300)
+            prefs.edit().putInt(offsetKey(), v).apply()
             c.userOffsetMs = v
             Toast.makeText(this, L.t("av_offset_now", v), Toast.LENGTH_SHORT).show()
             return true

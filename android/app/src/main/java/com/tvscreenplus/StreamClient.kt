@@ -78,6 +78,8 @@ class StreamClient(
     // ---- A/V sync ----
     /** User correction from the remote (ms): + = sound later, - = sound earlier. */
     @Volatile var userOffsetMs = 0
+    /** TV setting "sound output" (AudioPlayer.FAST / STABLE / QUALITY), read when the sound starts. */
+    @Volatile var soundMode = AudioPlayer.FAST
     /** PC-side delay of the image compared with the sound (capture + encoding), from the PC config; -1 = old PC. */
     @Volatile private var pcVideoMs = -1
     @Volatile private var pcAudioMs = 5
@@ -406,7 +408,7 @@ class StreamClient(
      * Sound later -> delay the image; sound earlier -> delay the sound. Plus the user's correction.
      */
     /** The sound player, created on first use (TCP or UDP thread). */
-    private fun player(): AudioPlayer = synchronized(audioLock) { audio ?: AudioPlayer { log(it) }.also { it.game = gameMode; audio = it } }
+    private fun player(): AudioPlayer = synchronized(audioLock) { audio ?: AudioPlayer(soundMode) { log(it) }.also { it.game = gameMode; audio = it } }
 
     /** UDP socket for the sound; returns its port (0 = unavailable: the PC then keeps the sound in TCP). */
     private fun startUdp(): Int = try {

@@ -23,8 +23,17 @@ import java.util.concurrent.TimeUnit
  * - The extra delay is set by the A/V sync when the sound would otherwise be ahead of the image.
  * - [outputMs] is the write -> speaker delay from the output's timestamps. AAudio is used when the TV offers it:
  *   on a TCL/MediaTek TV (mic loopback) AudioTrack took 196-198 ms, 86 ms more than its timestamps said; AAudio 17-19 ms.
+ * - [mode] (TV setting "sound output"): FAST = AAudio, smallest buffer; STABLE = AAudio with a larger buffer (no trims,
+ *   so no clicks); QUALITY = AudioTrack on the TV's normal path. On the TCL/MediaTek TV the AAudio (MMAP) stream goes
+ *   straight to the speakers while the normal path goes through the TV's sound effects (Dolby DAP, equaliser): dumpsys
+ *   media.audio_flinger, Decoder PathType=Mmap -> SpeakerOutput vs PathType=Primary -> SESpeakerOutput (PostMode=Dap).
  */
-class AudioPlayer(private val log: (String) -> Unit) {
+class AudioPlayer(private val mode: String, private val log: (String) -> Unit) {
+    companion object {
+        const val FAST = "fast"
+        const val STABLE = "stable"
+        const val QUALITY = "quality"
+    }
     private class Packet(val rate: Int, val channels: Int, val pcm: ByteArray)
 
     /** Sound output: AAudio when the TV offers a low-latency stream, else AudioTrack. */
@@ -140,14 +149,19 @@ class AudioPlayer(private val log: (String) -> Unit) {
         var startedAt = 0L
         var reported = false
         var failed = false
+        // Jitter buffer start and floor (ms): the larger buffers of STABLE / QUALITY leave room for network bursts.
+        fun startMs() = if (mode != FAST) 60 else if (trackGame) 20 else 30
+        fun floorMs() = if (mode != FAST) 50 else if (trackGame) 15 else 25
+        // Sound above the target that gets trimmed (each trim is a small click): far less eager outside FAST.
+        val slackMs = if (mode == FAST) 10 else 30
         try {
             while (running) {
                 val p = queue.poll(200, TimeUnit.MILLISECONDS) ?: continue
-                if (t is AOut && p.rate == rate && p.channels == channels && trackGame != game) {
-                    // Mode switch on AAudio: same low-latency stream, only the jitter buffer changes. Recreating it
-                    // cut the sound ~0.7 s (packets dropped meanwhile) for a routing hint that changes nothing here.
+                if (t != null && p.rate == rate && p.channels == channels && trackGame != game && (t is AOut || mode == QUALITY)) {
+                    // Mode switch, same output: AAudio keeps its low-latency stream (recreating it cut the sound
+                    // ~0.7 s for a routing hint that changes nothing here), and the TV-effects path ignores game mode.
                     trackGame = game
-                    baseMs = if (trackGame) 20 else 30
+                    baseMs = startMs()
                     steadySince = System.nanoTime()
                 }
                 if (t == null || p.rate != rate || p.channels != channels || trackGame != game) {
@@ -155,7 +169,7 @@ class AudioPlayer(private val log: (String) -> Unit) {
                     t = null; track = null
                     rate = p.rate; channels = p.channels; frameBytes = 2 * channels
                     trackGame = game
-                    baseMs = if (trackGame) 20 else 30
+                    baseMs = startMs()
                     val n = try { create(rate, channels, trackGame) } catch (e: Exception) {
                         if (!failed) log("audio: AudioTrack ${rate} Hz ${channels} ch failed: ${e.javaClass.simpleName}: ${e.message}")
                         failed = true; null
@@ -198,7 +212,7 @@ class AudioPlayer(private val log: (String) -> Unit) {
                     // on it caused a cut right after each burst (v1.0.21 on Wi-Fi: 503 trims, 9 underruns).
                     winMin = minOf(winMin, queued)
                     if (now - winStart > 1_000_000_000L) {
-                        if (winMin != Int.MAX_VALUE && winMin > target + rate / 100) {
+                        if (winMin != Int.MAX_VALUE && winMin > target + rate * slackMs / 1000) {
                             toSkip += winMin - target
                             synchronized(statLock) { drops++ }
                         }
@@ -230,9 +244,9 @@ class AudioPlayer(private val log: (String) -> Unit) {
                     synchronized(statLock) { underruns++ }
                     steadySince = lastWrite
                     baseMs = minOf(80, baseMs + 10)
-                } else if (lastWrite - steadySince > 15_000_000_000L && baseMs > (if (trackGame) 15 else 25)) {
+                } else if (lastWrite - steadySince > 15_000_000_000L && baseMs > floorMs()) {
                     steadySince = lastWrite
-                    baseMs = maxOf(if (trackGame) 15 else 25, baseMs - 2)
+                    baseMs = maxOf(floorMs(), baseMs - 2)
                 }
                 latencyMs = ((written - tr.played).coerceAtLeast(0) * 1000L / rate).toInt()
 
@@ -257,12 +271,16 @@ class AudioPlayer(private val log: (String) -> Unit) {
         }
     }
 
-    /** (output, allocated frames): AAudio when possible (TCL/MediaTek: 18 ms to the speaker instead of 197), else AudioTrack. */
-    private fun create(rate: Int, channels: Int, game: Boolean): Pair<Out, Int> {
-        if (!aaudioBroken && AAudioOut.available) {
+    /**
+     * (output, allocated frames): AAudio when possible (TCL/MediaTek: 18 ms to the speaker instead of 197), else
+     * AudioTrack; always AudioTrack on the media path in QUALITY, for the TV's own sound processing.
+     */
+    private fun create(rate: Int, channels: Int, gameMode: Boolean): Pair<Out, Int> {
+        val game = gameMode && mode != QUALITY
+        if (mode != QUALITY && !aaudioBroken && AAudioOut.available) {
             val a = AAudioOut.open(rate, channels, game, rate * 320 / 1000)
             if (a != null) {
-                log("audio: AAudio $rate Hz $channels ch ${if (a.exclusive) "exclusive" else "shared"} ${if (game) "game" else "media"} path, burst ${a.burst * 1000 / rate} ms, capacity ${a.capacity * 1000 / rate} ms")
+                log("audio: AAudio $rate Hz $channels ch ${if (a.exclusive) "exclusive" else "shared"} ${if (game) "game" else "media"} path ($mode), burst ${a.burst * 1000 / rate} ms, capacity ${a.capacity * 1000 / rate} ms")
                 return AOut(a) to a.capacity
             }
             log("audio: AAudio unavailable (${AAudioOut.lastError}), using AudioTrack")
@@ -286,7 +304,7 @@ class AudioPlayer(private val log: (String) -> Unit) {
                 .setAudioFormat(format)
                 .setBufferSizeInBytes(bytes)
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                .apply { if (mode != QUALITY) setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) }
                 .build()
         } else {
             AudioTrack(attrs, format, bytes, AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE)
@@ -294,8 +312,8 @@ class AudioPlayer(private val log: (String) -> Unit) {
         if (t.state != AudioTrack.STATE_INITIALIZED) { t.release(); throw IllegalStateException("not initialized") }
         val alloc = bytes / frameBytes
         if (Build.VERSION.SDK_INT >= 24) t.setBufferSizeInFrames(rate * 50 / 1000) // the loop then follows its target
-        val mode = if (Build.VERSION.SDK_INT >= 26) (if (t.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) " low-latency" else " normal") else ""
-        log("audio: AudioTrack $rate Hz ${channels} ch$mode ${if (game) "game" else "media"} path, min ${min / frameBytes * 1000 / rate} ms, capacity ${alloc * 1000 / rate} ms")
+        val perf = if (Build.VERSION.SDK_INT >= 26) (if (t.performanceMode == AudioTrack.PERFORMANCE_MODE_LOW_LATENCY) " low-latency" else " normal") else ""
+        log("audio: AudioTrack $rate Hz ${channels} ch$perf ${if (game) "game" else "media"} path (${this.mode}), min ${min / frameBytes * 1000 / rate} ms, capacity ${alloc * 1000 / rate} ms")
         t.play()
         return TrackOut(t) to alloc
     }
