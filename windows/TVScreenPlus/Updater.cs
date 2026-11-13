@@ -153,11 +153,15 @@ namespace TVScreenPlus
                 catch (UnauthorizedAccessException) when (i < 20) { Thread.Sleep(500); }
         }
 
-        /// <summary>Delete leftovers of previous update downloads.</summary>
+        /// <summary>Where updates are unpacked (inside Program Files: administrators only).</summary>
+        public static readonly string UpdateDir = Path.Combine(InstallDir, "update");
+
+        /// <summary>Delete leftovers of previous update downloads (the running update copy is skipped: in use).</summary>
         public static void CleanupTemp()
         {
-            foreach (var d in Directory.GetDirectories(Path.GetTempPath(), "TVScreenPlus_update_*"))
-                try { Directory.Delete(d, true); } catch { }
+            try { foreach (var d in Directory.GetDirectories(Path.GetTempPath(), "TVScreenPlus_update_*")) try { Directory.Delete(d, true); } catch { } } catch { }
+            if (Directory.Exists(UpdateDir) && !Program.Dir.StartsWith(UpdateDir, StringComparison.OrdinalIgnoreCase))
+                try { Directory.Delete(UpdateDir, true); } catch { }
         }
 
         public static void Uninstall()
@@ -185,6 +189,7 @@ namespace TVScreenPlus
         const string Api = "https://api.github.com/repos/AbelSlawd/TVScreenPlus/releases/latest";
         /// <summary>Newest release first, pre-releases included (test channel).</summary>
         const string ApiAll = "https://api.github.com/repos/AbelSlawd/TVScreenPlus/releases?per_page=5";
+        const string Download = "https://github.com/AbelSlawd/TVScreenPlus/releases/download/";
 
         /// <summary>
         /// Test builds ("1.1.6-test" from the VERSION file of the test branch) follow the GitHub pre-releases, so a
@@ -207,15 +212,21 @@ namespace TVScreenPlus
                 wc.Headers[HttpRequestHeader.Accept] = "application/vnd.github+json";
                 string json = wc.DownloadString(TestChannel ? ApiAll : Api); // list: its first entry is the newest
                 var tag = Regex.Match(json, "\"tag_name\"\\s*:\\s*\"v?([0-9]+(\\.[0-9]+){1,3})\"");
-                var url = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"([^\"]+/TVScreenPlus-PC\\.zip)\"");
+                // Only this repository's own release files.
+                var url = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"(" + Regex.Escape(Download) + "v[0-9.]+/TVScreenPlus-PC\\.zip)\"");
                 return tag.Success && url.Success ? Tuple.Create(new Version(tag.Groups[1].Value), url.Groups[1].Value) : null;
             }
         }
 
-        /// <summary>Download, extract and start the new version (it replaces this one and restarts).</summary>
+        /// <summary>
+        /// Download, extract and start the new version (it replaces this one and restarts). Unpacked under Program
+        /// Files, not in the user's temp folder: another program of the same user could swap the file there before
+        /// we start it with administrator rights.
+        /// </summary>
         public static void Install(string zipUrl)
         {
-            string dir = Path.Combine(Path.GetTempPath(), "TVScreenPlus_update_" + DateTime.Now.Ticks);
+            Installer.CleanupTemp();
+            string dir = Path.Combine(Installer.UpdateDir, DateTime.Now.Ticks.ToString());
             string zip = dir + ".zip";
             Directory.CreateDirectory(dir);
             using (var wc = new WebClient())

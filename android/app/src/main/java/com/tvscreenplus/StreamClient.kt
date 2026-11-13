@@ -34,6 +34,7 @@ class StreamClient(
     private val diagnostics: List<String>,
     private val surface: Surface,
     private val listener: Listener,
+    private val pairing: Pairing,
 ) {
     interface Listener {
         fun onStatus(text: String)
@@ -50,6 +51,13 @@ class StreamClient(
     @Volatile private var running = true
     /** Ended by the no-image watchdog: the app reconnects by itself. */
     @Volatile var stalled = false
+    /** The PC refused this TV (pairing declined): no automatic reconnection. */
+    @Volatile var refused = false
+    /** Last text from the PC: when it closes before streaming (refusal, app to update), that is the reason shown. */
+    @Volatile private var lastStatus: String? = null
+    @Volatile private var streaming = false
+    private var pairPc: ByteArray? = null
+    private var pairKey: ByteArray? = null
     private var socket: Socket? = null
     private var out: OutputStream? = null
     @Volatile private var decoder: Decoder? = null
@@ -313,7 +321,7 @@ class StreamClient(
                     flags and 0x80 != 0 -> {}                                   // bandwidth test filler
                     flags and 0x40 != 0 -> { if (len >= 4) clockSample(u32(buf, 0)); send("ACK") }
                     flags and 0x20 != 0 -> configure(parse(String(buf, 0, len)))
-                    flags and 0x10 != 0 -> String(buf, 0, len, Charsets.UTF_8).let { listener.onStatus(it) }
+                    flags and 0x10 != 0 -> String(buf, 0, len, Charsets.UTF_8).let { lastStatus = it; listener.onStatus(it) }
                     flags and 0x08 != 0 -> extension(buf, len)
                     else -> {
                         // 0x04: the payload starts with the frame's capture time (PC clock).
@@ -326,7 +334,10 @@ class StreamClient(
                 }
             }
         } catch (e: Exception) {
-            if (running) { error = e.message ?: e.javaClass.simpleName; log("stream error: ${e.javaClass.simpleName}: ${e.message}") }
+            if (running) {
+                error = lastStatus.takeIf { !streaming } ?: e.message ?: e.javaClass.simpleName
+                log("stream error: ${e.javaClass.simpleName}: ${e.message}")
+            }
             Log.w(TAG, "stream ended", e)
         } finally {
             running = false
@@ -402,6 +413,7 @@ class StreamClient(
         val u = DatagramSocket(0)
         u.receiveBufferSize = 256 shl 10
         udp = u
+        val pc = socket?.inetAddress
         Thread({
             boost()
             val b = ByteArray(8192)
@@ -411,6 +423,7 @@ class StreamClient(
                     pk.length = b.size // receive() shrinks it to the last datagram's size
                     u.receive(pk)
                     if (!running) break
+                    if (pk.address != pc) continue // only our PC: nobody else on the network plays sound here
                     when (b[0].toInt()) {
                         1 -> if (pk.length > 12 && audioOn) audioPacket(b, pk.length)
                         3 -> cursorPacket(b, pk.length)
@@ -457,6 +470,25 @@ class StreamClient(
             1 -> if (audioOn) audioPacket(b, len)
             3, 4 -> cursorPacket(b, len)
             2 -> if (len >= 4) listener.onRumble(b[1].toInt() and 0xFF, b[2].toInt() and 0xFF, b[3].toInt() and 0xFF)
+            // Authentication (see Pairing): challenge from a PC we may know, then pairing request and result.
+            5 -> if (len >= 49) {
+                val key = pairing.keyFor(b.copyOfRange(1, 17))
+                send("AUTH;" + (key?.let { Pairing.hex(Pairing.proof(it, b.copyOfRange(17, 49))) } ?: "none"))
+            }
+            6 -> if (len >= 81) {
+                val ex = Pairing.Exchange()
+                val pcPublic = b.copyOfRange(17, 81)
+                val key = ex.key(pcPublic)
+                pairPc = b.copyOfRange(1, 17); pairKey = key
+                send("PAIR;" + Pairing.hex(ex.publicKey))
+                val code = Pairing.code(key, pcPublic, ex.publicKey)
+                listener.onStatus(L.t("pair_code", code.substring(0, 3) + " " + code.substring(3)))
+            }
+            7 -> if (len >= 2) {
+                val pc = pairPc; val key = pairKey
+                if (b[1].toInt() == 1 && pc != null && key != null) pairing.trust(pc, key) else refused = true
+                pairKey = null
+            }
         }
     }
 
@@ -488,6 +520,7 @@ class StreamClient(
         if (!cursorOn) listener.onCursorMove(0, 0, false, w, h)
         synchronized(vLock) { vq.clear() } // frames of the previous stream must not reach the new decoder
         pads = c["pads"] == "1"
+        streaming = true
         listener.onStarted(info)
     }
 

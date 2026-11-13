@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
-using System.Net;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -34,6 +34,7 @@ namespace TVScreenPlus
         static void Main(string[] args)
         {
             Directory.CreateDirectory(DataDir);
+            LockDown(DataDir);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             if (args.Contains("--uninstall")) { Installer.Uninstall(); return; }
@@ -50,6 +51,45 @@ namespace TVScreenPlus
                 Application.Run(new TrayApp());
             }
         }
+
+        /// <summary>
+        /// ProgramData lets every user create files in our folder, which an elevated process reads: only
+        /// administrators and SYSTEM may write there; users may still read (the log). settings.txt, which holds the
+        /// TV pairing keys, is closed to users too (see Settings).
+        /// </summary>
+        static void LockDown(string dir)
+        {
+            try
+            {
+                var sec = new DirectorySecurity();
+                sec.SetOwner(Admins);
+                sec.SetAccessRuleProtection(true, false);
+                var all = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+                foreach (var sid in new[] { Admins, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null) })
+                    sec.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
+                sec.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
+                    FileSystemRights.ReadAndExecute, all, PropagationFlags.None, AccessControlType.Allow));
+                Directory.SetAccessControl(dir, sec);
+            }
+            catch (Exception e) { Log.W("Data folder permissions: " + e.Message); }
+        }
+
+        static readonly SecurityIdentifier Admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+
+        /// <summary>Administrators and SYSTEM only, nothing inherited.</summary>
+        public static void AdminsOnly(string file)
+        {
+            try
+            {
+                var sec = new FileSecurity();
+                sec.SetOwner(Admins);
+                sec.SetAccessRuleProtection(true, false);
+                foreach (var sid in new[] { Admins, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null) })
+                    sec.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, AccessControlType.Allow));
+                File.SetAccessControl(file, sec);
+            }
+            catch (Exception e) { Log.W("Settings permissions: " + e.Message); }
+        }
     }
 
     static class Log
@@ -60,34 +100,52 @@ namespace TVScreenPlus
         {
             try { if (File.Exists(FilePath) && new FileInfo(FilePath).Length > (2 << 20)) File.WriteAllText(FilePath, ""); } catch { }
         }
+        static int writes;
         public static void W(string s)
         {
-            lock (L) try { File.AppendAllText(FilePath, DateTime.Now.ToString("HH:mm:ss.fff ") + s + "\r\n"); } catch { }
+            lock (L) try
+            {
+                // Also checked while running: the TV's LOG lines must not fill the disk during a long session.
+                if (++writes % 1000 == 0 && new FileInfo(FilePath).Length > (8 << 20)) File.WriteAllText(FilePath, "");
+                File.AppendAllText(FilePath, DateTime.Now.ToString("HH:mm:ss.fff ") + s + "\r\n");
+            }
+            catch { }
         }
     }
 
-    /// <summary>Simple persistent key=value settings.</summary>
+    /// <summary>Simple persistent key=value settings (administrators only: they hold the TV pairing keys).</summary>
     static class Settings
     {
         static readonly string F = Path.Combine(Program.DataDir, "settings.txt");
         static readonly Dictionary<string, string> D = new Dictionary<string, string>();
+        static bool restricted;
         static Settings()
         {
             try { foreach (var l in File.ReadAllLines(F)) { int i = l.IndexOf('='); if (i > 0) D[l.Substring(0, i)] = l.Substring(i + 1); } } catch { }
+            if (File.Exists(F)) { Program.AdminsOnly(F); restricted = true; }
         }
         public static string Get(string k, string def) { lock (D) return D.TryGetValue(k, out var v) ? v : def; }
+        public static List<string> Keys(string prefix) { lock (D) return D.Keys.Where(k => k.StartsWith(prefix)).ToList(); }
         public static void Set(string k, string v)
         {
+            // One "key=value" per line: a line break in a value would forge another setting.
+            if (k.IndexOfAny(new[] { '=', '\r', '\n' }) >= 0 || (v != null && v.IndexOfAny(new[] { '\r', '\n' }) >= 0))
+                throw new ArgumentException("invalid setting " + k);
             lock (D)
             {
                 if (v == null) D.Remove(k); else D[k] = v;
                 try { File.WriteAllLines(F, D.Select(p => p.Key + "=" + p.Value)); } catch { }
+                if (!restricted) { Program.AdminsOnly(F); restricted = true; } // created just now: it inherited the folder's read access
             }
         }
         /// <summary>Target vertical resolution: -1 = automatic, 0 = TV native, else 1080 / 1440 / 2160.</summary>
-        public static int Res { get => int.Parse(Get("resolution", "-1")); set => Set("resolution", value.ToString()); }
+        public static int Res { get => int.TryParse(Get("resolution", ""), out int v) ? v : -1; set => Set("resolution", value.ToString()); }
         /// <summary>Bitrate: 0 = automatic (measured network), else multiplier 0.6 / 1 / 2.</summary>
-        public static double Quality { get => double.Parse(Get("bitrate", "0"), System.Globalization.CultureInfo.InvariantCulture); set => Set("bitrate", value.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+        public static double Quality
+        {
+            get => double.TryParse(Get("bitrate", ""), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v) ? v : 0;
+            set => Set("bitrate", value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
         public static bool AutoUpdate { get => Get("autoupdate", "1") == "1"; set => Set("autoupdate", value ? "1" : "0"); }
         /// <summary>Forget encoder probes, benchmarks and learned network ceilings (new GPU/driver/network).</summary>
         public static void ResetCalibration()
@@ -124,23 +182,29 @@ namespace TVScreenPlus
         public TrayApp()
         {
             ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
-            var menu = new ContextMenuStrip();
-            status = new ToolStripMenuItem("Démarrage…") { Enabled = false };
+            ToolStripManager.Renderer = new MenuRenderer();
+            var menu = new ContextMenuStrip { Font = new Font("Segoe UI", 9.75f), ShowCheckMargin = false, ShowImageMargin = true };
+            menu.Opened += (s, e) => Theme.Window(menu.Handle, false);
+            menu.Items.Add(new ToolStripMenuItem("TVScreenPlus   " + Program.DisplayVersion, Theme.Glyph('', Theme.Accent, 20))
+            {
+                Enabled = false, ForeColor = Theme.Text, Font = new Font("Segoe UI Semibold", 11f), Padding = new Padding(0, 6, 0, 0)
+            });
+            status = new ToolStripMenuItem("Démarrage…") { Enabled = false, ForeColor = Theme.AccentLight, Padding = new Padding(0, 0, 0, 4) };
             menu.Items.Add(status);
-            menu.Items.Add("Redémarrer la connexion", null, (s, e) => Task.Run(RestartConnection));
-            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(Item("Redémarrer la connexion", '', () => Task.Run(RestartConnection)));
 
-            var res = new ToolStripMenuItem("Résolution");
+            menu.Items.Add(Section("IMAGE"));
+            var res = Submenu("Résolution", '');
             foreach (var (label, v) in new[] { ("Automatique (recommandé)", -1), ("1080p", 1080), ("1440p", 1440), ("4K", 2160), ("Native de la TV", 0) })
                 res.DropDownItems.Add(Radio(label, () => Settings.Res == v, () => Settings.Res = v));
             menu.Items.Add(res);
 
-            var q = new ToolStripMenuItem("Qualité / débit");
+            var q = Submenu("Qualité / débit", '');
             foreach (var (label, v) in new[] { ("Automatique selon le réseau (recommandé)", 0.0), ("Wi-Fi faible", 0.6), ("Haute", 1.0), ("Maximale (Ethernet / Wi-Fi 6)", 2.0) })
                 q.DropDownItems.Add(Radio(label, () => Math.Abs(Settings.Quality - v) < 0.01, () => Settings.Quality = v));
             menu.Items.Add(q);
 
-            var game = new ToolStripMenuItem("Mode jeu (latence minimale)") { Checked = Settings.GameMode, CheckOnClick = true };
+            var game = Switch("Mode jeu (latence minimale)", '', Settings.GameMode);
             game.CheckedChanged += (s, e) =>
             {
                 if (Settings.GameMode == game.Checked) return; // changed from the TV remote: already applied
@@ -154,7 +218,7 @@ namespace TVScreenPlus
             // The TV remote (up / down) can switch the mode too: keep the tick in sync.
             Settings.GameModeChanged += () => ui.Post(_ => game.Checked = Settings.GameMode, null);
             menu.Items.Add(game);
-            var encoder = new ToolStripMenuItem("Encodeur vidéo");
+            var encoder = Submenu("Encodeur vidéo", '');
             foreach (var (label, v) in new[] { ("TVScreenPlus (latence minimale, 60 i/s)", true), ("ffmpeg (version 1.0, secours)", false) })
                 encoder.DropDownItems.Add(Radio(label, () => Settings.NativeEncoder == v, () =>
                 {
@@ -164,31 +228,39 @@ namespace TVScreenPlus
                     if (server != null && server.Busy) Task.Run(RestartConnection); // applied by reconnecting
                 }));
             menu.Items.Add(encoder);
-            menu.Items.Add(new ToolStripSeparator());
-            var sound = new ToolStripMenuItem("Son sur la TV") { Checked = Settings.Audio, CheckOnClick = true };
+
+            menu.Items.Add(Section("SON ET MANETTES"));
+            var sound = Switch("Son sur la TV", '', Settings.Audio);
             sound.CheckedChanged += (s, e) => { Settings.Audio = sound.Checked; server?.SetAudio(sound.Checked); };
             menu.Items.Add(sound);
-            var mute = new ToolStripMenuItem("Couper le son du PC pendant la diffusion") { Checked = Settings.MutePc, CheckOnClick = true };
+            var mute = Switch("Couper le son du PC pendant la diffusion", '', Settings.MutePc);
             mute.CheckedChanged += (s, e) => Settings.MutePc = mute.Checked;
             menu.Items.Add(mute);
-            var pads = new ToolStripMenuItem("Manettes de la TV (à la prochaine connexion)") { Checked = Settings.Pads, CheckOnClick = true };
+            var pads = Switch("Manettes de la TV (à la prochaine connexion)", '', Settings.Pads);
             pads.CheckedChanged += (s, e) => Settings.Pads = pads.Checked;
             menu.Items.Add(pads);
-            menu.Items.Add(new ToolStripSeparator());
 
-            var auto = new ToolStripMenuItem("Lancer au démarrage de Windows") { Checked = Settings.AutoStart, CheckOnClick = true };
+            menu.Items.Add(Section("APPLICATION"));
+            var auto = Switch("Lancer au démarrage de Windows", '', Settings.AutoStart);
             auto.CheckedChanged += (s, e) => { Settings.AutoStart = auto.Checked; Setup.SetAutoStart(auto.Checked); };
             menu.Items.Add(auto);
-            var upd = new ToolStripMenuItem("Mises à jour automatiques") { Checked = Settings.AutoUpdate, CheckOnClick = true };
+            var upd = Switch("Mises à jour automatiques", '', Settings.AutoUpdate);
             upd.CheckedChanged += (s, e) => Settings.AutoUpdate = upd.Checked;
             menu.Items.Add(upd);
-            menu.Items.Add("Rechercher une mise à jour", null, (s, e) => Task.Run(() => CheckUpdate(true)));
-            menu.Items.Add("Recalibrer (nouveau matériel)", null, (s, e) => { Settings.ResetCalibration(); Notify("TVScreenPlus", "Le calibrage sera refait à la prochaine connexion."); });
-            menu.Items.Add("Mode debug (statistiques en direct)", null, (s, e) => DebugWindow.Toggle(() => server));
-            menu.Items.Add("Ouvrir le journal", null, (s, e) => Process.Start("notepad.exe", Log.FilePath));
-            menu.Items.Add(new ToolStripMenuItem("Version " + Program.DisplayVersion) { Enabled = false });
+            menu.Items.Add(Item("Rechercher une mise à jour", '', () => Task.Run(() => CheckUpdate(true))));
+            menu.Items.Add(Item("Recalibrer (nouveau matériel)", '', () => { Settings.ResetCalibration(); Notify("TVScreenPlus", "Le calibrage sera refait à la prochaine connexion."); }));
+            menu.Items.Add(Item("Oublier les TV autorisées", '', () =>
+            {
+                if (MessageBox.Show($"Oublier les {Pairing.Count} TV autorisées ? Chacune devra être acceptée à nouveau sur ce PC.",
+                                    "TVScreenPlus", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                Pairing.ForgetAll();
+                Log.W("Paired TVs forgotten");
+                Task.Run(RestartConnection); // the connected TV, if any, must pair again too
+            }));
+            menu.Items.Add(Item("Mode debug (statistiques en direct)", '', () => DebugWindow.Toggle(() => server)));
+            menu.Items.Add(Item("Ouvrir le journal", '', () => Process.Start("notepad.exe", Log.FilePath)));
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Quitter", null, (s, e) => Quit());
+            menu.Items.Add(Item("Quitter", '', Quit));
 
             icon = new NotifyIcon { Icon = MakeIcon(), Text = "TVScreenPlus", ContextMenuStrip = menu, Visible = true };
             // A newer copy being installed asks us to quit.
@@ -236,9 +308,41 @@ namespace TVScreenPlus
             finally { Interlocked.Exchange(ref updating, 0); }
         }
 
+        static readonly Padding ItemPadding = new Padding(0, 4, 0, 4);
+
+        static ToolStripMenuItem Item(string text, char glyph, Action onClick)
+        {
+            var it = new ToolStripMenuItem(text, Theme.Glyph(glyph, Theme.AccentLight)) { Padding = ItemPadding };
+            it.Click += (s, e) => onClick();
+            return it;
+        }
+
+        /// <summary>On/off setting, drawn with a switch on the right (the spaces reserve its room).</summary>
+        static ToolStripMenuItem Switch(string text, char glyph, bool on) =>
+            new ToolStripMenuItem(text, Theme.Glyph(glyph, Theme.AccentLight))
+            {
+                Checked = on, CheckOnClick = true, Tag = Theme.Toggle, Padding = ItemPadding,
+                ShortcutKeyDisplayString = new string(' ', 10), ShowShortcutKeys = true,
+            };
+
+        static ToolStripMenuItem Submenu(string text, char glyph)
+        {
+            var it = new ToolStripMenuItem(text, Theme.Glyph(glyph, Theme.AccentLight)) { Padding = ItemPadding };
+            var dd = (ToolStripDropDownMenu)it.DropDown;
+            dd.ShowImageMargin = false; dd.ShowCheckMargin = true;
+            dd.Font = new Font("Segoe UI", 9.75f);
+            dd.Opened += (s, e) => Theme.Window(dd.Handle, false);
+            return it;
+        }
+
+        static ToolStripMenuItem Section(string title) => new ToolStripMenuItem(title)
+        {
+            Enabled = false, ForeColor = Theme.Accent, Font = new Font("Segoe UI Semibold", 8.25f), Padding = new Padding(0, 8, 0, 0),
+        };
+
         static ToolStripMenuItem Radio(string label, Func<bool> isOn, Action set)
         {
-            var it = new ToolStripMenuItem(label) { Tag = isOn, Checked = isOn() };
+            var it = new ToolStripMenuItem(label) { Tag = isOn, Checked = isOn(), Padding = ItemPadding };
             it.Click += (s, e) =>
             {
                 set();
@@ -258,7 +362,7 @@ namespace TVScreenPlus
                 Installer.Register();
                 if (!File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "TVScreenPlus.lnk"))) Installer.Shortcut();
                 Task.Delay(15000).ContinueWith(_ => Installer.CleanupTemp());
-                server = new Server(SetStatus, Notify);
+                server = new Server(SetStatus, Notify, ApproveTv);
                 server.Start();
                 SetStatus("Prêt – en attente d'une TV (" + Environment.MachineName + ")");
             }
@@ -300,6 +404,25 @@ namespace TVScreenPlus
 
         public void Notify(string title, string text) => ui.Post(_ => icon.ShowBalloonTip(3000, title, text, ToolTipIcon.Info), null);
 
+        readonly SemaphoreSlim pairing = new SemaphoreSlim(1, 1);
+
+        /// <summary>
+        /// Session thread: asks the person at the PC whether a new TV may show this PC's screen. One request at a
+        /// time, "no" after 60 s without an answer.
+        /// </summary>
+        bool ApproveTv(string tv, string ip, string code)
+        {
+            if (!pairing.Wait(0)) return false;
+            try
+            {
+                var answer = new TaskCompletionSource<bool>();
+                ui.Post(_ => PairDialog.Ask(tv, ip, code, answer), null);
+                Notify("TVScreenPlus", $"Nouvelle TV : « {tv} » demande l'accès à ce PC.");
+                return answer.Task.Wait(TimeSpan.FromSeconds(65)) && answer.Task.Result;
+            }
+            finally { pairing.Release(); }
+        }
+
         void Quit()
         {
             try { server?.Stop(); } catch { }
@@ -324,32 +447,22 @@ namespace TVScreenPlus
         }
     }
 
-    /// <summary>First-run setup: ffmpeg, virtual display driver, firewall, autostart.</summary>
+    /// <summary>
+    /// First-run setup: virtual display driver, firewall, autostart. ffmpeg, the driver and the gamepad driver setup
+    /// come in TVScreenPlus-PC.zip (installed in Program Files, writable by administrators only): nothing is
+    /// downloaded and run unchecked.
+    /// </summary>
     static class Setup
     {
-        public static string FFmpeg => Path.Combine(Program.Dir, "ffmpeg.exe") is var p && File.Exists(p) ? p : Path.Combine(Program.DataDir, "ffmpeg.exe");
-        const string FFmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
-        const string DriverUrl = "https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/VirtualDisplayDriver-x86.Driver.Only.zip";
+        public static string FFmpeg => Path.Combine(Program.Dir, "ffmpeg.exe");
 
         public static void EnsureAll()
         {
-            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-            if (!File.Exists(FFmpeg))
-            {
-                Log.W("Downloading ffmpeg");
-                DownloadExtract(FFmpegUrl, e => e.Name.Equals("ffmpeg.exe", StringComparison.OrdinalIgnoreCase), Program.DataDir);
-            }
+            RemoveOldDownloads();
+            if (!File.Exists(FFmpeg)) Log.W("ffmpeg.exe missing: only the in-house encoder is available");
             if (!VirtualDisplay.IsInstalled())
             {
-                string inf = FindInf(Program.Dir) ?? FindInf(Program.DataDir);
-                if (inf == null)
-                {
-                    Log.W("Downloading virtual display driver");
-                    DownloadExtract(DriverUrl, e => e.Name.Length > 0,
-                        Path.Combine(Program.DataDir, "driver"));
-                    inf = FindInf(Program.DataDir);
-                }
-                if (inf == null) throw new Exception("Pilote d'écran virtuel introuvable");
+                string inf = FindInf(Program.Dir) ?? throw new Exception("Pilote d'écran virtuel introuvable : réinstallez TVScreenPlus depuis TVScreenPlus-PC.zip");
                 VirtualDisplay.Install(inf);
             }
             Firewall();
@@ -358,32 +471,26 @@ namespace TVScreenPlus
 
         static string FindInf(string root)
         {
-            try { return Directory.GetFiles(root, "MttVDD.inf", SearchOption.AllDirectories).FirstOrDefault(); } catch { return null; }
+            try { return Directory.GetFiles(Path.Combine(root, "driver"), "MttVDD.inf").FirstOrDefault(); } catch { return null; }
         }
 
-        static void DownloadExtract(string url, Func<ZipArchiveEntry, bool> filter, string dest)
+        /// <summary>Versions before 1.2 could download ffmpeg / drivers into the data folder: never run those copies.</summary>
+        static void RemoveOldDownloads()
         {
-            Directory.CreateDirectory(dest);
-            string tmp = Path.Combine(Path.GetTempPath(), "tvsp_" + Guid.NewGuid().ToString("N") + ".zip");
-            try
-            {
-                using (var wc = new WebClient()) wc.DownloadFile(url, tmp);
-                using (var z = ZipFile.OpenRead(tmp))
-                    foreach (var e in z.Entries.Where(filter))
-                        e.ExtractToFile(Path.Combine(dest, e.Name), true);
-            }
-            finally { try { File.Delete(tmp); } catch { } }
+            foreach (var f in new[] { "ffmpeg.exe", GamepadDriver.SetupName }) try { File.Delete(Path.Combine(Program.DataDir, f)); } catch { }
+            try { Directory.Delete(Path.Combine(Program.DataDir, "driver"), true); } catch { }
         }
 
+        /// <summary>Only our two ports, only for this program, only from the local subnet (whatever the network profile).</summary>
         static void Firewall()
         {
-            if (Settings.Get("fw", "") == Program.Dir) return;
+            string version = Program.Dir + "|2";
+            if (Settings.Get("fw", "") == version) return;
             string exe = Process.GetCurrentProcess().MainModule.FileName;
             Run("netsh", "advfirewall firewall delete rule name=TVScreenPlus");
-            Run("netsh", $"advfirewall firewall add rule name=TVScreenPlus dir=in action=allow program=\"{exe}\" enable=yes profile=any");
-            Run("netsh", "advfirewall firewall add rule name=TVScreenPlus dir=in action=allow protocol=UDP localport=" + Server.UdpPort + " profile=any");
-            Run("netsh", "advfirewall firewall add rule name=TVScreenPlus dir=in action=allow protocol=TCP localport=" + Server.TcpPort + " profile=any");
-            Settings.Set("fw", Program.Dir);
+            foreach (var (proto, port) in new[] { ("UDP", Server.UdpPort), ("TCP", Server.TcpPort) })
+                Run("netsh", $"advfirewall firewall add rule name=TVScreenPlus dir=in action=allow program=\"{exe}\" protocol={proto} localport={port} remoteip=localsubnet profile=any");
+            Settings.Set("fw", version);
         }
 
         public static void SetAutoStart(bool on)

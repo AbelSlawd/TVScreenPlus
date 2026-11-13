@@ -3,7 +3,9 @@ package com.tvscreenplus
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaFormat
 import android.net.ConnectivityManager
@@ -26,6 +28,7 @@ import android.widget.ImageView
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -58,6 +61,7 @@ class MainActivity : Activity() {
     private val cursorTick = Runnable { cursorPending.set(false); applyCursor() }
     // Main page widgets (rebuilt when the language changes).
     private var status: TextView? = null
+    private var spinner: ProgressBar? = null
     private var list: LinearLayout? = null
     private var updateButton: Button? = null
     private var inSettings = false
@@ -69,6 +73,7 @@ class MainActivity : Activity() {
     @Volatile private var discovering = false
     private var wifiLock: WifiManager.WifiLock? = null
     private val prefs by lazy { getSharedPreferences("tvsp", Context.MODE_PRIVATE) }
+    private val pairing by lazy { Pairing(prefs) }
     private var release: Updater.Release? = null
     private var lastUpdateCheck = 0L
     @Volatile private var testing = false
@@ -93,12 +98,13 @@ class MainActivity : Activity() {
         root.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
         cursorView = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_XY; visibility = View.GONE }
         root.addView(cursorView, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
-        overlay = FrameLayout(this).apply { setBackgroundColor(BG) }
+        overlay = FrameLayout(this).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(BG_TOP, BG_BOTTOM)) }
         root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
         // Live statistics, toggled with OK / Menu while streaming.
         stats = TextView(this).apply {
-            textSize = 15f; setTextColor(Color.WHITE); setBackgroundColor(Color.argb(170, 0, 0, 0))
-            setPadding(dp(14), dp(10), dp(14), dp(10)); visibility = View.GONE
+            textSize = 14f; setTextColor(Color.WHITE); typeface = Typeface.MONOSPACE; setLineSpacing(0f, 1.15f)
+            background = rounded(Color.argb(180, 8, 16, 28), 14)
+            setPadding(dp(18), dp(14), dp(18), dp(14)); visibility = View.GONE
         }
         root.addView(stats, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(24), dp(24), 0, 0) })
         setContentView(root)
@@ -118,16 +124,24 @@ class MainActivity : Activity() {
         Updater.onStatus(this, i)?.let { setStatus(it) }
     }
 
-    private fun setStatus(s: String) { status?.text = s }
+    /** [busy] shows the spinner next to the status (searching, connecting, downloading). */
+    private fun setStatus(s: String, busy: Boolean = false) {
+        status?.text = s
+        spinner?.visibility = if (busy) View.VISIBLE else View.GONE
+    }
 
     // ---------------- pages ----------------
-    /** Header: title + version on the left, gear on the right. */
+    /** Header: logo, title and version chip on the left, gear on the right. */
     private fun header(page: LinearLayout, title: String, gear: Boolean) {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        row.addView(TextView(this).apply { text = title; textSize = 30f; setTextColor(Color.WHITE) })
+        row.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher) },
+            LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginEnd = dp(18) })
+        row.addView(TextView(this).apply { text = title; textSize = 30f; setTextColor(Color.WHITE); typeface = MEDIUM })
         row.addView(TextView(this).apply {
-            text = "  v$versionName"; textSize = 16f; setTextColor(Color.rgb(144, 202, 249))
-        }, LinearLayout.LayoutParams(0, -2, 1f))
+            text = "v$versionName"; textSize = 13f; setTextColor(ACCENT)
+            background = rounded(CARD, 12); setPadding(dp(10), dp(3), dp(10), dp(3))
+        }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(14) })
+        row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         if (gear) row.addView(button("⚙  " + L.t("settings"), wide = false) { showSettings() })
         else row.addView(button("←  " + L.t("back"), wide = false) { showMain() })
         page.addView(row, LinearLayout.LayoutParams(-1, -2))
@@ -140,6 +154,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(48), dp(32), dp(48), dp(24))
+            alpha = 0f; animate().alpha(1f).setDuration(200).start()
         }
         scroll.addView(p)
         overlay.addView(scroll, FrameLayout.LayoutParams(-1, -1))
@@ -150,59 +165,80 @@ class MainActivity : Activity() {
         inSettings = false
         val p = page()
         header(p, "TVScreenPlus", gear = true)
-        status = text(L.t("searching"), 18f, Color.rgb(144, 202, 249)).also { p.addView(it) }
+        val statusRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(28), 0, dp(8)) }
+        spinner = ProgressBar(this).apply { isIndeterminate = true; indeterminateTintList = ColorStateList.valueOf(ACCENT); visibility = View.GONE }
+        statusRow.addView(spinner, LinearLayout.LayoutParams(dp(26), dp(26)).apply { marginEnd = dp(12) })
+        status = text("", 20f, ACCENT).also { statusRow.addView(it) }
+        p.addView(statusRow)
         updateButton = button(release?.let { L.t("update_to", it.name) } ?: "") { startUpdate() }.apply {
             visibility = if (release != null && release!!.code > versionCode) View.VISIBLE else View.GONE
         }
-        p.addView(updateButton, LinearLayout.LayoutParams(dp(560), -2))
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(16), 0, dp(16)) }
-        p.addView(list, LinearLayout.LayoutParams(dp(560), -2))
+        p.addView(updateButton, LinearLayout.LayoutParams(dp(640), -2))
+        // Side padding: room for the focus zoom of a card (it would be cut at the list's edges), cards stay 640 dp wide.
+        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(16)); clipToPadding = false }
+        p.addView(list, LinearLayout.LayoutParams(dp(672), -2))
 
-        val manual = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        val manual = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val field = rounded(CARD, 12)
         val ipField = EditText(this).apply {
-            hint = L.t("ip_hint"); setSingleLine(); setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
+            hint = L.t("ip_hint"); setSingleLine(); textSize = 18f; setTextColor(Color.WHITE); setHintTextColor(MUTED)
+            background = field; setPadding(dp(20), dp(14), dp(20), dp(14))
+            setOnFocusChangeListener { _, f -> field.setStroke(dp(2), if (f) ACCENT else Color.TRANSPARENT) }
             setText(prefs.getString("manual", ""))
         }
-        manual.addView(ipField, LinearLayout.LayoutParams(dp(320), -2))
+        manual.addView(ipField, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(8) })
         manual.addView(button(L.t("connect"), wide = false) {
             val ip = ipField.text.toString().trim()
             if (ip.isNotEmpty()) { prefs.edit().putString("manual", ip).apply(); autoConnect = true; connect(ip, ip) }
         })
-        p.addView(manual)
-        p.addView(text(L.t("help"), 14f, Color.GRAY))
+        p.addView(manual, LinearLayout.LayoutParams(dp(640), -2))
+        p.addView(text(L.t("help"), 15f, MUTED).apply {
+            background = rounded(Color.argb(24, 255, 255, 255), 14); setPadding(dp(24), dp(16), dp(24), dp(16)); setLineSpacing(0f, 1.2f)
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(36) })
         refreshList()
     }
 
     private fun showSettings() {
         inSettings = true
-        status = null; list = null; updateButton = null
+        status = null; spinner = null; list = null; updateButton = null
         val p = page()
         header(p, L.t("settings"), gear = false)
         val w = dp(720)
 
-        fun section(title: String) = p.addView(text(title, 15f, Color.rgb(144, 202, 249)).apply { gravity = Gravity.START; setPadding(dp(4), dp(18), 0, dp(2)) }, LinearLayout.LayoutParams(w, -2))
-        fun note(s: String) = text(s, 14f, Color.LTGRAY).apply { gravity = Gravity.START; setPadding(dp(4), 0, 0, dp(4)) }.also { p.addView(it, LinearLayout.LayoutParams(w, -2)) }
-        /** A button that cycles through options; label shows "Setting : value". */
+        fun section(title: String) = p.addView(text(title.uppercase(), 13f, ACCENT).apply {
+            gravity = Gravity.START; typeface = MEDIUM; letterSpacing = 0.12f; setPadding(dp(8), dp(26), 0, dp(4))
+        }, LinearLayout.LayoutParams(w, -2))
+        fun note(s: String) = text(s, 14f, MUTED).apply { gravity = Gravity.START; setPadding(dp(8), dp(2), 0, dp(4)) }.also { p.addView(it, LinearLayout.LayoutParams(w, -2)) }
+        /** A setting row: label on the left, current value on the right; OK changes it. */
+        fun row(label: String, value: String, onClick: (TextView) -> Unit) {
+            val v = TextView(this).apply { text = value; textSize = 18f; setTextColor(onFocus(ACCENT)); isDuplicateParentStateEnabled = true; typeface = MEDIUM }
+            val r = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(22), dp(16), dp(22), dp(16))
+                focusStyle(this)
+                setOnClickListener { onClick(v) }
+            }
+            r.addView(TextView(this).apply { text = label; textSize = 18f; setTextColor(Color.WHITE) }, LinearLayout.LayoutParams(0, -2, 1f))
+            r.addView(v)
+            p.addView(r, LinearLayout.LayoutParams(w, -2).apply { setMargins(dp(4), dp(5), dp(4), dp(5)) })
+        }
+        /** Cycles through options. */
         fun choice(label: String, values: List<String>, names: List<String>, key: String, def: String, onChange: (String) -> Unit = {}) {
             var cur = values.indexOf(prefs.getString(key, def)).coerceAtLeast(0)
-            val b = button("$label :  ${names[cur]}") {}
-            b.setOnClickListener {
+            row(label, names[cur]) {
                 cur = (cur + 1) % values.size
                 prefs.edit().putString(key, values[cur]).apply()
-                b.text = "$label :  ${names[cur]}"
+                it.text = names[cur]
                 onChange(values[cur])
             }
-            p.addView(b, LinearLayout.LayoutParams(w, -2))
         }
         fun toggle(label: String, key: String, def: Boolean, onChange: (Boolean) -> Unit = {}) {
-            fun lbl(v: Boolean) = "$label :  ${L.t(if (v) "on" else "off")}"
-            val b = button(lbl(prefs.getBoolean(key, def))) {}
-            b.setOnClickListener {
+            fun lbl(v: Boolean) = L.t(if (v) "on" else "off")
+            row(label, lbl(prefs.getBoolean(key, def))) {
                 val v = !prefs.getBoolean(key, def)
                 prefs.edit().putBoolean(key, v).apply()
-                b.text = lbl(v); onChange(v)
+                it.text = lbl(v); onChange(v)
             }
-            p.addView(b, LinearLayout.LayoutParams(w, -2))
         }
 
         section(L.t("lang"))
@@ -270,6 +306,7 @@ class MainActivity : Activity() {
         section(L.t("about"))
         p.addView(button(L.t("forget")) {
             prefs.edit().remove("last").remove("manual").apply()
+            pairing.forgetAll() // each PC will ask to accept this TV again
             pcs.clear()
             note(L.t("forgotten"))
         }, LinearLayout.LayoutParams(w, -2))
@@ -307,10 +344,10 @@ class MainActivity : Activity() {
         val r = release ?: return
         disconnect(null)
         autoConnect = false
-        setStatus(L.t("dl_update", 0))
+        setStatus(L.t("dl_update", 0), busy = true)
         Thread({
             try {
-                Updater.install(this, r) { p -> ui.post { setStatus(L.t("dl_update", p)) } }
+                Updater.install(this, r) { p -> ui.post { setStatus(L.t("dl_update", p), busy = true) } }
             } catch (e: Exception) {
                 ui.post { setStatus(L.t("update_failed", e.message ?: "?")) }
             }
@@ -400,7 +437,9 @@ class MainActivity : Activity() {
 
     private fun found(ip: String, name: String, busy: Boolean) {
         val pc = pcs[ip]
-        if (pc == null) pcs[ip] = Pc(ip, name, busy, System.currentTimeMillis()).also { refreshList() }
+        // Add first, then redraw: `.also { refreshList() }` ran before the assignment and drew an empty list,
+        // which stayed empty until the PC's state changed (PC "not found" after Back, 13/11).
+        if (pc == null) { pcs[ip] = Pc(ip, name, busy, System.currentTimeMillis()); refreshList() }
         else { pc.seen = System.currentTimeMillis(); if (pc.busy != busy || pc.name != name) { pc.busy = busy; pc.name = name; refreshList() } }
         tryAutoConnect()
     }
@@ -412,10 +451,32 @@ class MainActivity : Activity() {
 
     private fun refreshList() {
         val l = list ?: return
+        // Keep the focus in the list across the rebuild (removing the focused card sends it to the gear);
+        // the first PC found takes it from anywhere, so OK connects at once.
+        val focusList = l.childCount == 0 || l.findFocus() != null || currentFocus == null
         l.removeAllViews()
-        for (pc in pcs.values) l.addView(button("${pc.name}   (${pc.ip})${if (pc.busy) "  – " + L.t("busy") else ""}") { autoConnect = true; connect(pc.ip, pc.name) })
-        if (client == null) setStatus(L.t(if (pcs.isEmpty()) "searching" else "choose"))
-        if (currentFocus == null || currentFocus?.parent === l) l.getChildAt(0)?.requestFocus()
+        for (pc in pcs.values) l.addView(pcCard(pc))
+        if (client == null) setStatus(L.t(if (pcs.isEmpty()) "searching" else "choose"), busy = pcs.isEmpty())
+        if (focusList) l.getChildAt(0)?.requestFocus()
+    }
+
+    /** A found PC: screen icon, name, IP below, "busy" badge on the right. */
+    private fun pcCard(pc: Pc) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(22), dp(14), dp(22), dp(14))
+        focusStyle(this)
+        setOnClickListener { autoConnect = true; connect(pc.ip, pc.name) }
+        addView(ImageView(context).apply { setImageResource(R.drawable.ic_pc) }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(18) })
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL; isDuplicateParentStateEnabled = true
+            addView(TextView(context).apply { text = pc.name; textSize = 22f; setTextColor(Color.WHITE); typeface = MEDIUM })
+            addView(TextView(context).apply { text = pc.ip; textSize = 14f; setTextColor(onFocus(MUTED)); isDuplicateParentStateEnabled = true })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        if (pc.busy) addView(TextView(context).apply {
+            text = L.t("busy"); textSize = 14f; setTextColor(Color.WHITE); typeface = MEDIUM
+            background = rounded(Color.rgb(230, 126, 34), 12); setPadding(dp(12), dp(4), dp(12), dp(4))
+        })
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), dp(6), dp(4), dp(6)) }
     }
 
     /** Plug & play: reconnect to the last PC, or to the only PC found. */
@@ -434,7 +495,7 @@ class MainActivity : Activity() {
         val hevc = if (tested) prefs.getInt("hw_hevc", 0) else Codecs.declaredMaxHeight(MediaFormat.MIMETYPE_VIDEO_HEVC)
         val avc = if (tested) prefs.getInt("hw_avc", 0) else Codecs.declaredMaxHeight(MediaFormat.MIMETYPE_VIDEO_AVC)
         val (net, band, link) = network()
-        return "TVSP1;v=2;app=$versionCode;lang=${L.lang};name=${Build.MODEL.replace(';', ' ')};w=$w;h=$h;hz=${refreshHz()}" +
+        return "TVSP1;v=2;auth=1;id=${pairing.tvId};app=$versionCode;lang=${L.lang};name=${Build.MODEL.replace(';', ' ')};w=$w;h=$h;hz=${refreshHz()}" +
             ";hevc=$hevc;avc=$avc;tested=${if (tested) 1 else 0};lat=${prefs.getInt("hw_lat", -1)}" +
             ";net=$net;band=$band;link=$link;pref=${prefs.getString("pref", "auto")};maxh=${prefs.getString("maxh", "0")}" +
             ";audio=${if (prefs.getBoolean("audio", true)) 1 else 0};pads=${if (prefs.getBoolean("pads", true)) 1 else 0}"
@@ -466,12 +527,12 @@ class MainActivity : Activity() {
         if (!surfaceReady || testing) return
         if (inSettings) showMain()
         disconnect(null)
-        setStatus(L.t("connecting", name))
+        setStatus(L.t("connecting", name), busy = true)
         val hz = refreshHz()
         lateinit var c: StreamClient
         c = StreamClient(ip, hello(), diagnostics(), surfaceView.holder.surface, object : StreamClient.Listener {
             override fun onStatus(text: String) {
-                ui.post { if (client === c && overlay.visibility == View.VISIBLE) setStatus("$name : $text") }
+                ui.post { if (client === c && overlay.visibility == View.VISIBLE) setStatus("$name : $text", busy = true) }
             }
 
             override fun onStarted(info: String) {
@@ -513,15 +574,16 @@ class MainActivity : Activity() {
                     stopGamepads()
                     releaseWifiLock()
                     stats.visibility = View.GONE
-                    overlay.visibility = View.VISIBLE
+                    showOverlay()
                     setStatus(if (error != null) L.t("disconnected_err", error) else L.t("disconnected"))
                     list?.getChildAt(0)?.requestFocus()
                     // Stuck stream (no image for 6 s): reconnect to the same PC at once, whatever the settings.
                     if (c.stalled) ui.postDelayed({ if (client == null && !inSettings) connect(ip, name) }, 1500)
+                    else if (c.refused) autoConnect = false // refused on the PC: wait until a PC is chosen again
                     else if (autoConnect) ui.postDelayed({ tryAutoConnect() }, 2000)
                 }
             }
-        })
+        }, pairing)
         c.userOffsetMs = prefs.getInt("av_offset", 0)
         client = c
         c.start()
@@ -534,7 +596,7 @@ class MainActivity : Activity() {
         c.stop()
         releaseWifiLock()
         stats.visibility = View.GONE
-        overlay.visibility = View.VISIBLE
+        showOverlay()
         setStatus(reason ?: L.t("disconnected"))
     }
 
@@ -685,22 +747,45 @@ class MainActivity : Activity() {
     }
 
     private fun button(label: String, wide: Boolean = true, onClick: () -> Unit) = Button(this).apply {
-        text = label; isAllCaps = false; textSize = 18f; setTextColor(Color.WHITE)
-        isFocusable = true
+        text = label; isAllCaps = false; textSize = 18f; setTextColor(Color.WHITE); typeface = MEDIUM
         gravity = if (wide) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.CENTER
-        setPadding(dp(20), dp(10), dp(20), dp(10))
-        background = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(BTN) }
-        setOnFocusChangeListener { v, f ->
-            (v.background as GradientDrawable).setColor(if (f) BTN_FOCUS else BTN)
-            v.scaleX = if (f) 1.03f else 1f; v.scaleY = v.scaleX
-        }
+        setPadding(dp(22), dp(12), dp(22), dp(12))
+        stateListAnimator = null // the platform press "lift" fights the focus animation
+        focusStyle(this)
         setOnClickListener { onClick() }
         layoutParams = LinearLayout.LayoutParams(if (wide) -1 else -2, -2).apply { setMargins(dp(4), dp(6), dp(4), dp(6)) }
     }
 
+    private fun rounded(color: Int, radiusDp: Int) = GradientDrawable().apply { cornerRadius = dp(radiusDp).toFloat(); setColor(color) }
+
+    /** Card look for anything focusable with the remote: accent fill, light outline, shadow and slight zoom when focused. */
+    private fun focusStyle(v: View) {
+        val d = rounded(CARD, 14).apply { setStroke(dp(2), Color.TRANSPARENT) }
+        v.background = d
+        v.isFocusable = true
+        v.setOnFocusChangeListener { _, f ->
+            d.setColor(if (f) FOCUS else CARD)
+            d.setStroke(dp(2), if (f) Color.argb(220, 255, 255, 255) else Color.TRANSPARENT)
+            v.elevation = if (f) dp(10).toFloat() else 0f
+            v.animate().scaleX(if (f) 1.03f else 1f).scaleY(if (f) 1.03f else 1f).setDuration(140).start()
+        }
+    }
+
+    /** Text colour that turns white while its card (parent) has the focus, for contrast on the accent fill. */
+    private fun onFocus(color: Int) = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf()), intArrayOf(Color.WHITE, color))
+
+    private fun showOverlay() {
+        if (overlay.visibility != View.VISIBLE) { overlay.alpha = 0f; overlay.animate().alpha(1f).setDuration(250).start() }
+        overlay.visibility = View.VISIBLE
+    }
+
     companion object {
-        private val BG = Color.rgb(13, 27, 42)
-        private val BTN = Color.rgb(30, 60, 90)
-        private val BTN_FOCUS = Color.rgb(30, 136, 229)
+        private val BG_TOP = Color.rgb(18, 38, 62)
+        private val BG_BOTTOM = Color.rgb(7, 14, 24)
+        private val CARD = Color.rgb(28, 52, 80)
+        private val FOCUS = Color.rgb(30, 136, 229)
+        private val ACCENT = Color.rgb(144, 202, 249)
+        private val MUTED = Color.rgb(150, 168, 190)
+        private val MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
     }
 }

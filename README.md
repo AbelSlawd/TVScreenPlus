@@ -77,7 +77,8 @@ The app is not on the Play Store: you need to install the APK file.
 2. Open **TVScreenPlus** on the TV: the PCs on the network are listed.
    - If there is only one PC, or if it is the last one used, the connection is **automatic**.
    - Otherwise, pick the PC with the remote.
-3. The first connection takes a few extra seconds (calibration). The new display then appears in Windows.
+3. **First connection of a TV**: the TV shows a 6-digit code and the PC opens a *"new TV"* window with the same code. Click **Allow** if both codes match (without an answer the request is refused after 60 s). From then on, this TV connects by itself.
+4. The first connection takes a few extra seconds (calibration). The new display then appears in Windows.
 
 **Remote control while streaming**
 | Key | Action |
@@ -89,7 +90,7 @@ The app is not on the Play Store: you need to install the APK file.
 
 **Gamepad** buttons do not control the TV while streaming: they go to the PC (the B button does not disconnect). The remote always keeps its keys.
 
-**PC tray icon menu** (right-click): *Restart the connection*, resolution, quality, **game mode**, **video encoder** (TVScreenPlus / ffmpeg), **sound on the TV**, **mute PC sound while streaming**, **TV gamepads**, start with Windows, updates, recalibration, **debug mode**, log.
+**PC tray icon menu** (right-click): *Restart the connection*, resolution, quality, **game mode**, **video encoder** (TVScreenPlus / ffmpeg), **sound on the TV**, **mute PC sound while streaming**, **TV gamepads**, start with Windows, updates, recalibration, **forget the allowed TVs**, **debug mode**, log.
 
 ### Fluid mode or game mode (PC)
 With the **TVScreenPlus encoder** (the default), both modes keep a **steady 60 frames/s** and neither holds back any frame: the roughly 30 ms of pipelining of the old ffmpeg encoder is gone. The difference lies in the sound and in the encoder setting:
@@ -224,7 +225,13 @@ Windows PC                                                       Google TV
 | Sound | WASAPI *loopback* capture of Windows' default output, converted to 16-bit stereo PCM (surround channels downmixed, 96/192 kHz brought down to 48/44.1 kHz) and sent uncompressed in 10 to 20 ms packets in the same connection as the picture. On the TV: AudioTrack in *low-latency* mode (Android 8+), adaptive buffer (about 30 ms at start), late sound is discarded rather than played late |
 | Gamepads | The TV sends the state of each gamepad (buttons, sticks, triggers, D-pad) at every change. The PC creates one virtual Xbox 360 controller per gamepad with the [ViGEmBus](https://github.com/nefarius/ViGEmBus) driver, driven directly (no DLL). Rumble requested by the game is sent back to the TV |
 
-**Network ports**: UDP 47801 (discovery), TCP 47800 (stream). The firewall rule is added automatically.
+**Network ports**: UDP 47801 (discovery), TCP 47800 (stream). The firewall rule is added automatically, limited to these two ports and the local network.
+
+**Security**
+- Only TVs accepted on the PC receive its screen. Pairing uses an ECDH P-256 key exchange: the TV and the PC show the same 6-digit code, which a device in the middle cannot reproduce. On every connection the TV then proves it holds the key (HMAC-SHA256 of a random challenge). *Forget the allowed TVs* (PC) or *Forget saved computers* (TV) cancels the pairings.
+- The PC only answers local network addresses (private or link-local). A new TV never interrupts the current stream before it is authenticated.
+- The video stream is not encrypted (TV performance, latency): pairing keeps other devices from connecting, not a local network eavesdropper.
+- Updates only come from the project's GitHub releases; the TV APK must also be signed with the same key. On the PC nothing is downloaded and run outside updates: ffmpeg, the display driver and the gamepad driver are in the zip. `C:\ProgramData\TVScreenPlus` can only be modified by administrators, and `settings.txt` (pairing keys) can only be read by them.
 
 <details>
 <summary>Protocol</summary>
@@ -251,7 +258,7 @@ dotnet build windows/TVScreenPlus -c Release
 # TV app
 cd android && ./gradlew assembleRelease
 ```
-Without `ffmpeg.exe` or the driver next to the program, they are downloaded on first launch.
+The program downloads nothing at startup: put the files of the published zip (`ffmpeg.exe`, `ViGEmBus_setup.exe`, `driver` folder) next to `TVScreenPlus.exe`, as the CI does (`.github/workflows/build.yml`).
 
 **Local benchmark**: `TVScreenPlus.exe --bench-encoder [seconds] [adapter/output] [kbps]` measures the in-house encoder pipeline without a TV (fps held, capture → encoded packet latency).
 

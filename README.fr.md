@@ -77,7 +77,8 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 2. Ouvrez **TVScreenPlus** sur la TV : les PC du réseau s'affichent.
    - S'il n'y a qu'un PC, ou si c'est le dernier utilisé, la connexion est **automatique**.
    - Sinon, choisissez le PC avec la télécommande.
-3. La première connexion prend quelques secondes de plus (calibrage). Le nouvel écran apparaît ensuite dans Windows.
+3. **Première connexion d'une TV** : la TV affiche un code à 6 chiffres et le PC ouvre une fenêtre *« nouvelle TV »* avec le même code. Cliquez **Autoriser** si les deux codes sont identiques (sans réponse, la demande est refusée au bout de 60 s). Ensuite, cette TV se connecte toute seule.
+4. La première connexion prend quelques secondes de plus (calibrage). Le nouvel écran apparaît ensuite dans Windows.
 
 **Télécommande pendant la diffusion**
 | Touche | Action |
@@ -89,7 +90,7 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 
 Les touches des **manettes** ne pilotent pas la TV pendant la diffusion : elles vont au PC (le bouton B ne déconnecte pas). La télécommande garde toujours ses touches.
 
-**Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, **mode jeu**, **encodeur vidéo** (TVScreenPlus / ffmpeg), **son sur la TV**, **couper le son du PC pendant la diffusion**, **manettes de la TV**, démarrage avec Windows, mises à jour, recalibrage, **mode debug**, journal.
+**Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, **mode jeu**, **encodeur vidéo** (TVScreenPlus / ffmpeg), **son sur la TV**, **couper le son du PC pendant la diffusion**, **manettes de la TV**, démarrage avec Windows, mises à jour, recalibrage, **oublier les TV autorisées**, **mode debug**, journal.
 
 ### Mode fluide ou mode jeu (PC)
 Avec l'**encodeur TVScreenPlus** (par défaut), les deux modes gardent **60 images/s régulières** et ne retiennent aucune image : l'ancien pipeline de l'encodeur ffmpeg (environ 30 ms) n'existe plus. La différence porte sur le son et sur le réglage de l'encodeur :
@@ -224,7 +225,13 @@ PC Windows                                                       TV Google TV
 | Son | Capture WASAPI *loopback* de la sortie par défaut de Windows, converti en PCM 16 bits stéréo (mixage des voies surround, 96/192 kHz ramenés à 48/44,1 kHz) et envoyé sans compression par paquets de 10 à 20 ms dans la même connexion que l'image. Sur la TV : AudioTrack en mode *low-latency* (Android 8+), tampon adaptatif (environ 30 ms au départ), le son en retard est jeté plutôt que joué tard |
 | Manettes | La TV envoie l'état de chaque manette (boutons, sticks, gâchettes, croix) à chaque changement. Le PC crée une manette Xbox 360 virtuelle par manette avec le pilote [ViGEmBus](https://github.com/nefarius/ViGEmBus), piloté directement (sans DLL). Les vibrations demandées par le jeu sont renvoyées à la TV |
 
-**Ports réseau** : UDP 47801 (découverte), TCP 47800 (flux). La règle de pare-feu est ajoutée automatiquement.
+**Ports réseau** : UDP 47801 (découverte), TCP 47800 (flux). La règle de pare-feu est ajoutée automatiquement, limitée à ces deux ports et au réseau local.
+
+**Sécurité**
+- Seules les TV acceptées sur le PC reçoivent son écran. Le jumelage utilise un échange de clés ECDH P-256 : la TV et le PC affichent le même code à 6 chiffres, qu'un appareil intercalé ne peut pas reproduire. À chaque connexion, la TV prouve ensuite qu'elle détient la clé (HMAC-SHA256 d'un défi aléatoire). *Oublier les TV autorisées* (PC) ou *Oublier les ordinateurs mémorisés* (TV) annule les jumelages.
+- Le PC ne répond qu'aux adresses du réseau local (privées ou link-local). Une nouvelle TV n'interrompt jamais la diffusion en cours avant d'être authentifiée.
+- Le flux vidéo n'est pas chiffré (performances de la TV, latence) : le jumelage empêche un autre appareil de se connecter, pas une écoute du réseau local.
+- Les mises à jour ne viennent que des releases GitHub du projet ; l'APK de la TV doit en plus être signé avec la même clé. Sur le PC, rien n'est téléchargé puis exécuté en dehors des mises à jour : ffmpeg, le pilote d'écran et le pilote de manettes sont dans le zip. Le dossier `C:\ProgramData\TVScreenPlus` n'est modifiable que par les administrateurs, et `settings.txt` (clés de jumelage) n'est lisible que par eux.
 
 <details>
 <summary>Protocole</summary>
@@ -251,7 +258,7 @@ dotnet build windows/TVScreenPlus -c Release
 # Application TV
 cd android && ./gradlew assembleRelease
 ```
-Sans `ffmpeg.exe` ni pilote à côté du programme, ils sont téléchargés au premier lancement.
+Le programme ne télécharge rien au lancement : placez à côté de `TVScreenPlus.exe` les fichiers du zip publié (`ffmpeg.exe`, `ViGEmBus_setup.exe`, dossier `driver`), comme le fait la CI (`.github/workflows/build.yml`).
 
 **Banc d'essai local** : `TVScreenPlus.exe --bench-encoder [secondes] [carte/sortie] [kbps]` mesure le pipeline de l'encodeur maison sans TV (images par seconde tenues, latence capture → paquet encodé).
 

@@ -16,7 +16,7 @@
         android:icon="@drawable/ic_launcher"
         android:banner="@drawable/banner"
         android:allowBackup="false"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
         <activity
             android:name=".MainActivity"

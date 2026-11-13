@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -148,19 +147,13 @@ namespace TVScreenPlus
     /// <summary>Install / uninstall of the ViGEmBus driver (silent setup bundled with the app, else downloaded).</summary>
     static class GamepadDriver
     {
+        /// <summary>ViGEmBus 1.22.0 setup, shipped in TVScreenPlus-PC.zip (its signature is checked when the package is built).</summary>
         public const string SetupName = "ViGEmBus_setup.exe";
-        const string SetupUrl = "https://github.com/nefarius/ViGEmBus/releases/download/v1.22.0/ViGEmBus_1.22.0_x64_x86_arm64.exe";
 
         public static void Install()
         {
-            string exe = new[] { Program.Dir, Program.DataDir }.Select(d => Path.Combine(d, SetupName)).FirstOrDefault(File.Exists);
-            if (exe == null)
-            {
-                Log.W("Downloading ViGEmBus setup");
-                ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-                exe = Path.Combine(Program.DataDir, SetupName);
-                using (var wc = new WebClient()) wc.DownloadFile(SetupUrl, exe);
-            }
+            string exe = Path.Combine(Program.Dir, SetupName);
+            if (!File.Exists(exe)) throw new Exception("installation du pilote de manettes introuvable : réinstallez TVScreenPlus depuis TVScreenPlus-PC.zip");
             Log.W("Installing ViGEmBus: " + exe);
             // Advanced Installer bootstrapper: no UI, silent MSI, never reboot by itself.
             int code = -1;

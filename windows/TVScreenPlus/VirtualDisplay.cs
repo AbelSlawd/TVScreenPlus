@@ -32,19 +32,23 @@ namespace TVScreenPlus
         public static void Install(string inf)
         {
             Log.W("Installing driver " + inf);
-            // Trust the driver publisher (avoids the "install this device software?" prompt).
+            // Trust the driver publisher (avoids the "install this device software?" prompt): only the certificate
+            // that signed the catalogue, not the whole chain it carries.
             try
             {
                 string cat = Directory.GetFiles(Path.GetDirectoryName(inf), "*.cat").FirstOrDefault();
                 if (cat != null)
                 {
-                    var certs = new X509Certificate2Collection();
-                    certs.Import(File.ReadAllBytes(cat));
+                    var cms = new System.Security.Cryptography.Pkcs.SignedCms();
+                    cms.Decode(File.ReadAllBytes(cat));
+                    cms.CheckSignature(true); // the catalogue really is signed by that certificate (chain checked by Windows)
+                    var signer = cms.SignerInfos[0].Certificate;
                     using (var store = new X509Store(StoreName.TrustedPublisher, StoreLocation.LocalMachine))
                     {
                         store.Open(OpenFlags.ReadWrite);
-                        foreach (var c in certs) store.Add(c);
+                        store.Add(signer);
                     }
+                    Log.W("Trusted driver publisher: " + signer.Subject);
                 }
             }
             catch (Exception e) { Log.W("cert import: " + e.Message); }

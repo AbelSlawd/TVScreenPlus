@@ -11,7 +11,14 @@ import java.net.URL
 /** Self-update from GitHub Releases: download the APK and hand it to the system installer. */
 object Updater {
     private const val API = "https://api.github.com/repos/AbelSlawd/TVScreenPlus/releases/latest"
+    private const val DOWNLOAD = "https://github.com/AbelSlawd/TVScreenPlus/releases/download/"
     const val ACTION_STATUS = "com.tvscreenplus.INSTALL_STATUS"
+    private const val TOKEN = "token"
+    /**
+     * Random per process, carried by the installer callback we create. MainActivity is exported: without it, any app
+     * could send ACTION_STATUS with an intent of its choice that we would start (STATUS_PENDING_USER_ACTION).
+     */
+    private val token = java.util.UUID.randomUUID().toString()
 
     class Release(val code: Int, val name: String, val apkUrl: String)
 
@@ -24,7 +31,9 @@ object Updater {
     fun latest(): Release? {
         val json = open(API).run { try { inputStream.bufferedReader().readText() } finally { disconnect() } }
         val tag = Regex("\"tag_name\"\\s*:\\s*\"v?([0-9.]+)\"").find(json)?.groupValues?.get(1) ?: return null
-        val apk = Regex("\"browser_download_url\"\\s*:\\s*\"([^\"]+/TVScreenPlus-TV\\.apk)\"").find(json)?.groupValues?.get(1) ?: return null
+        // Only this repository's own release files (Android also refuses an APK not signed with our key).
+        val apk = Regex("\"browser_download_url\"\\s*:\\s*\"(" + Regex.escape(DOWNLOAD) + "v[0-9.]+/TVScreenPlus-TV\\.apk)\"")
+            .find(json)?.groupValues?.get(1) ?: return null
         val code = tag.substringAfterLast('.').toIntOrNull() ?: return null
         // Shown version: the release title "TVScreenPlus 1.1.0" (the tag's last number is only the update code).
         val name = Regex("\"name\"\\s*:\\s*\"TVScreenPlus ([0-9.]+)\"").find(json)?.groupValues?.get(1) ?: tag
@@ -56,7 +65,7 @@ object Updater {
                     }
                 }
             } finally { c.disconnect() }
-            val intent = Intent(activity, MainActivity::class.java).setAction(ACTION_STATUS)
+            val intent = Intent(activity, MainActivity::class.java).setAction(ACTION_STATUS).putExtra(TOKEN, token)
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
             session.commit(PendingIntent.getActivity(activity, 1, intent, flags).intentSender)
         }
@@ -64,6 +73,7 @@ object Updater {
 
     /** Handles the installer callback. Returns a message to show, or null. */
     fun onStatus(activity: Activity, intent: Intent): String? {
+        if (intent.getStringExtra(TOKEN) != token) return null
         return when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -999)) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 @Suppress("DEPRECATION")

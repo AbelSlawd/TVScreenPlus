@@ -12,9 +12,12 @@ namespace TVScreenPlus
 {
     /// <summary>
     /// Discovery (UDP 47801): TV broadcasts "TVSP?" -> PC answers "TVSP!\nname=..\nbusy=0|1\nver=..".
-    /// Stream (TCP 47800): TV sends "TVSP1;v=2;name=..;w=..;h=..;hz=..;hevc=maxH;avc=maxH\n".
-    ///  v1 TV: PC answers "OK;codec=..;w=..;h=..\n" then video packets.
-    ///  v2 TV: only packets [u32 len][u8 flags][payload]; flags 0x80 filler, 0x40 ping (TV answers "ACK\n"),
+    /// Stream (TCP 47800): TV sends "TVSP1;v=2;auth=1;id=..;name=..;w=..;h=..;hz=..;hevc=maxH;avc=maxH\n".
+    ///  Authentication first (see Pairing): PC sends extension 5 [5][pc id 16][nonce 32], the TV answers "AUTH;hex"
+    ///  (HMAC of the nonce with the pairing key) or "AUTH;none"; an unknown TV pairs: extension 6 [6][pc id][PC public
+    ///  key 64], TV answers "PAIR;hex" (its public key) and shows the code, extension 7 [7][1|0] = accepted or not.
+    ///  TV apps without auth=1 (before 1.2) are refused with a status text asking to update them.
+    ///  Then only packets [u32 len][u8 flags][payload]; flags 0x80 filler, 0x40 ping (TV answers "ACK\n"),
     ///         0x20 config text, 0x10 status text, else video (1 = keyframe, 2 = new stream).
     ///         TV also sends "STAT;fps=..;kbps=..;drop=..;dec=..;decmax=..;wait=..\n" every 2 s
     ///         (dec/decmax = live decoder latency in ms, wait = % of time the decoder input was full)
@@ -29,6 +32,8 @@ namespace TVScreenPlus
         public const int TcpPort = 47800, UdpPort = 47801;
         readonly Action<string> status;
         readonly Action<string, string> notify;
+        readonly Func<string, string, string, bool> approve;
+        int handshaking;              // connections not yet authenticated (bounded: they hold a thread each)
         UdpClient udp;
         TcpListener tcp;
         volatile Session current;
@@ -41,7 +46,11 @@ namespace TVScreenPlus
         /// <summary>Applies Settings.GameMode to the running stream (encoder restart, no reconnection).</summary>
         public void SwitchMode() => current?.SwitchMode();
 
-        public Server(Action<string> status, Action<string, string> notify) { this.status = status; this.notify = notify; }
+        /// <param name="approve">(TV name, TV address, 6-digit code): asks the person at the PC whether a new TV may pair.</param>
+        public Server(Action<string> status, Action<string, string> notify, Func<string, string, string, bool> approve)
+        {
+            this.status = status; this.notify = notify; this.approve = approve;
+        }
 
         public void Start()
         {
@@ -76,11 +85,21 @@ namespace TVScreenPlus
         /// .NET Framework sockets are inheritable: without this, ffmpeg and the next version started by the
         /// updater would keep a copy of our listening ports open and block them ("only one usage of each socket address").
         /// </summary>
-        static void NoInherit(Socket s)
+        public static void NoInherit(Socket s)
         {
             try { SetHandleInformation(s.Handle, 1 /*HANDLE_FLAG_INHERIT*/, 0); } catch { }
         }
-        public static void NoInheritPublic(Socket s) => NoInherit(s);
+
+        /// <summary>
+        /// Private, link-local or loopback IPv4: a TV on the home network. Nothing else is answered, even if the
+        /// firewall rule were missing (VPN peers, port forwarding, other subnets).
+        /// </summary>
+        public static bool Lan(IPAddress a)
+        {
+            if (IPAddress.IsLoopback(a)) return true;
+            var b = a.GetAddressBytes();
+            return b.Length == 4 && (b[0] == 10 || (b[0] == 172 && (b[1] & 0xF0) == 16) || (b[0] == 192 && b[1] == 168) || (b[0] == 169 && b[1] == 254));
+        }
 
         [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
         static extern bool SetHandleInformation(IntPtr h, int mask, int flags);
@@ -115,7 +134,7 @@ namespace TVScreenPlus
                 try
                 {
                     var d = udp.Receive(ref ep);
-                    if (d.Length >= 5 && Encoding.ASCII.GetString(d, 0, 5) == "TVSP?")
+                    if (d.Length >= 5 && Lan(ep.Address) && Encoding.ASCII.GetString(d, 0, 5) == "TVSP?")
                     {
                         var r = Encoding.UTF8.GetBytes("TVSP!\nname=" + Environment.MachineName + "\nbusy=" + (current != null ? 1 : 0) + "\nver=" + Program.Version);
                         udp.Send(r, r.Length, ep);
@@ -133,13 +152,31 @@ namespace TVScreenPlus
                 TcpClient c;
                 try { c = tcp.AcceptTcpClient(); NoInherit(c.Client); }
                 catch (Exception) { return; }
+                var from = c.Client.RemoteEndPoint as IPEndPoint;
+                if (from == null || !Lan(from.Address))
+                {
+                    Log.W($"Connection from {from} refused: not on the home network");
+                    c.Close();
+                    continue;
+                }
+                if (Interlocked.Increment(ref handshaking) > 4)
+                {
+                    Interlocked.Decrement(ref handshaking);
+                    Log.W($"Connection from {from} refused: too many at once");
+                    c.Close();
+                    continue;
+                }
                 new Thread(() =>
                 {
-                    // A new TV takes over: stop the previous session, then run this one.
+                    var s = new Session(c, status, notify);
+                    bool ok;
+                    try { ok = s.Handshake(approve); }
+                    finally { Interlocked.Decrement(ref handshaking); }
+                    if (!ok) { s.Refuse(); return; }
+                    // Only an authenticated TV takes over: stop the previous session, then run this one.
                     current?.Close();
                     lock (sessionLock)
                     {
-                        var s = new Session(c, status, notify);
                         current = s;
                         try { s.Run(); }
                         finally
@@ -166,7 +203,9 @@ namespace TVScreenPlus
         volatile Streamer streamer;       // encoder currently streaming
         volatile Streamer streamerNext;   // encoder starting to replace it (seamless switch)
         readonly AutoResetEvent wake = new AutoResetEvent(false);
-        bool v2;
+        Dictionary<string, string> hello; // the TV's first line
+        string tvName = "TV";
+        bool lingerOnRefuse;          // keep the connection a while so an old TV app shows our message
         volatile bool tvAudio;        // the TV announced audio=1
         volatile bool streaming;      // the TV is showing the stream
         AudioLoopback audio;          // PC sound -> TV
@@ -201,7 +240,14 @@ namespace TVScreenPlus
         {
             lock (audioLock)
             {
-                if (udpOut == null) { udpOut = new UdpClient(AddressFamily.InterNetwork); Server.NoInheritPublic(udpOut.Client); }
+                if (udpOut == null)
+                {
+                    // Sent from the address the TV connected to: the TV only accepts sound and cursor packets from it
+                    // (a PC with Ethernet + Wi-Fi on the same network could otherwise send from the other one).
+                    var local = (client.Client.LocalEndPoint as IPEndPoint)?.Address ?? IPAddress.Any;
+                    udpOut = new UdpClient(new IPEndPoint(local, 0));
+                    Server.NoInherit(udpOut.Client);
+                }
                 return udpOut;
             }
         }
@@ -275,8 +321,11 @@ namespace TVScreenPlus
         void TvStatus(string key, params object[] a)
         {
             status(string.Format(Tr("fr", key), a));
-            if (v2) Send(0x10, Encoding.UTF8.GetBytes(string.Format(Tr(lang, key), a)));
+            TvText(key, a);
         }
+
+        /// <summary>Text shown on the TV only, in its language.</summary>
+        void TvText(string key, params object[] a) => Send(0x10, Encoding.UTF8.GetBytes(string.Format(Tr(lang, key), a)));
 
         static string Tr(string lang, string key)
         {
@@ -285,8 +334,120 @@ namespace TVScreenPlus
             {
                 case "net": return new[] { "Analyse du réseau…", "Analysing the network…", "Analizando la red…", "Netzwerk wird analysiert…" }[i];
                 case "screen": return new[] { "Préparation de l'écran…", "Preparing the screen…", "Preparando la pantalla…", "Bildschirm wird vorbereitet…" }[i];
+                case "update_tv": return new[] {
+                    "Mettez à jour l'application TV (Paramètres → Rechercher une mise à jour) pour vous connecter à ce PC.",
+                    "Update the TV app (Settings → Check for updates) to connect to this PC.",
+                    "Actualice la aplicación de la TV (Ajustes → Buscar actualizaciones) para conectarse a este PC.",
+                    "Aktualisieren Sie die TV-App (Einstellungen → Nach Updates suchen), um sich mit diesem PC zu verbinden." }[i];
+                case "refused": return new[] { "Connexion refusée sur le PC.", "Connection refused on the PC.", "Conexión rechazada en el PC.", "Verbindung am PC abgelehnt." }[i];
+                case "auth_failed": return new[] {
+                    "Cette TV n'est plus reconnue par le PC : oubliez les ordinateurs dans les paramètres, puis reconnectez-vous.",
+                    "This PC no longer recognises this TV: forget the computers in the settings, then connect again.",
+                    "Este PC ya no reconoce esta TV: olvide los ordenadores en los ajustes y vuelva a conectarse.",
+                    "Dieser PC erkennt diesen Fernseher nicht mehr: Computer in den Einstellungen vergessen und neu verbinden." }[i];
                 default: return new[] { "Calibrage de l'encodeur ({0}p)…", "Calibrating the encoder ({0}p)…", "Calibrando el codificador ({0}p)…", "Encoder wird kalibriert ({0}p)…" }[i];
             }
+        }
+
+        /// <summary>Refused pairings per TV address: no new request for a minute (no dialog flood).</summary>
+        static readonly Dictionary<string, DateTime> refusedAt = new Dictionary<string, DateTime>();
+
+        /// <summary>
+        /// Reads the TV's hello and checks that it is a paired TV, or pairs it if the person at the PC accepts.
+        /// Runs before this TV can affect anything (the current stream keeps going meanwhile). False = refused.
+        /// </summary>
+        public bool Handshake(Func<string, string, string, bool> approve)
+        {
+            try
+            {
+                client.NoDelay = true;
+                client.ReceiveTimeout = 5000;
+                ns = client.GetStream();
+                hello = Parse(ReadLine(ns));
+                if (!hello.ContainsKey("TVSP1")) return false;
+                lang = hello.TryGetValue("lang", out var lg) ? lg : "fr";
+                tvName = Clean(hello.TryGetValue("name", out var n) ? n : "");
+                string id = hello.TryGetValue("id", out var i) ? i : null;
+                string ip = (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "?";
+                if (Int(hello, "v", 1) < 2 || Int(hello, "auth", 0) != 1 || !Pairing.ValidId(id))
+                {
+                    Log.W($"TV '{tvName}' {ip}: app too old (no authentication), asked to update");
+                    if (Int(hello, "v", 1) >= 2) { TvText("update_tv"); lingerOnRefuse = true; }
+                    return false;
+                }
+                var key = Pairing.KeyOf(id);
+                if (key != null)
+                {
+                    var nonce = Pairing.Random(32);
+                    Send(0x08, new byte[] { 5 }.Concat(Pairing.PcId).Concat(nonce).ToArray());
+                    string answer = ReadReply("AUTH;");
+                    if (answer != "none")
+                    {
+                        if (Pairing.Same(Pairing.Unhex(answer), Pairing.Proof(key, nonce))) return true;
+                        Log.W($"TV '{tvName}' {ip}: wrong pairing key, refused");
+                        Deny("auth_failed");
+                        return false;
+                    }
+                    Log.W($"TV '{tvName}' {ip} lost its pairing key: pairing again");
+                }
+                lock (refusedAt)
+                    if (refusedAt.TryGetValue(ip, out var t) && DateTime.UtcNow - t < TimeSpan.FromMinutes(1)) { Deny("refused"); return false; }
+                using (var ex = new Pairing.Exchange())
+                {
+                    Send(0x08, new byte[] { 6 }.Concat(Pairing.PcId).Concat(ex.PublicKey).ToArray());
+                    var tvPublic = Pairing.Unhex(ReadReply("PAIR;"));
+                    var shared = ex.Key(tvPublic);
+                    string code = Pairing.Code(shared, ex.PublicKey, tvPublic);
+                    Log.W($"Pairing request from TV '{tvName}' {ip}");
+                    client.ReceiveTimeout = 0; // the person may take a while to answer
+                    bool ok = approve(tvName, ip, code);
+                    if (!ok)
+                    {
+                        Log.W($"Pairing with TV '{tvName}' {ip} refused");
+                        lock (refusedAt) refusedAt[ip] = DateTime.UtcNow;
+                        Deny("refused");
+                        return false;
+                    }
+                    Send(0x08, new byte[] { 7, 1 });
+                    Pairing.Trust(id, tvName, shared);
+                    Log.W($"TV '{tvName}' {ip} paired");
+                    return true;
+                }
+            }
+            catch (Exception e) { Log.W("Handshake failed: " + e.Message); return false; }
+        }
+
+        /// <summary>Tells the TV it is refused (it then stops reconnecting by itself) and why.</summary>
+        void Deny(string key)
+        {
+            Send(0x08, new byte[] { 7, 0 });
+            TvText(key);
+        }
+
+        /// <summary>Next line starting with prefix (the TV's diagnostic LOG lines may come first).</summary>
+        string ReadReply(string prefix)
+        {
+            for (int i = 0; i < 100; i++)
+            {
+                string l = ReadLine(ns, true) ?? throw new IOException("TV disconnected");
+                if (l.StartsWith(prefix)) return l.Substring(prefix.Length).Trim();
+                if (l.StartsWith("LOG;")) Log.W("TV: " + l.Substring(4));
+            }
+            throw new IOException("no answer from the TV");
+        }
+
+        /// <summary>Ends a refused connection; an old TV app keeps it a minute so that our message stays on its screen.</summary>
+        public void Refuse()
+        {
+            if (lingerOnRefuse) Thread.Sleep(60000);
+            Close();
+        }
+
+        /// <summary>TV name as shown on the PC (pairing dialog, notifications, settings): printable, short.</summary>
+        static string Clean(string s)
+        {
+            s = new string((s ?? "").Where(ch => !char.IsControl(ch) && ch != '|').ToArray()).Trim();
+            return s.Length == 0 ? "TV" : s.Length > 40 ? s.Substring(0, 40) : s;
         }
 
         public void Run()
@@ -295,19 +456,11 @@ namespace TVScreenPlus
             System.Threading.Tasks.Task<DisplayTarget> early = null; // virtual display prepared during the network test
             try
             {
-                client.NoDelay = true;
-                client.ReceiveTimeout = 5000;
-                ns = client.GetStream();
-                var hello = Parse(ReadLine(ns));
-                if (!hello.ContainsKey("TVSP1")) throw new Exception("Handshake invalide");
                 client.ReceiveTimeout = 0;
-                v2 = Int(hello, "v", 1) >= 2;
-                string tv = hello.TryGetValue("name", out var n) ? n : "TV";
+                string tv = tvName;
                 int tvW = Int(hello, "w", 1920), tvH = Int(hello, "h", 1080), hz = Int(hello, "hz", 60);
-                // v1 sends hevc=0|1; v2 sends the max height decodable at 60 fps per codec.
+                // Max height decodable at 60 fps per codec.
                 int hevcMax = Int(hello, "hevc", 0), avcMax = Int(hello, "avc", tvH);
-                if (!v2 && hevcMax == 1) hevcMax = tvH;
-                lang = hello.TryGetValue("lang", out var lg) ? lg : "fr";
                 string pref = hello.TryGetValue("pref", out var pf) ? pf : "auto";   // auto | smooth | quality (TV setting)
                 int tvMaxH = Int(hello, "maxh", 0);                                     // TV-side resolution cap, 0 = none
                 string net = hello.TryGetValue("net", out var nt) ? nt : "?";
@@ -316,17 +469,17 @@ namespace TVScreenPlus
                 Stats.Network = net == "eth" ? "Ethernet" : net == "wifi" ? $"Wi-Fi {band} GHz, lien {Int(hello, "link", 0)} Mb/s" : "?";
                 // Optional features: only what this TV announced (older TV apps announce nothing).
                 int helloAudio = Int(hello, "audio", -1), helloPads = Int(hello, "pads", -1);
-                tvAudio = v2 && helloAudio == 1;
+                tvAudio = helloAudio == 1;
                 int udpPort = Int(hello, "audioudp", 0); // UDP port of the TV: sound and cursor positions
-                if (v2 && udpPort > 0 && udpPort < 65536 && client.Client.RemoteEndPoint is IPEndPoint tvEp)
+                if (udpPort > 0 && udpPort < 65536 && client.Client.RemoteEndPoint is IPEndPoint tvEp)
                     audioUdp = new IPEndPoint(tvEp.Address, udpPort);
-                tvStamp = v2 && Int(hello, "ts", 0) == 1;
-                tvCursor = v2 && Int(hello, "cursor", 0) == 1;
-                bool padsOn = v2 && helloPads == 1 && Settings.Pads;
+                tvStamp = Int(hello, "ts", 0) == 1;
+                tvCursor = Int(hello, "cursor", 0) == 1;
+                bool padsOn = helloPads == 1 && Settings.Pads;
                 Stats.Audio = helloAudio < 0 ? "non pris en charge par l'app TV" : !tvAudio ? "désactivé sur la TV" : Settings.Audio ? "en attente de la diffusion" : "désactivé sur le PC";
                 Stats.Pads = helloPads < 0 ? "non prises en charge par l'app TV" : helloPads == 0 ? "désactivées sur la TV" : padsOn ? "aucune manette détectée sur la TV" : "désactivées sur le PC";
                 if (padsOn) pads = new PadHub(SendRumble, notify, Stats);
-                Log.W($"TV '{tv}' v{(v2 ? 2 : 1)} {client.Client.RemoteEndPoint} {tvW}x{tvH}@{hz} hevc≤{hevcMax} avc≤{avcMax} " +
+                Log.W($"TV '{tv}' {client.Client.RemoteEndPoint} {tvW}x{tvH}@{hz} hevc≤{hevcMax} avc≤{avcMax} " +
                       $"tested={Int(hello, "tested", 0)} lat={Stats.TvLatencyMs}ms net={Stats.Network} pref={pref} maxh={tvMaxH} audio={helloAudio} pads={helloPads}");
                 StartReader();
 
@@ -338,14 +491,11 @@ namespace TVScreenPlus
                 var heights = Heights();
                 early = System.Threading.Tasks.Task.Run(() => VirtualDisplay.Attach(W(heights[0]), heights[0], fps));
 
-                // ---- 1. Network: latency + throughput (v2 TVs) ----
+                // ---- 1. Network: latency + throughput ----
                 double mbps = 60, rtt = 0;
-                if (v2)
-                {
-                    TvStatus("net");
-                    mbps = MeasureMbps(out rtt);
-                    Log.W($"Network: {mbps:0} Mb/s, RTT {rtt:0.0} ms");
-                }
+                TvStatus("net");
+                mbps = MeasureMbps(out rtt);
+                Log.W($"Network: {mbps:0} Mb/s, RTT {rtt:0.0} ms");
                 bool auto = Settings.Res < 0, autoQ = Settings.Quality <= 0;
 
                 // ---- 2. Resolution + bitrate budget ----
@@ -410,34 +560,28 @@ namespace TVScreenPlus
                 // rate (maxrate) beyond the link only queues frames (lag) then triggers congestion drops.
                 string capped = "";
                 int desired = kbps;              // what the quality setting asks for
-                int hardCap = int.MaxValue;      // never above 85 % of the measured link
-                string capKey = null;            // learned ceiling for this TV on this kind of network
-                if (v2)
-                {
-                    // A slow link (100 Mb/s TV port, Wi-Fi) saturates on the encoder's peaks (keyframes, scene changes):
-                    // measured on a 93 Mb/s TV link at 77 Mb/s: 43 % blocked, bitrate drops + encoder restarts (freezes)
-                    // and the sound queued behind the video (stutter). Keep more headroom there.
-                    // Wi-Fi delivers in bursts (50-70 ms of sound at once measured on 5 GHz Wi-Fi 6): big encoder
-                    // peaks make it worse, so half the measured rate and never above 80 Mb/s (plenty for 4K HEVC).
-                    // These are only starting points: the ceiling then rises while the network stays perfectly
-                    // healthy and drops on congestion, and is remembered per TV and network type, so a better
-                    // setup (gigabit port, clean Wi-Fi) earns a higher one.
-                    hardCap = (int)(mbps * 1000 * 0.85) - audioKbps;
-                    // Wi-Fi: never above 70 Mb/s (the Ethernet level, plenty for 4K HEVC). Once the ceiling could rise
-                    // it went to 139 Mb/s on a 300 Mb/s link: +10 ms of latency and saturation hiccups, no visible gain.
-                    if (net == "wifi") hardCap = Math.Min(hardCap, 70000);
-                    // Keyed by network TYPE, not by the measured speed: one wrong measurement (481 Mb/s once on a
-                    // 94 Mb/s port) must not bypass what this TV has learned (it then aimed at 139 Mb/s and froze).
-                    string tvKey = "netcap_" + new string(tv.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray()) + "_";
-                    capKey = tvKey + (net == "wifi" ? "wifi" : "eth");
-                    double defShare = net == "wifi" ? 0.5 : mbps < 150 ? 0.6 : 0.85;
-                    // First connection on this network type: at most 50 Mb/s, the ceiling then rises if all is well.
-                    int defCap = Math.Min((int)(mbps * 1000 * defShare) - audioKbps, 50000);
-                    int learned = int.TryParse(Settings.Get(capKey, ""), out int lc) ? lc : 0;
-                    if (learned == 0 && net != "wifi" && int.TryParse(Settings.Get(tvKey + "eth100", ""), out int old)) learned = old; // v1.0.23 key
-                    int netCap = Math.Min(hardCap, learned > 0 ? learned : defCap);
-                    if (kbps > netCap) { capped = $", capped to network {netCap}{(learned > 0 ? " (learned)" : "")}"; kbps = netCap; }
-                }
+                // A slow link (100 Mb/s TV port, Wi-Fi) saturates on the encoder's peaks (keyframes, scene changes):
+                // measured on a 93 Mb/s TV link at 77 Mb/s: 43 % blocked, bitrate drops + encoder restarts (freezes)
+                // and the sound queued behind the video (stutter). Keep more headroom there.
+                // Wi-Fi delivers in bursts (50-70 ms of sound at once measured on 5 GHz Wi-Fi 6): big encoder
+                // peaks make it worse, so half the measured rate and never above 80 Mb/s (plenty for 4K HEVC).
+                // These are only starting points: the ceiling then rises while the network stays perfectly
+                // healthy and drops on congestion, and is remembered per TV and network type, so a better
+                // setup (gigabit port, clean Wi-Fi) earns a higher one.
+                int hardCap = (int)(mbps * 1000 * 0.85) - audioKbps; // never above 85 % of the measured link
+                // Wi-Fi: never above 70 Mb/s (the Ethernet level, plenty for 4K HEVC). Once the ceiling could rise
+                // it went to 139 Mb/s on a 300 Mb/s link: +10 ms of latency and saturation hiccups, no visible gain.
+                if (net == "wifi") hardCap = Math.Min(hardCap, 70000);
+                // Keyed by network TYPE, not by the measured speed: one wrong measurement (481 Mb/s once on a
+                // 94 Mb/s port) must not bypass what this TV has learned (it then aimed at 139 Mb/s and froze).
+                string tvKey = "netcap_" + new string(tv.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray()) + "_";
+                string capKey = tvKey + (net == "wifi" ? "wifi" : "eth"); // learned ceiling for this TV on this kind of network
+                double defShare = net == "wifi" ? 0.5 : mbps < 150 ? 0.6 : 0.85;
+                // First connection on this network type: at most 50 Mb/s, the ceiling then rises if all is well.
+                int defCap = Math.Min((int)(mbps * 1000 * defShare) - audioKbps, 50000);
+                int learned = int.TryParse(Settings.Get(capKey, ""), out int lc) ? lc : 0;
+                int netCap = Math.Min(hardCap, learned > 0 ? learned : defCap);
+                if (kbps > netCap) { capped = $", capped to network {netCap}{(learned > 0 ? " (learned)" : "")}"; kbps = netCap; }
                 int maxKbps = kbps;
                 // ~20 ms of video: little hidden queue. Wi-Fi acknowledges in bursts (aggregation, TV power save):
                 // with 20 ms the socket blocked 4-10 % of the time at 40 Mb/s on a 245-438 Mb/s link, read as
@@ -447,7 +591,7 @@ namespace TVScreenPlus
                 Stats.Width = target.Width; Stats.Height = target.Height; Stats.Codec = enc.Codec.ToUpper();
                 Stats.Encoder = plan.ToString(); Stats.TargetFps = plan.Fps; Stats.TargetKbps = kbps;
                 Stats.Since = DateTime.Now; Stats.Streaming = true;
-                if (v2) StartPing();
+                StartPing();
 
                 // A/V sync: how much later than the sound the image leaves the PC (ms). NVENC in fluid mode holds
                 // 2 frames (-delay 2); encoding ~8 ms; +15 ms because loopback captures the sound when Windows mixes it,
@@ -461,8 +605,7 @@ namespace TVScreenPlus
                     return $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)};vpc={vpc};apc=5;avsync={(Settings.GameMode ? 0 : 1)};mode={(Settings.GameMode ? "game" : "fluid")}" +
                            (tvStamp ? ";ts=1;lpc=15" : "") + (tvCursor ? ";cursor=1" : "");
                 }
-                if (v2) Send(0x20, Encoding.ASCII.GetBytes($"codec={enc.Codec};w={target.Width};h={target.Height};fps={plan.Fps};kbps={kbps};enc={plan.Enc.Name}" + Features()));
-                else { var ok = Encoding.ASCII.GetBytes($"OK;codec={enc.Codec};w={target.Width};h={target.Height}\n"); ns.Write(ok, 0, ok.Length); }
+                Send(0x20, ConfigPacket());
                 string info = $"{target.Width}x{target.Height} {plan.Fps} i/s {enc.Codec.ToUpper()} {kbps / 1000} Mb/s";
                 status($"Diffusion vers {tv} – {info}");
                 notify("TVScreenPlus", $"{tv} connectée : {info}");
@@ -545,11 +688,11 @@ namespace TVScreenPlus
                             replaced = activeSt;
                             activeSt = nextSt; nextSt = null; activeGen = gen; activeStarted = DateTime.UtcNow;
                             streamer = activeSt; streamerNext = null;
-                            if (configOnSwitch) { configOnSwitch = false; if (v2) Send(0x20, ConfigPacket()); }
+                            if (configOnSwitch) { configOnSwitch = false; Send(0x20, ConfigPacket()); }
                         }
                         else if (gen != activeGen) return;               // last frames of the replaced encoder
                         // The TV rebuilds its decoder on a config: it must come right before a keyframe.
-                        if (configOnKey && (buf[o + 4] & 1) != 0) { configOnKey = false; if (v2) Send(0x20, ConfigPacket()); }
+                        if (configOnKey && (buf[o + 4] & 1) != 0) { configOnKey = false; Send(0x20, ConfigPacket()); }
                         // Sent under the lock: a frame of the old encoder can never follow the new one's keyframe.
                         long t0 = Stopwatch.GetTimestamp();
                         SendFrame(buf, o, l, cap);
@@ -599,13 +742,10 @@ namespace TVScreenPlus
                         kbps = (int)Math.Max(ideal * 0.35, kbps * 0.7);
                         Log.W($"Congestion ({blocked:P0} blocked) -> {kbps} kb/s");
                         lastCongestion = Stopwatch.StartNew();
-                        if (capKey != null)
-                        {
-                            // This link can't take the ceiling: remember a lower one for next time too.
-                            maxKbps = (int)Math.Max(ideal * 0.35, maxKbps * 0.85);
-                            Settings.Set(capKey, maxKbps.ToString());
-                            Log.W($"Learned ceiling lowered to {maxKbps} kb/s ({capKey})");
-                        }
+                        // This link can't take the ceiling: remember a lower one for next time too.
+                        maxKbps = (int)Math.Max(ideal * 0.35, maxKbps * 0.85);
+                        Settings.Set(capKey, maxKbps.ToString());
+                        Log.W($"Learned ceiling lowered to {maxKbps} kb/s ({capKey})");
                         healthy = 0; congested = 0;
                         Stats.BitrateDown++;
                         change = true;
@@ -617,7 +757,7 @@ namespace TVScreenPlus
                         cleanSince.Restart();
                         change = true;
                     }
-                    else if (capKey != null && kbps >= maxKbps && maxKbps < Math.Min(desired, hardCap) && healthy >= 30)
+                    else if (kbps >= maxKbps && maxKbps < Math.Min(desired, hardCap) && healthy >= 30)
                     {
                         // ~30 s without sign of saturation while the ceiling limits the quality:
                         // try 15 % more, and remember it.
