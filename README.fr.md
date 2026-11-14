@@ -84,7 +84,7 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 | Touche | Action |
 |---|---|
 | **OK** | Afficher / masquer les statistiques (résolution, débit, images/s, son, manettes) |
-| **Menu** | Menu rapide par-dessus l'image : mode fluide / jeu, synchro du son (◀ ▶, OK = 0), statistiques, déconnecter |
+| **OK long** (ou **Menu**) | Menu rapide par-dessus l'image : mode fluide / jeu, synchro du son (◀ ▶, OK = 0), statistiques, déconnecter |
 | **Retour** | Se déconnecter. L'écran disparaît de Windows |
 | **▲ / ▼** | Mode **fluide** (60 i/s réguliers, son synchronisé) / mode **jeu** (latence minimale). Appliqué en une fraction de seconde, sans déconnexion |
 | **◀ / ▶** | Avancer / retarder le son de 10 ms (réglage de la synchronisation à l'oreille, mémorisé) |
@@ -125,12 +125,12 @@ Un PC déjà vu par la TV qui ne répond plus (en veille ou éteint) apparaît g
 Activées par défaut. Connectez vos manettes à la TV (*Paramètres de la TV › Télécommandes et accessoires › Ajouter un accessoire* pour le Bluetooth), puis connectez la TV au PC : chaque manette apparaît dans Windows comme une **manette Xbox 360** (jusqu'à 4). Les jeux et Steam la reconnaissent comme une manette branchée sur le PC.
 - Toute manette reconnue par la TV comme manette de jeu fonctionne : Xbox (360, One, Series), PlayStation (DualShock 3, DualShock 4, DualSense), Nintendo Switch (manette Pro, Joy-Con), 8BitDo, Stadia, manettes Bluetooth « Android » génériques, manettes USB…
 - **Page Manettes** : les manettes connectées s'affichent en petit en bas à gauche de l'écran d'accueil de l'application TV (aussi : bouton *Manettes* en haut de l'écran d'accueil, ou *Paramètres › Manettes*). Une manette ouverte est dessinée en direct (boutons, sticks, gâchettes) avec ses réglages : numéro de joueur, boutons A B X Y façon Xbox ou Nintendo, force des vibrations, zone morte des sticks, séparer / associer les Joy-Con, *Tester les boutons*, *Faire vibrer pour la reconnaître*, déconnexion (Switch 2) ou paramètres Bluetooth de la TV.
-- **Boutons Nintendo** : placés comme sur une manette Xbox (le bouton du bas est *A*), pour que les jeux PC tombent juste.
-- **Joy-Con** : un gauche et un droit forment une seule manette ; un Joy-Con seul se tient à l'horizontale (SL / SR = gâchettes du haut). Pour jouer à deux, *Séparer les deux Joy-Con* sur la page Manettes (et *Associer à l'autre Joy-Con* pour les réunir).
-- **Manettes Switch 2** (Joy-Con 2, manette Pro 2, manette GameCube de la Switch 2) : elles utilisent un Bluetooth propre à Nintendo qu'Android ne gère pas seul. Activez *Manettes Switch 2* dans les paramètres de la TV (la TV demande l'accès aux appareils à proximité), puis appuyez sur le petit bouton **SYNC** de la manette : elle se connecte en quelques secondes. À refaire à chaque fois, car ces manettes ne se reconnectent d'elles-mêmes qu'à leur console.
+- **Boutons Nintendo** : placés comme sur une manette Xbox (le bouton du bas est *A*), pour que les jeux PC tombent juste ; ou comme sur une Switch (*Boutons A B X Y* dans la page Manettes).
+- **Joy-Con** : un gauche et un droit forment une seule manette ; un Joy-Con seul se tient à l'horizontale (SL / SR = gâchettes du haut ; pour les Joy-Con de la Switch 1, dont certaines TV ne transmettent pas SL / SR, ce sont L / ZL ou R / ZR). Pour jouer à deux, *Séparer les deux Joy-Con* sur la page Manettes (et *Associer à l'autre Joy-Con* pour les réunir).
+- **Manettes Switch 2** (Joy-Con 2, manette Pro 2, manette GameCube de la Switch 2) : elles utilisent un Bluetooth propre à Nintendo qu'Android ne gère pas seul. Activez *Manettes Switch 2* dans la page Manettes (la TV demande l'accès aux appareils à proximité), puis appuyez sur le petit bouton **SYNC** de la manette : elle se connecte en quelques secondes. À refaire à chaque fois, car ces manettes ne se reconnectent d'elles-mêmes qu'à leur console.
 - Le bouton *HOME* de la manette Pro de la Switch 1 ramène la TV à son écran d'accueil (Android le réserve) : préférez le bouton *Capture*, qui sert de *Guide*.
 - Sticks, gâchettes analogiques, croix directionnelle, tous les boutons (le bouton central Xbox / PS devient le bouton *Guide*, souvent réservé par le système de la TV).
-- **Vibrations** : quand un jeu fait vibrer la manette Xbox virtuelle, la manette de la TV vibre (si elle et la TV le permettent ; meilleure prise en charge à partir d'Android 12).
+- **Vibrations** : quand un jeu fait vibrer la manette Xbox virtuelle, la manette de la TV vibre (si elle et la TV le permettent ; meilleure prise en charge à partir d'Android 12). Les manettes Nintendo de la Switch 1 (manette Pro, Joy-Con) ne vibrent que si le système de la TV inclut la vibration Nintendo (pas sur la TCL testée) : la page Manettes l'indique. Les manettes Switch 2 vibrent toujours.
 - Une manette connectée ou déconnectée pendant la diffusion apparaît ou disparaît aussitôt sur le PC.
 - **Première utilisation** : le PC installe automatiquement (et silencieusement) le pilote **ViGEmBus**, qui crée les manettes virtuelles. Cela prend quelques secondes, une seule fois.
 - Pour désactiver : clic droit sur l'icône › *Manettes de la TV*, ou dans les paramètres de la TV.
@@ -207,7 +207,7 @@ Toutes les versions sont listées dans les [Releases](https://github.com/AbelSla
 | Son haché ou en retard | Préférez l'Ethernet ou le Wi-Fi 5 GHz. Le mode debug (lignes *Son*) montre le tampon et les coupures de la TV. Une barre de son en Bluetooth ajoute toujours du retard. |
 | Manette non reconnue par le PC | Elle doit d'abord fonctionner sur la TV (appariée dans ses paramètres). Le mode debug liste les manettes vues. Si le pilote ViGEmBus n'a pas pu s'installer, une notification l'indique : relancez TVScreenPlus, ou installez [ViGEmBus 1.22](https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0) à la main. Au-delà de 4 manettes, les suivantes restent sur la TV. |
 | La manette pilote la TV au lieu du PC | Activez *Manettes* dans les paramètres de la TV et sur l'icône du PC, et mettez les deux applications à jour. |
-| Pas de vibrations | La manette et la version d'Android de la TV doivent permettre les vibrations à distance (Android 12+ conseillé). Toutes les manettes Bluetooth ne le permettent pas. |
+| Pas de vibrations | La manette et la version d'Android de la TV doivent permettre les vibrations à distance (Android 12+ conseillé). Toutes les manettes Bluetooth ne le permettent pas. Manette Pro / Joy-Con de la Switch 1 : dépend du système de la TV (la page Manettes affiche « Non prises en charge par la TV »). |
 | Autre souci | Clic droit › *Ouvrir le journal* (`C:\ProgramData\TVScreenPlus\log.txt`) et joignez-le à une [issue](https://github.com/AbelSlawd/TVScreenPlus/issues). Il contient aussi les informations de la TV (lignes `TV:`) et les statistiques de la diffusion (lignes `Stats:`). |
 
 ## Désinstallation

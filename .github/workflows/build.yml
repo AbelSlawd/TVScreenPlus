@@ -87,9 +87,10 @@ jobs:
           v=$(tr -d '[:space:]' < src/VERSION)
           echo "name=$v" >> "$GITHUB_OUTPUT"
           echo "tag=v$(echo "$v" | cut -d. -f1-2).${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          # Release text: what changed (RELEASE_NOTES.md, edited for each version) + how to install.
+          # Release text: what changed in THIS version (first section of RELEASE_NOTES.md, which keeps the history
+          # below it) + how to install.
           {
-            cat src/RELEASE_NOTES.md
+            awk 'NR > 1 && /^\*\*Nouveau en/ { exit } { print }' src/RELEASE_NOTES.md
             echo
             echo "**PC Windows** : \`TVScreenPlus-PC.zip\` → décompresser n'importe où et lancer \`TVScreenPlus.exe\` : il s'installe dans *Program Files*, remplace et supprime l'ancienne version. Les versions suivantes s'installent automatiquement."
             echo "**Google TV** : \`TVScreenPlus-TV.apk\` → installer sur la TV ; l'application propose ensuite elle-même les mises à jour."

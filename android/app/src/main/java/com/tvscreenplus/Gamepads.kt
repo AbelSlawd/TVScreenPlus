@@ -327,21 +327,24 @@ class Gamepads(context: Context, private val prefs: SharedPreferences) : InputMa
             }
             l != null -> { // sideways, SL/SR on top: the d-pad becomes the face buttons
                 val d = l.buttons
+                // Switch 1 Joy-Con: the TV's driver never reports SL/SR, so L / ZL are the shoulder buttons.
+                val noSlSr = !l.external
                 keys = (if (d and LEFT != 0) A else 0) or (if (d and DOWN != 0) B else 0) or
                     (if (d and UP != 0) X else 0) or (if (d and RIGHT != 0) Y else 0) or
-                    (if (l.sl) LB else 0) or (if (l.sr) RB else 0) or
+                    (if (if (noSlSr) d and LB != 0 else l.sl) LB else 0) or (if (if (noSlSr) l.ltValue > 0 else l.sr) RB else 0) or
                     (if (d and BACK != 0) START else 0) or (if (l.capture) BACK else 0) or (d and LS)
-                lt = if (d and LB != 0) 255 else 0; rt = l.ltValue
+                lt = if (!noSlSr && d and LB != 0) 255 else 0; rt = if (noSlSr) 0 else l.ltValue
                 l.leftStick().let { lx = (-it[1]).coerceAtMost(32767); ly = it[0] }
                 rx = 0; ry = 0
             }
             r != null -> {
                 val d = r.buttons
+                val noSlSr = !r.external // as above: R / ZR are the shoulder buttons
                 keys = (if (d and B != 0) A else 0) or (if (d and Y != 0) B else 0) or
                     (if (d and A != 0) X else 0) or (if (d and X != 0) Y else 0) or
-                    (if (r.sl) LB else 0) or (if (r.sr) RB else 0) or
+                    (if (if (noSlSr) d and RB != 0 else r.sl) LB else 0) or (if (if (noSlSr) r.rtValue > 0 else r.sr) RB else 0) or
                     (d and (START or GUIDE)) or (if (d and RS != 0) LS else 0)
-                lt = if (d and RB != 0) 255 else 0; rt = r.rtValue
+                lt = if (!noSlSr && d and RB != 0) 255 else 0; rt = if (noSlSr) 0 else r.rtValue
                 r.rightStick().let { lx = it[1]; ly = (-it[0]).coerceAtMost(32767) }
                 rx = 0; ry = 0
             }

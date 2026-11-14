@@ -439,7 +439,7 @@ class MainActivity : Activity() {
         val sideways = pad.srcs.size == 1 && pad.srcs[0].side != Gamepads.FULL
         val hint = TextView(this).apply {
             textSize = 14f; gravity = Gravity.CENTER; setLineSpacing(0f, 1.15f)
-            text = if (padTest) L.t("pad_testing") else if (sideways) L.t("pad_sideways") else ""
+            text = if (padTest) L.t("pad_testing") else if (sideways) L.t(if (pad.srcs[0].external) "pad_sideways" else "pad_sideways1") else ""
             setTextColor(ACCENT); visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
         }
         left.addView(hint, LinearLayout.LayoutParams(lw, -2).apply { topMargin = dp(10) })
@@ -1044,6 +1044,24 @@ class MainActivity : Activity() {
         return super.dispatchGenericMotionEvent(event)
     }
 
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+        if (client != null && overlay.visibility == View.GONE && quickMenu == null &&
+            (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)) { showQuickMenu(); return true }
+        return super.onKeyLongPress(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (client != null && overlay.visibility == View.GONE && quickMenu == null && event.isTracking &&
+            event.flags and KeyEvent.FLAG_CANCELED_LONG_PRESS == 0 &&
+            (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_INFO)) {
+            stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            ui.removeCallbacks(statsTick)
+            statsTick.run()
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (quickMenu != null && (keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_MENU)) { hideQuickMenu(); return true }
         if (quickMenu != null) return super.onKeyDown(keyCode, event) // focus moves in the menu
@@ -1058,9 +1076,8 @@ class MainActivity : Activity() {
         if (keyCode == KeyEvent.KEYCODE_BACK && inSettings) { showMain(); return true }
         if (client != null && overlay.visibility == View.GONE &&
             (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_INFO)) {
-            stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-            ui.removeCallbacks(statsTick)
-            statsTick.run()
+            // Short press (on release) = statistics, long press = quick menu (most Google TV remotes have no Menu key).
+            if (event.repeatCount == 0) event.startTracking()
             return true
         }
         val c = client

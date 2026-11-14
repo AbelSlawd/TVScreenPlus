@@ -84,7 +84,7 @@ The app is not on the Play Store: you need to install the APK file.
 | Key | Action |
 |---|---|
 | **OK** | Show / hide the statistics (resolution, bitrate, frames/s, sound, gamepads) |
-| **Menu** | Quick menu over the picture: fluid / game mode, sound sync (◀ ▶, OK = 0), statistics, disconnect |
+| **Hold OK** (or **Menu**) | Quick menu over the picture: fluid / game mode, sound sync (◀ ▶, OK = 0), statistics, disconnect |
 | **Back** | Disconnect. The display disappears from Windows |
 | **▲ / ▼** | **Fluid** mode (steady 60 fps, synced sound) / **game** mode (minimal latency). Applied within a fraction of a second, without disconnecting |
 | **◀ / ▶** | Advance / delay the sound by 10 ms (by-ear sync adjustment, remembered) |
@@ -125,12 +125,12 @@ A PC the TV has seen before that no longer answers (asleep or off) shows up dimm
 Enabled by default. Connect your gamepads to the TV (*TV settings › Remotes & accessories › Add accessory* for Bluetooth), then connect the TV to the PC: each gamepad appears in Windows as an **Xbox 360 controller** (up to 4). Games and Steam recognize it as a gamepad plugged into the PC.
 - Any gamepad the TV recognizes as a game controller works: Xbox (360, One, Series), PlayStation (DualShock 3, DualShock 4, DualSense), Nintendo Switch (Pro Controller, Joy-Con), 8BitDo, Stadia, generic Bluetooth "Android" gamepads, USB gamepads…
 - **Gamepads page**: connected gamepads show small at the bottom left of the TV app's home screen (also: the *Gamepads* button at the top of the home screen, or *Settings › Gamepads*). An opened gamepad is drawn live (buttons, sticks, triggers) with its settings: player number, A B X Y buttons Xbox-style or Nintendo-style, rumble strength, stick dead zone, split / pair Joy-Cons, *Test the buttons*, *Rumble to find it*, disconnect (Switch 2) or the TV's Bluetooth settings.
-- **Nintendo buttons**: placed as on an Xbox controller (the bottom button is *A*), so PC games get them right.
-- **Joy-Cons**: a left and a right one make one controller; a single Joy-Con is held sideways (SL / SR = shoulder buttons). To play with two, *Split the two Joy-Cons* on the Gamepads page (and *Pair with the other Joy-Con* to put them back).
-- **Switch 2 controllers** (Joy-Con 2, Pro Controller 2, Switch 2 GameCube controller): they use Nintendo's own Bluetooth protocol, which Android doesn't handle by itself. Turn on *Switch 2 controllers* in the TV settings (the TV asks for access to nearby devices), then press the small **SYNC** button on the controller: it connects within a few seconds. Needed every time, as these controllers only reconnect by themselves to their console.
+- **Nintendo buttons**: placed as on an Xbox controller (the bottom button is *A*), so PC games get them right; or as on a Switch (*A B X Y buttons* in the Gamepads page).
+- **Joy-Cons**: a left and a right one make one controller; a single Joy-Con is held sideways (SL / SR = shoulder buttons; for Switch 1 Joy-Cons, whose SL / SR some TVs don't report, L / ZL or R / ZR). To play with two, *Split the two Joy-Cons* on the Gamepads page (and *Pair with the other Joy-Con* to put them back).
+- **Switch 2 controllers** (Joy-Con 2, Pro Controller 2, Switch 2 GameCube controller): they use Nintendo's own Bluetooth protocol, which Android doesn't handle by itself. Turn on *Switch 2 controllers* in the Gamepads page (the TV asks for access to nearby devices), then press the small **SYNC** button on the controller: it connects within a few seconds. Needed every time, as these controllers only reconnect by themselves to their console.
 - The *HOME* button of the Switch 1 Pro Controller takes the TV to its home screen (Android reserves it): use the *Capture* button instead, which acts as *Guide*.
 - Sticks, analog triggers, D-pad, all buttons (the central Xbox / PS button becomes the *Guide* button, often reserved by the TV's system).
-- **Rumble**: when a game makes the virtual Xbox controller vibrate, the TV's gamepad vibrates (if it and the TV allow it; better support from Android 12).
+- **Rumble**: when a game makes the virtual Xbox controller vibrate, the TV's gamepad vibrates (if it and the TV allow it; better support from Android 12). Switch 1 Nintendo controllers (Pro Controller, Joy-Con) only vibrate if the TV's system includes Nintendo rumble (not on the TCL tested): the Gamepads page says so. Switch 2 controllers always vibrate.
 - A gamepad connected or disconnected while streaming appears or disappears on the PC right away.
 - **First use**: the PC automatically (and silently) installs the **ViGEmBus** driver, which creates the virtual gamepads. It takes a few seconds, once.
 - To disable: right-click the icon › *TV gamepads*, or in the TV's settings.
@@ -207,7 +207,7 @@ All versions are listed in the [Releases](https://github.com/AbelSlawd/TVScreenP
 | Choppy or delayed sound | Prefer Ethernet or 5 GHz Wi-Fi. Debug mode (*Sound* lines) shows the TV's buffer and dropouts. A Bluetooth soundbar always adds delay. |
 | Gamepad not recognized by the PC | It must first work on the TV (paired in its settings). Debug mode lists the gamepads seen. If the ViGEmBus driver could not be installed, a notification says so: restart TVScreenPlus, or install [ViGEmBus 1.22](https://github.com/nefarius/ViGEmBus/releases/tag/v1.22.0) by hand. Beyond 4 gamepads, the extra ones stay on the TV. |
 | The gamepad controls the TV instead of the PC | Enable *Gamepads* in the TV settings and on the PC icon, and update both apps. |
-| No rumble | The gamepad and the TV's Android version must allow remote rumble (Android 12+ recommended). Not all Bluetooth gamepads allow it. |
+| No rumble | The gamepad and the TV's Android version must allow remote rumble (Android 12+ recommended). Not all Bluetooth gamepads allow it. Switch 1 Pro Controller / Joy-Con: depends on the TV's system (the Gamepads page shows "Not supported by the TV"). |
 | Other issue | Right-click › *Open the log* (`C:\ProgramData\TVScreenPlus\log.txt`) and attach it to an [issue](https://github.com/AbelSlawd/TVScreenPlus/issues). It also contains the TV's information (`TV:` lines) and the streaming statistics (`Stats:` lines). |
 
 ## Uninstalling

@@ -1,11 +1,19 @@
-**Nouveau en 1.2.2 : toutes les manettes, page Manettes, menu rapide**
-- **Manettes Nintendo** : manette Pro et Joy-Con de la Switch (deux Joy-Con = une manette, un Joy-Con seul se tient à l'horizontale), boutons placés comme sur une manette Xbox (réglable). Capture sert de bouton Guide.
-- **Manettes Switch 2** (Joy-Con 2, manette Pro 2, manette GameCube) : réglage *Manettes Switch 2* dans la page Manettes, puis bouton SYNC de la manette. Vibrations et voyants de joueur compris.
-- **Page Manettes** (bouton en haut de l'accueil, ou pastilles en bas à gauche) : dessin en direct de chaque manette, numéro de joueur, vibrations, zone morte des sticks, séparer / associer les Joy-Con, test des boutons. Les manettes Nintendo de la Switch 1 ne vibrent pas sur les TV dont le système n'a pas la vibration Nintendo (TCL testée) : la page l'indique.
-- **Menu rapide** pendant la diffusion (touche Menu de la télécommande) : mode fluide / jeu, synchro du son, statistiques, déconnecter.
-- **Taille de l'image** (Paramètres de la TV) pour les TV qui coupent les bords.
-- **Réveil du PC** : un PC déjà vu qui ne répond plus apparaît grisé, OK le réveille par le réseau (Wake-on-LAN, si le PC l'autorise).
-- Corrections (revue complète du code) : remplacement du décodeur plus sûr pendant les changements de mode, son AAudio plus robuste, reconnexion si la première image n'arrive jamais, débrancher une manette ne coupe plus les vibrations des autres sur le PC, image ffmpeg corrompue sur un bureau immobile, désinstallation qui ne touche plus qu'au dossier d'installation, et d'autres.
+**Nouveau en 1.2.2 : toutes les manettes, page Manettes, menu rapide, réveil du PC** — mettez à jour le PC **et** l'application TV.
+
+Manettes
+- **Manettes Nintendo de la Switch** : manette Pro et Joy-Con. Deux Joy-Con (gauche + droit) forment une seule manette ; un Joy-Con seul se tient à l'horizontale. Les boutons A B X Y sont placés comme sur une manette Xbox (bouton du bas = A), ou comme sur une Switch (réglable). Capture sert de bouton Guide (HOME est réservé par la TV).
+- **Manettes de la Switch 2** (Joy-Con 2, manette Pro 2, manette GameCube) : activez *Manettes Switch 2* dans la page Manettes, puis appuyez sur le bouton SYNC de la manette. Vibrations et voyants de joueur compris.
+- **Page Manettes** (bouton *Manettes* en haut de l'accueil, ou pastilles des manettes en bas à gauche) : dessin en direct de chaque manette, numéro de joueur, boutons façon Xbox ou Nintendo, force des vibrations, zone morte des sticks, séparer / associer les Joy-Con (pour jouer à deux), test des boutons, faire vibrer pour reconnaître une manette.
+- Limites de certaines TV (TCL testée), indiquées dans la page Manettes : pas de vibrations pour les manettes Nintendo de la Switch 1, et pas de boutons SL / SR pour les Joy-Con de la Switch 1 (un Joy-Con seul utilise alors L / ZL ou R / ZR comme gâchettes du haut).
+
+Diffusion
+- **Menu rapide** pendant la diffusion : **appui long sur OK** (ou touche Menu) → mode fluide / jeu, synchro du son, statistiques, déconnecter.
+- **Taille de l'image** (Paramètres de la TV, 100 à 90 %) pour les TV qui coupent les bords de l'image.
+- **Réveil du PC à distance** : un PC déjà vu qui ne répond plus apparaît grisé dans la liste ; OK le réveille par le réseau (Wake-on-LAN, à autoriser sur le PC, de préférence en Ethernet).
+
+Corrections (revue complète du code)
+- TV : changement de mode fluide / jeu plus sûr (décodeur), son plus robuste, reconnexion automatique si la première image n'arrive jamais, mise à jour TV ratée correctement annulée.
+- PC : débrancher une manette ne coupe plus les vibrations des autres ; une image corrompue possible avec l'encodeur ffmpeg sur un bureau immobile ; « Couper le son du PC » suit le changement de sortie audio ; la désinstallation ne supprime plus que le dossier d'installation ; règle du pare-feu réessayée si elle a échoué.
 
 **Nouveau en 1.2.1 : qualité du son** (application TV)
 - Nouveau réglage *Paramètres de la TV › Sortie du son* :
