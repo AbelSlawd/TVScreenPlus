@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -11,7 +12,8 @@ using System.Threading;
 namespace TVScreenPlus
 {
     /// <summary>
-    /// Discovery (UDP 47801): TV broadcasts "TVSP?" -> PC answers "TVSP!\nname=..\nbusy=0|1\nver=..".
+    /// Discovery (UDP 47801): TV broadcasts "TVSP?" -> PC answers "TVSP!\nname=..\nbusy=0|1\nver=..\nmac=.." (mac: the
+    /// network card on the TV's subnet, 12 hex digits, for Wake-on-LAN; absent if unknown).
     /// Stream (TCP 47800): TV sends "TVSP1;v=2;auth=1;id=..;name=..;w=..;h=..;hz=..;hevc=maxH;avc=maxH\n".
     ///  Authentication first (see Pairing): PC sends extension 5 [5][pc id 16][nonce 32], the TV answers "AUTH;hex"
     ///  (HMAC of the nonce with the pairing key) or "AUTH;none"; an unknown TV pairs: extension 6 [6][pc id][PC public
@@ -136,13 +138,43 @@ namespace TVScreenPlus
                     var d = udp.Receive(ref ep);
                     if (d.Length >= 5 && Lan(ep.Address) && Encoding.ASCII.GetString(d, 0, 5) == "TVSP?")
                     {
-                        var r = Encoding.UTF8.GetBytes("TVSP!\nname=" + Environment.MachineName + "\nbusy=" + (current != null ? 1 : 0) + "\nver=" + Program.Version);
+                        string mac = MacFacing(ep.Address);
+                        var r = Encoding.UTF8.GetBytes("TVSP!\nname=" + Environment.MachineName + "\nbusy=" + (current != null ? 1 : 0) + "\nver=" + Program.Version +
+                                                       (mac != null ? "\nmac=" + mac : ""));
                         udp.Send(r, r.Length, ep);
                     }
                 }
                 catch (ObjectDisposedException) { return; }
                 catch (Exception e) { Log.W("udp: " + e.Message); Thread.Sleep(200); }
             }
+        }
+
+        /// <summary>Hardware address of the network card on the same subnet as this address (Wake-on-LAN), or null.</summary>
+        static string MacFacing(IPAddress remote)
+        {
+            try
+            {
+                if (remote.IsIPv4MappedToIPv6) remote = remote.MapToIPv4();
+                byte[] r = remote.GetAddressBytes();
+                if (r.Length != 4) return null;
+                // Ethernet first: a PC on both Ethernet and Wi-Fi wakes from its wired card.
+                foreach (var nic in NetworkInterface.GetAllNetworkInterfaces().OrderBy(n => n.NetworkInterfaceType == NetworkInterfaceType.Ethernet ? 0 : 1))
+                {
+                    if (nic.OperationalStatus != OperationalStatus.Up) continue;
+                    foreach (var ua in nic.GetIPProperties().UnicastAddresses)
+                    {
+                        if (ua.Address.AddressFamily != AddressFamily.InterNetwork || ua.IPv4Mask == null) continue;
+                        byte[] a = ua.Address.GetAddressBytes(), m = ua.IPv4Mask.GetAddressBytes();
+                        bool same = true;
+                        for (int i = 0; i < 4; i++) if ((a[i] & m[i]) != (r[i] & m[i])) { same = false; break; }
+                        if (!same) continue;
+                        string mac = nic.GetPhysicalAddress().ToString();
+                        return mac.Length == 12 ? mac : null;
+                    }
+                }
+            }
+            catch { }
+            return null;
         }
 
         void AcceptLoop()
@@ -439,9 +471,12 @@ namespace TVScreenPlus
         /// <summary>Ends a refused connection; an old TV app keeps it a minute so that our message stays on its screen.</summary>
         public void Refuse()
         {
-            if (lingerOnRefuse) Thread.Sleep(60000);
+            if (lingerOnRefuse && Interlocked.Increment(ref lingering) <= 2)
+                try { Thread.Sleep(60000); } finally { Interlocked.Decrement(ref lingering); }
+            else if (lingerOnRefuse) Interlocked.Decrement(ref lingering);
             Close();
         }
+        static int lingering;
 
         /// <summary>TV name as shown on the PC (pairing dialog, notifications, settings): printable, short.</summary>
         static string Clean(string s)
@@ -580,7 +615,7 @@ namespace TVScreenPlus
                 // First connection on this network type: at most 50 Mb/s, the ceiling then rises if all is well.
                 int defCap = Math.Min((int)(mbps * 1000 * defShare) - audioKbps, 50000);
                 int learned = int.TryParse(Settings.Get(capKey, ""), out int lc) ? lc : 0;
-                int netCap = Math.Min(hardCap, learned > 0 ? learned : defCap);
+                int netCap = Math.Max(1000, Math.Min(hardCap, learned > 0 ? learned : defCap)); // > 0 even on a link under 2 Mb/s
                 if (kbps > netCap) { capped = $", capped to network {netCap}{(learned > 0 ? " (learned)" : "")}"; kbps = netCap; }
                 int maxKbps = kbps;
                 // ~20 ms of video: little hidden queue. Wi-Fi acknowledges in bursts (aggregation, TV power save):
@@ -954,7 +989,12 @@ namespace TVScreenPlus
         {
             var bytes = new List<byte>();
             int c;
-            while ((c = s.ReadByte()) >= 0 && c != '\n') { if (bytes.Count < 1024) bytes.Add((byte)c); }
+            int total = 0;
+            while ((c = s.ReadByte()) >= 0 && c != '\n')
+            {
+                if (bytes.Count < 1024) bytes.Add((byte)c);
+                if (++total > 1 << 20) throw new IOException("line too long");
+            }
             if (c < 0 && nullOnEof) return null;
             return Encoding.UTF8.GetString(bytes.ToArray()).TrimEnd('\r');
         }

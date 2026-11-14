@@ -83,7 +83,8 @@ The app is not on the Play Store: you need to install the APK file.
 **Remote control while streaming**
 | Key | Action |
 |---|---|
-| **OK** or **Menu** | Show / hide the statistics (resolution, bitrate, frames/s, sound, gamepads) |
+| **OK** | Show / hide the statistics (resolution, bitrate, frames/s, sound, gamepads) |
+| **Menu** | Quick menu over the picture: fluid / game mode, sound sync (◀ ▶, OK = 0), statistics, disconnect |
 | **Back** | Disconnect. The display disappears from Windows |
 | **▲ / ▼** | **Fluid** mode (steady 60 fps, synced sound) / **game** mode (minimal latency). Applied within a fraction of a second, without disconnecting |
 | **◀ / ▶** | Advance / delay the sound by 10 ms (by-ear sync adjustment, remembered) |
@@ -117,9 +118,17 @@ Enabled by default. While streaming, everything Windows plays (games, videos, mu
 - **Automatic sync**: the TV measures the real sound delay (capture → speakers or soundbar) and the picture delay (capture → screen), and compares them. If sound arrives after the picture, the picture is slightly delayed; if it arrives before, the sound is. Changes are gradual and invisible. In **game mode** (PC), the picture is never delayed to wait for the sound: responsiveness comes first.
 - **By-ear adjustment**: while streaming, the **◀ ▶** keys on the remote advance or delay the sound by 10 ms (remembered). *TV settings › Sound sync* resets it to 0. Handy with a lip-sync test video.
 
+### Wake the PC remotely
+A PC the TV has seen before that no longer answers (asleep or off) shows up dimmed in the list after a few seconds: **OK** sends a wake-up packet (Wake-on-LAN), then the TV connects as soon as the PC answers. The PC must allow wake-on-LAN (BIOS and network card, preferably Ethernet). Available with TVScreenPlus PC 1.2.2 or later, which gives the TV its network card address.
+
 ### Gamepads
 Enabled by default. Connect your gamepads to the TV (*TV settings › Remotes & accessories › Add accessory* for Bluetooth), then connect the TV to the PC: each gamepad appears in Windows as an **Xbox 360 controller** (up to 4). Games and Steam recognize it as a gamepad plugged into the PC.
-- Any gamepad the TV recognizes as a game controller works: Xbox, PlayStation (DualShock 4, DualSense), 8BitDo, Stadia, generic Bluetooth "Android" gamepads, USB gamepads…
+- Any gamepad the TV recognizes as a game controller works: Xbox (360, One, Series), PlayStation (DualShock 3, DualShock 4, DualSense), Nintendo Switch (Pro Controller, Joy-Con), 8BitDo, Stadia, generic Bluetooth "Android" gamepads, USB gamepads…
+- **Gamepads page**: connected gamepads show small at the bottom left of the TV app's home screen (also: the *Gamepads* button at the top of the home screen, or *Settings › Gamepads*). An opened gamepad is drawn live (buttons, sticks, triggers) with its settings: player number, A B X Y buttons Xbox-style or Nintendo-style, rumble strength, stick dead zone, split / pair Joy-Cons, *Test the buttons*, *Rumble to find it*, disconnect (Switch 2) or the TV's Bluetooth settings.
+- **Nintendo buttons**: placed as on an Xbox controller (the bottom button is *A*), so PC games get them right.
+- **Joy-Cons**: a left and a right one make one controller; a single Joy-Con is held sideways (SL / SR = shoulder buttons). To play with two, *Split the two Joy-Cons* on the Gamepads page (and *Pair with the other Joy-Con* to put them back).
+- **Switch 2 controllers** (Joy-Con 2, Pro Controller 2, Switch 2 GameCube controller): they use Nintendo's own Bluetooth protocol, which Android doesn't handle by itself. Turn on *Switch 2 controllers* in the TV settings (the TV asks for access to nearby devices), then press the small **SYNC** button on the controller: it connects within a few seconds. Needed every time, as these controllers only reconnect by themselves to their console.
+- The *HOME* button of the Switch 1 Pro Controller takes the TV to its home screen (Android reserves it): use the *Capture* button instead, which acts as *Guide*.
 - Sticks, analog triggers, D-pad, all buttons (the central Xbox / PS button becomes the *Guide* button, often reserved by the TV's system).
 - **Rumble**: when a game makes the virtual Xbox controller vibrate, the TV's gamepad vibrates (if it and the TV allow it; better support from Android 12).
 - A gamepad connected or disconnected while streaming appears or disappears on the PC right away.
@@ -132,11 +141,14 @@ Enabled by default. Connect your gamepads to the TV (*TV settings › Remotes & 
 | **Language** | System language, or Français / English / Español / Deutsch |
 | **Picture priority** | *Automatic*, *Smoothness* (cautious bitrate, 1080p max) or *Maximum quality* (higher bitrate) |
 | **Maximum resolution** | Automatic, 720p, 1080p, 1440p or 4K |
+| **Picture size** | 100 % to 90 %: reduce it if the TV cuts the edges of the picture (taskbar not visible) |
 | **Automatic connection** | Connect by itself to the last PC used |
 | **Statistics while streaming** | Show them by default (otherwise: OK key) |
 | **Computer sound on the TV** | Play PC sound on the TV (enabled by default) |
 | **Sound output** | *Fast* (lowest latency, default; skips the TV's sound effects on TVs where the fast path goes straight to the speakers), *Steady* (same with more margin: no tiny cuts, ~30 ms more) or *TV quality* (through the TV's sound effects such as Dolby, ~200 ms: best in fluid mode, where the image waits for the sound; in game mode the sound lags). Applied at the next connection |
+| **Gamepads** | Opens the Gamepads page (above), which also holds the next two settings |
 | **TV gamepads used by the computer** | Send the TV's gamepads to the PC (enabled by default). When off, they control the TV as before |
+| **Switch 2 controllers (Bluetooth)** | Look for Joy-Con 2 / Pro Controller 2 / GameCube controllers whose SYNC button is pressed (off by default) |
 | **TV hardware test** | Measures what the video chip really decodes (see below) |
 | **Check for updates** | Checks for and installs the latest version |
 | **Forget saved computers** | Clears the last PC and the typed IP |

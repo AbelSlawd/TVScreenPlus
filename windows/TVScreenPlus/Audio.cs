@@ -124,7 +124,13 @@ namespace TVScreenPlus
                         {
                             d2.GetId(out string id2);
                             Marshal.ReleaseComObject(d2);
-                            if (id2 != id) { Log.W("Audio: default device changed"); return; }
+                            if (id2 != id)
+                            {
+                                Log.W("Audio: default device changed");
+                                // The old device gets its sound back; the next capture mutes the new one if asked.
+                                if (muted != null) { SetMute(muted, false); muted = null; Settings.Set("pc_muted", null); }
+                                return;
+                            }
                         }
                         // "Couper le son du PC" can be toggled while streaming.
                         if (Settings.MutePc && muted == null)

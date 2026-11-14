@@ -83,7 +83,8 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 **Télécommande pendant la diffusion**
 | Touche | Action |
 |---|---|
-| **OK** ou **Menu** | Afficher / masquer les statistiques (résolution, débit, images/s, son, manettes) |
+| **OK** | Afficher / masquer les statistiques (résolution, débit, images/s, son, manettes) |
+| **Menu** | Menu rapide par-dessus l'image : mode fluide / jeu, synchro du son (◀ ▶, OK = 0), statistiques, déconnecter |
 | **Retour** | Se déconnecter. L'écran disparaît de Windows |
 | **▲ / ▼** | Mode **fluide** (60 i/s réguliers, son synchronisé) / mode **jeu** (latence minimale). Appliqué en une fraction de seconde, sans déconnexion |
 | **◀ / ▶** | Avancer / retarder le son de 10 ms (réglage de la synchronisation à l'oreille, mémorisé) |
@@ -117,9 +118,17 @@ Activé par défaut. Pendant la diffusion, tout ce que joue Windows (jeux, vidé
 - **Synchronisation automatique** : la TV mesure le délai réel du son (capture → haut-parleurs ou barre de son) et celui de l'image (capture → écran), et les compare. Si le son arrive après l'image, l'image est légèrement retardée ; s'il arrive avant, c'est le son. Les changements sont progressifs et invisibles. En **mode jeu** (PC), l'image n'est jamais retardée pour attendre le son : la réactivité passe en premier.
 - **Réglage à l'oreille** : pendant la diffusion, les touches **◀ ▶** de la télécommande avancent ou retardent le son de 10 ms (mémorisé). *Paramètres de la TV › Synchronisation du son* le remet à 0. Pratique avec une vidéo de test de synchronisation labiale.
 
+### Réveiller le PC à distance
+Un PC déjà vu par la TV qui ne répond plus (en veille ou éteint) apparaît grisé dans la liste après quelques secondes : **OK** envoie un paquet de réveil (Wake-on-LAN), puis la TV se connecte dès que le PC répond. Il faut que le PC autorise le réveil par le réseau (BIOS et carte réseau, de préférence en Ethernet). Disponible avec TVScreenPlus PC 1.2.2 ou plus récent, qui donne l'adresse de sa carte réseau à la TV.
+
 ### Manettes
 Activées par défaut. Connectez vos manettes à la TV (*Paramètres de la TV › Télécommandes et accessoires › Ajouter un accessoire* pour le Bluetooth), puis connectez la TV au PC : chaque manette apparaît dans Windows comme une **manette Xbox 360** (jusqu'à 4). Les jeux et Steam la reconnaissent comme une manette branchée sur le PC.
-- Toute manette reconnue par la TV comme manette de jeu fonctionne : Xbox, PlayStation (DualShock 4, DualSense), 8BitDo, Stadia, manettes Bluetooth « Android » génériques, manettes USB…
+- Toute manette reconnue par la TV comme manette de jeu fonctionne : Xbox (360, One, Series), PlayStation (DualShock 3, DualShock 4, DualSense), Nintendo Switch (manette Pro, Joy-Con), 8BitDo, Stadia, manettes Bluetooth « Android » génériques, manettes USB…
+- **Page Manettes** : les manettes connectées s'affichent en petit en bas à gauche de l'écran d'accueil de l'application TV (aussi : bouton *Manettes* en haut de l'écran d'accueil, ou *Paramètres › Manettes*). Une manette ouverte est dessinée en direct (boutons, sticks, gâchettes) avec ses réglages : numéro de joueur, boutons A B X Y façon Xbox ou Nintendo, force des vibrations, zone morte des sticks, séparer / associer les Joy-Con, *Tester les boutons*, *Faire vibrer pour la reconnaître*, déconnexion (Switch 2) ou paramètres Bluetooth de la TV.
+- **Boutons Nintendo** : placés comme sur une manette Xbox (le bouton du bas est *A*), pour que les jeux PC tombent juste.
+- **Joy-Con** : un gauche et un droit forment une seule manette ; un Joy-Con seul se tient à l'horizontale (SL / SR = gâchettes du haut). Pour jouer à deux, *Séparer les deux Joy-Con* sur la page Manettes (et *Associer à l'autre Joy-Con* pour les réunir).
+- **Manettes Switch 2** (Joy-Con 2, manette Pro 2, manette GameCube de la Switch 2) : elles utilisent un Bluetooth propre à Nintendo qu'Android ne gère pas seul. Activez *Manettes Switch 2* dans les paramètres de la TV (la TV demande l'accès aux appareils à proximité), puis appuyez sur le petit bouton **SYNC** de la manette : elle se connecte en quelques secondes. À refaire à chaque fois, car ces manettes ne se reconnectent d'elles-mêmes qu'à leur console.
+- Le bouton *HOME* de la manette Pro de la Switch 1 ramène la TV à son écran d'accueil (Android le réserve) : préférez le bouton *Capture*, qui sert de *Guide*.
 - Sticks, gâchettes analogiques, croix directionnelle, tous les boutons (le bouton central Xbox / PS devient le bouton *Guide*, souvent réservé par le système de la TV).
 - **Vibrations** : quand un jeu fait vibrer la manette Xbox virtuelle, la manette de la TV vibre (si elle et la TV le permettent ; meilleure prise en charge à partir d'Android 12).
 - Une manette connectée ou déconnectée pendant la diffusion apparaît ou disparaît aussitôt sur le PC.
@@ -132,11 +141,14 @@ Activées par défaut. Connectez vos manettes à la TV (*Paramètres de la TV �
 | **Langue** | Langue du système, ou Français / English / Español / Deutsch |
 | **Priorité de l'image** | *Automatique*, *Fluidité* (débit prudent, 1080p max) ou *Qualité maximale* (débit plus élevé) |
 | **Résolution maximale** | Automatique, 720p, 1080p, 1440p ou 4K |
+| **Taille de l'image** | 100 % à 90 % : à réduire si la TV coupe les bords de l'image (barre des tâches invisible) |
 | **Connexion automatique** | Se connecter seule au dernier PC utilisé |
 | **Statistiques pendant la diffusion** | Les afficher d'office (sinon : touche OK) |
 | **Son de l'ordinateur sur la TV** | Jouer le son du PC sur la TV (activé par défaut) |
 | **Sortie du son** | *Rapide* (latence minimale, par défaut ; sans les effets sonores de la TV sur les TV où ce chemin va droit aux haut-parleurs), *Stable* (pareil avec plus de marge : plus de micro-coupures, ~30 ms de plus) ou *Qualité TV* (passe par les effets sonores de la TV comme le Dolby, ~200 ms : idéal en mode fluide, où l'image attend le son ; en mode jeu le son arrive en retard). Appliqué à la prochaine connexion |
+| **Manettes** | Ouvre la page Manettes (ci-dessus), qui contient aussi les deux réglages suivants |
 | **Manettes de la TV utilisées par l'ordinateur** | Envoyer les manettes de la TV au PC (activé par défaut). Désactivé, elles pilotent la TV comme avant |
+| **Manettes Switch 2 (Bluetooth)** | Chercher les Joy-Con 2 / manettes Pro 2 / GameCube dont on appuie sur SYNC (désactivé par défaut) |
 | **Test du matériel de la TV** | Mesure ce que la puce vidéo décode vraiment (voir ci-dessous) |
 | **Rechercher les mises à jour** | Vérifie et installe la dernière version |
 | **Oublier les ordinateurs mémorisés** | Efface le dernier PC et l'IP saisie |

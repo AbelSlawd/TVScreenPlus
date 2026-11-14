@@ -101,10 +101,10 @@ class AudioPlayer(private val mode: String, private val log: (String) -> Unit) {
     fun offer(b: ByteArray, len: Int) {
         if (len <= 12 || b[1].toInt() != 1) return
         val channels = b[2].toInt() and 0xFF
-        val rate = u32(b, 4).toInt()
+        val rate = StreamClient.u32(b, 4).toInt()
         if (channels !in 1..2 || rate !in 8000..192000) return
         // Arrival time minus PC capture time: constant clock offset + network jitter.
-        val transit = System.nanoTime() / 1_000_000 - u32(b, 8)
+        val transit = System.nanoTime() / 1_000_000 - StreamClient.u32(b, 8)
         synchronized(statLock) { transitMin = minOf(transitMin, transit); transitMax = maxOf(transitMax, transit) }
         val p = Packet(rate, channels, b.copyOfRange(12, len))
         if (!queue.offer(p)) {
@@ -141,7 +141,6 @@ class AudioPlayer(private val mode: String, private val log: (String) -> Unit) {
         var baseMs = 30            // jitter buffer target
         var trackGame = false      // audio path of the current track
         var appliedTarget = -1     // frames: buffer size last given to the track
-        var levelAvg = -1.0        // (unused, kept for the reset lines)
         var winStart = 0L          // 1 s windows: lowest fill level seen (frames) = sound really in excess
         var winMin = Int.MAX_VALUE
         var toSkip = 0             // excess frames still to drop, a packet at a time
@@ -177,7 +176,7 @@ class AudioPlayer(private val mode: String, private val log: (String) -> Unit) {
                     t = n.first; capacity = n.second
                     track = (t as? TrackOut)?.t
                     written = 0; writtenTotal = 0; lastUnderruns = 0; steadySince = System.nanoTime()
-                    appliedTarget = -1; levelAvg = -1.0; outputMs = -1; startedAt = System.nanoTime(); reported = false
+                    appliedTarget = -1; outputMs = -1; startedAt = System.nanoTime(); reported = false
                 }
                 val tr = t ?: continue
                 val now = System.nanoTime()
@@ -201,10 +200,14 @@ class AudioPlayer(private val mode: String, private val log: (String) -> Unit) {
                     // Sound (re)starts or the track ran dry: refill to the target with silence first.
                     val fill = (target - queued.coerceAtLeast(0) - pktFrames).coerceAtLeast(0)
                     if (fill > 0) {
-                        val r = tr.write(ByteArray(fill * frameBytes), 0, fill * frameBytes).coerceAtLeast(0) / frameBytes
+                        val r = try { tr.write(ByteArray(fill * frameBytes), 0, fill * frameBytes).coerceAtLeast(0) / frameBytes } catch (e: Exception) {
+                            if (tr !is AOut) throw e
+                            log("audio: AAudio failed (${e.message}), back to AudioTrack")
+                            aaudioBroken = true; tr.close(); t = null
+                            continue
+                        }
                         written += r; writtenTotal += r
                     }
-                    levelAvg = -1.0
                     winStart = now; winMin = Int.MAX_VALUE; toSkip = 0
                 } else {
                     // Excess sound = the LOWEST fill level of the last second above the target. A network burst
@@ -256,7 +259,7 @@ class AudioPlayer(private val mode: String, private val log: (String) -> Unit) {
                     lastTs = lastWrite
                     val pending = writtenTotal - ts.first
                     val ms = pending * 1000.0 / rate - (System.nanoTime() - ts.second) / 1e6
-                    if (ms in 0.0..1000.0) outputMs = if (outputMs < 0) ms.toInt() else (outputMs * 0.8 + ms * 0.2).toInt()
+                    if (ms in 0.0..1000.0) outputMs = if (outputMs < 0) Math.round(ms).toInt() else Math.round(outputMs * 0.8 + ms * 0.2).toInt()
                 }
                 if (!reported && lastWrite - startedAt > 4_000_000_000L) {
                     reported = true
@@ -318,6 +321,4 @@ class AudioPlayer(private val mode: String, private val log: (String) -> Unit) {
         return TrackOut(t) to alloc
     }
 
-    private fun u32(b: ByteArray, o: Int): Long =
-        ((b[o].toLong() and 0xFF) shl 24) or ((b[o + 1].toLong() and 0xFF) shl 16) or ((b[o + 2].toLong() and 0xFF) shl 8) or (b[o + 3].toLong() and 0xFF)
 }

@@ -134,8 +134,13 @@ namespace TVScreenPlus
             lock (D)
             {
                 if (v == null) D.Remove(k); else D[k] = v;
+                if (!restricted)
+                {
+                    // Created empty and restricted first: it would inherit the folder's read access with the keys in it.
+                    try { if (!File.Exists(F)) File.WriteAllText(F, ""); } catch { }
+                    Program.AdminsOnly(F); restricted = true;
+                }
                 try { File.WriteAllLines(F, D.Select(p => p.Key + "=" + p.Value)); } catch { }
-                if (!restricted) { Program.AdminsOnly(F); restricted = true; } // created just now: it inherited the folder's read access
             }
         }
         /// <summary>Target vertical resolution: -1 = automatic, 0 = TV native, else 1080 / 1440 / 2160.</summary>
@@ -488,9 +493,10 @@ namespace TVScreenPlus
             if (Settings.Get("fw", "") == version) return;
             string exe = Process.GetCurrentProcess().MainModule.FileName;
             Run("netsh", "advfirewall firewall delete rule name=TVScreenPlus");
+            bool ok = true;
             foreach (var (proto, port) in new[] { ("UDP", Server.UdpPort), ("TCP", Server.TcpPort) })
-                Run("netsh", $"advfirewall firewall add rule name=TVScreenPlus dir=in action=allow program=\"{exe}\" protocol={proto} localport={port} remoteip=localsubnet profile=any");
-            Settings.Set("fw", version);
+                ok &= Run("netsh", $"advfirewall firewall add rule name=TVScreenPlus dir=in action=allow program=\"{exe}\" protocol={proto} localport={port} remoteip=localsubnet profile=any") == 0;
+            if (ok) Settings.Set("fw", version); // else tried again at the next start
         }
 
         public static void SetAutoStart(bool on)
@@ -506,7 +512,7 @@ namespace TVScreenPlus
             {
                 using (var p = Process.Start(new ProcessStartInfo(file, args) { CreateNoWindow = true, UseShellExecute = false }))
                 {
-                    p.WaitForExit(30000);
+                    if (!p.WaitForExit(30000)) { try { p.Kill(); } catch { } Log.W(file + " timed out"); return -1; }
                     return p.ExitCode;
                 }
             }

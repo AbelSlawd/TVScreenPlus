@@ -173,11 +173,11 @@ class StreamClient(
         return "p50 ${s[n / 2]} p95 ${s[n * 95 / 100]} max ${s[n - 1]}"
     }
 
-    /** A frame reached the screen (TV compositor timestamp). */
     /** No latency sample until then (nanoTime): the frames queued while a new decoder starts are ~250 ms old and
      *  made the A/V sync delay the sound for a moment after each mode switch (228 ms in the TV's buffer). */
     @Volatile private var e2eIgnoreUntil = 0L
 
+    /** A frame reached the screen (TV compositor timestamp). */
     private fun onRendered(ptsUs: Long, nanoTime: Long) {
         val cap = synchronized(capMap) { capMap.remove(ptsUs) } ?: return
         if (nanoTime < e2eIgnoreUntil) return
@@ -201,7 +201,7 @@ class StreamClient(
         if (len > 12) ageMs(u32(b, 8), System.nanoTime() / 1_000_000)?.let { t ->
             if (t in 0L..1000L) { audioTransit = if (audioTransit < 0) t.toDouble() else audioTransit * 0.95 + t * 0.05; audioAt = System.nanoTime() }
         }
-        player().offer(b, len)
+        player()?.offer(b, len)
     }
 
     /** Cursor packets: 3 = position [3][visible][u16 x][u16 y][u32 PC ms], 4 = shape [4][u16 w][u16 h][u16 hx][u16 hy][BGRA]. */
@@ -227,6 +227,8 @@ class StreamClient(
     @Volatile private var cursorOn = false
     private val vq = ArrayDeque<VFrame>()
     private val vLock = java.lang.Object()
+    /** Held while a frame goes into the decoder and while the decoder is replaced or released (network and feeder threads). */
+    private val feedLock = Any()
     private var feeding = false
     val appliedVideoDelayMs: Int get() = (appliedDelayNs / 1_000_000).toInt()
 
@@ -316,7 +318,7 @@ class StreamClient(
                 val len = input.readInt()
                 val flags = input.readUnsignedByte()
                 if (len < 0 || len > (64 shl 20)) throw Exception(L.t("corrupt"))
-                if (len > buf.size) buf = ByteArray(len * 2)
+                if (len > buf.size) buf = ByteArray(maxOf(len, minOf(len * 2, 16 shl 20)))
                 input.readFully(buf, 0, len)
                 bytesWindow += len + 5
                 when {
@@ -347,11 +349,10 @@ class StreamClient(
             upstreamThread.shutdownNow()
             try { renderThread?.quitSafely() } catch (_: Exception) {}
             listener.onCursorMove(0, 0, false, streamW, streamH)
-            decoder?.release()
-            audio?.release()
-            audio = null
-            synchronized(vLock) { vq.clear(); vLock.notifyAll() }
             try { udp?.close() } catch (_: Exception) {}
+            synchronized(feedLock) { decoder?.release() }
+            synchronized(audioLock) { audio?.release(); audio = null }
+            synchronized(vLock) { vq.clear(); vLock.notifyAll() }
             listener.onEnded(error)
         }
     }
@@ -375,7 +376,7 @@ class StreamClient(
                 return
             }
         }
-        decoder?.feed(buf, len, key, cap)
+        synchronized(feedLock) { decoder?.feed(buf, len, key, cap) }
     }
 
     private fun feedLoop() {
@@ -396,19 +397,15 @@ class StreamClient(
                 }
                 vq.removeFirst()
             } ?: continue
-            try { decoder?.feed(f.data, f.data.size, f.key, f.cap) } catch (_: Exception) {} // decoder replaced meanwhile
+            try { synchronized(feedLock) { decoder?.feed(f.data, f.data.size, f.key, f.cap) } } catch (_: Exception) {}
             synchronized(vLock) { feeding = false }
         }
     }
 
-    /**
-     * Every 250 ms: make the sound and the image leave the TV together.
-     * image = PC capture/encoding delay (from the PC) + decoder + one frame to reach the screen;
-     * sound = PC capture delay + measured write -> speaker delay (TV audio hardware included).
-     * Sound later -> delay the image; sound earlier -> delay the sound. Plus the user's correction.
-     */
-    /** The sound player, created on first use (TCP or UDP thread). */
-    private fun player(): AudioPlayer = synchronized(audioLock) { audio ?: AudioPlayer(soundMode) { log(it) }.also { it.game = gameMode; audio = it } }
+    /** The sound player, created on first use (TCP or UDP thread); none once the stream has ended. */
+    private fun player(): AudioPlayer? = synchronized(audioLock) {
+        if (!running) null else audio ?: AudioPlayer(soundMode) { log(it) }.also { it.game = gameMode; audio = it }
+    }
 
     /** UDP socket for the sound; returns its port (0 = unavailable: the PC then keeps the sound in TCP). */
     private fun startUdp(): Int = try {
@@ -436,6 +433,12 @@ class StreamClient(
         u.localPort
     } catch (e: Exception) { log("audio: no UDP socket (${e.javaClass.simpleName}), sound stays in TCP"); 0 }
 
+    /**
+     * Every 250 ms: make the sound and the image leave the TV together.
+     * image = PC capture/encoding delay (from the PC) + decoder + one frame to reach the screen;
+     * sound = PC capture delay + measured write -> speaker delay (TV audio hardware included).
+     * Sound later -> delay the image; sound earlier -> delay the sound. Plus the user's correction.
+     */
     private fun syncTick() {
         if (!audioOn) { videoDelayMs = 0; return } // no sound: never delay the image
         val a = audio ?: return
@@ -498,10 +501,14 @@ class StreamClient(
         val w = c["w"]?.toIntOrNull() ?: 1920
         val h = c["h"]?.toIntOrNull() ?: 1080
         val hevc = c["codec"] == "hevc"
-        decoder?.release()
-        decoder = try {
-            Decoder(if (hevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC, w, h, hevc)
-        } catch (e: Exception) { log("decoder creation failed ${w}x$h: ${e.javaClass.simpleName}: ${e.message}"); throw e }
+        synchronized(vLock) { vq.clear() } // frames of the previous stream must not reach the new decoder
+        synchronized(feedLock) {
+            decoder?.release()
+            decoder = null
+            decoder = try {
+                Decoder(if (hevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC, w, h, hevc)
+            } catch (e: Exception) { log("decoder creation failed ${w}x$h: ${e.javaClass.simpleName}: ${e.message}"); throw e }
+        }
         log("decoder ${Codecs.lastDecoder}")
         val rate = c["kbps"]?.toIntOrNull()?.let { " · ${L.t("target")} %.1f Mb/s".format(it / 1000.0) } ?: ""
         info = "${w}x$h ${c["fps"] ?: "60"} i/s ${if (hevc) "HEVC" else "H.264"}$rate · ${c["enc"] ?: ""}"
@@ -520,7 +527,6 @@ class StreamClient(
         cursorOn = c["cursor"] == "1"
         pcPlaybackMs = c["lpc"]?.toIntOrNull() ?: 15
         if (!cursorOn) listener.onCursorMove(0, 0, false, w, h)
-        synchronized(vLock) { vq.clear() } // frames of the previous stream must not reach the new decoder
         pads = c["pads"] == "1"
         streaming = true
         listener.onStarted(info)
@@ -532,6 +538,7 @@ class StreamClient(
         var stuckSince = 0L
         while (running) {
             for (i in 0 until 8) {
+                if (!running) break
                 try { Thread.sleep(250) } catch (_: InterruptedException) {}
                 try { syncTick() } catch (_: Exception) {}
                 // Self-healing: no new image for 6 s while streaming (the PC always sends 60 fps, even on a still
@@ -539,9 +546,10 @@ class StreamClient(
                 if (decoder != null) {
                     val r = rendered
                     val now = System.nanoTime()
+                    // Before the first image, more time: the decoder starts and waits for a keyframe.
                     if (r != watchRendered) { watchRendered = r; stuckSince = now }
-                    else if (r > 0 && now - stuckSince > 6_000_000_000L) {
-                        log("no image for 6 s: reconnecting")
+                    else if (now - stuckSince > (if (r > 0) 6_000_000_000L else 10_000_000_000L)) {
+                        log("no image for ${if (r > 0) 6 else 10} s: reconnecting")
                         stalled = true
                         stop()
                     }
@@ -597,27 +605,29 @@ class StreamClient(
             cap = captureMs
             if (!gotKey) {
                 if (!key) return
-                gotKey = true
-                // First keyframe: hand parameter sets to the decoder as codec config.
+                // First keyframe: hand parameter sets to the decoder as codec config (retried on the next keyframe
+                // if the decoder didn't take them).
                 val ps = paramSetsLength(buf, len, hevc)
                 if (ps in 1 until len) {
-                    queue(buf, 0, ps, MediaCodec.BUFFER_FLAG_CODEC_CONFIG)
-                    queue(buf, ps, len - ps, MediaCodec.BUFFER_FLAG_KEY_FRAME)
+                    gotKey = queue(buf, 0, ps, MediaCodec.BUFFER_FLAG_CODEC_CONFIG)
+                    if (gotKey) queue(buf, ps, len - ps, MediaCodec.BUFFER_FLAG_KEY_FRAME)
                     return
                 }
+                gotKey = true
             }
             queue(buf, 0, len, if (key) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
         }
 
-        private fun queue(data: ByteArray, off: Int, len: Int, flags: Int) {
+        /** False when the frame couldn't be given to the decoder (saturated, or too big for its buffer). */
+        private fun queue(data: ByteArray, off: Int, len: Int, flags: Int): Boolean {
             val t0 = System.nanoTime()
             val idx = codec.dequeueInputBuffer(200_000)
             val waited = System.nanoTime() - t0
             if (waited > 1_000_000) synchronized(decLock) { waitNs += waited }
-            if (idx < 0) { dropped++; return } // decoder saturated
+            if (idx < 0) { dropped++; return false } // decoder saturated
             val b = codec.getInputBuffer(idx)!!
             b.clear()
-            if (len > b.capacity()) { codec.queueInputBuffer(idx, 0, 0, 0, 0); dropped++; return }
+            if (len > b.capacity()) { codec.queueInputBuffer(idx, 0, 0, 0, 0); dropped++; return false }
             b.put(data, off, len)
             val pts = System.nanoTime() / 1000
             codec.queueInputBuffer(idx, 0, len, pts, flags)
@@ -625,8 +635,8 @@ class StreamClient(
                 capMap[pts] = cap
                 dQueued++
                 if (capMap.size > 120) capMap.remove(capMap.keys.first())
-                Unit
             }
+            return true
         }
 
         /** Render every decoded frame immediately; SurfaceFlinger keeps only the newest per vsync. */

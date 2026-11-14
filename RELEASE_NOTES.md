@@ -1,3 +1,12 @@
+**Nouveau en 1.2.2 : toutes les manettes, page Manettes, menu rapide**
+- **Manettes Nintendo** : manette Pro et Joy-Con de la Switch (deux Joy-Con = une manette, un Joy-Con seul se tient à l'horizontale), boutons placés comme sur une manette Xbox (réglable). Capture sert de bouton Guide.
+- **Manettes Switch 2** (Joy-Con 2, manette Pro 2, manette GameCube) : réglage *Manettes Switch 2* dans la page Manettes, puis bouton SYNC de la manette. Vibrations et voyants de joueur compris.
+- **Page Manettes** (bouton en haut de l'accueil, ou pastilles en bas à gauche) : dessin en direct de chaque manette, numéro de joueur, vibrations, zone morte des sticks, séparer / associer les Joy-Con, test des boutons. Les manettes Nintendo de la Switch 1 ne vibrent pas sur les TV dont le système n'a pas la vibration Nintendo (TCL testée) : la page l'indique.
+- **Menu rapide** pendant la diffusion (touche Menu de la télécommande) : mode fluide / jeu, synchro du son, statistiques, déconnecter.
+- **Taille de l'image** (Paramètres de la TV) pour les TV qui coupent les bords.
+- **Réveil du PC** : un PC déjà vu qui ne répond plus apparaît grisé, OK le réveille par le réseau (Wake-on-LAN, si le PC l'autorise).
+- Corrections (revue complète du code) : remplacement du décodeur plus sûr pendant les changements de mode, son AAudio plus robuste, reconnexion si la première image n'arrive jamais, débrancher une manette ne coupe plus les vibrations des autres sur le PC, image ffmpeg corrompue sur un bureau immobile, désinstallation qui ne touche plus qu'au dossier d'installation, et d'autres.
+
 **Nouveau en 1.2.1 : qualité du son** (application TV)
 - Nouveau réglage *Paramètres de la TV › Sortie du son* :
   - **Rapide** (par défaut, comme en 1.2.0) : latence minimale. Sur certaines TV (TCL/MediaTek), ce chemin rapide envoie le son directement aux haut-parleurs, sans les effets sonores de la TV (Dolby, égaliseur) : c'est pourquoi le son paraissait moins riche depuis la 1.1.4.

@@ -26,7 +26,8 @@ Java_com_tvscreenplus_AAudioOut_nOpen(JNIEnv *env, jclass cls, jint rate, jint c
     r = AAudioStreamBuilder_openStream(b, &s);
     AAudioStreamBuilder_delete(b);
     if (r != AAUDIO_OK) return r;
-    if (AAudioStream_getSampleRate(s) != rate || AAudioStream_getFormat(s) != AAUDIO_FORMAT_PCM_I16) {
+    if (AAudioStream_getSampleRate(s) != rate || AAudioStream_getFormat(s) != AAUDIO_FORMAT_PCM_I16 ||
+        AAudioStream_getChannelCount(s) != channels) {
         AAudioStream_close(s);
         return AAUDIO_ERROR_INVALID_FORMAT;
     }
@@ -47,12 +48,17 @@ Java_com_tvscreenplus_AAudioOut_nInfo(JNIEnv *env, jclass cls, jlong h, jint wha
 }
 
 // Frames written (blocks up to timeoutMs for room), or a negative AAudio error (e.g. disconnected).
+// The write may block: the samples are copied out first (no JNI critical region held across a blocking call).
 JNIEXPORT jint JNICALL
 Java_com_tvscreenplus_AAudioOut_nWrite(JNIEnv *env, jclass cls, jlong h, jbyteArray a, jint off, jint frames, jint frameBytes, jint timeoutMs) {
-    jbyte *p = (*env)->GetPrimitiveArrayCritical(env, a, NULL);
-    if (p == NULL) return AAUDIO_ERROR_NO_MEMORY;
-    aaudio_result_t r = AAudioStream_write(S(h), p + off, frames, (int64_t)timeoutMs * 1000000LL);
-    (*env)->ReleasePrimitiveArrayCritical(env, a, p, JNI_ABORT);
+    jbyte local[16384]; // a sound packet (10-20 ms) fits; bigger writes use the heap
+    jint n = frames * frameBytes;
+    jbyte *buf = n <= (jint)sizeof(local) ? local : malloc(n);
+    if (buf == NULL) return AAUDIO_ERROR_NO_MEMORY;
+    (*env)->GetByteArrayRegion(env, a, off, n, buf);
+    aaudio_result_t r = (*env)->ExceptionCheck(env) ? AAUDIO_ERROR_ILLEGAL_ARGUMENT
+        : AAudioStream_write(S(h), buf, frames, (int64_t)timeoutMs * 1000000LL);
+    if (buf != local) free(buf);
     return r;
 }
 

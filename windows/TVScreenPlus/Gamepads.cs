@@ -92,7 +92,7 @@ namespace TVScreenPlus
                     var b = ViGEmBus.Open();
                     lock (l)
                     {
-                        if (disposed) { b.Dispose(); return; }
+                        if (disposed || bus != null) { b.Dispose(); return; } // another PADON got here first
                         bus = b;
                         for (int i = 0; i < Slots; i++) if (names[i] != null) Plug(i);
                     }
@@ -276,7 +276,10 @@ namespace TVScreenPlus
                         {
                             // XUSB_REQUEST_NOTIFICATION { Size = 12, SerialNo, LargeMotor, SmallMotor, LedNumber }: pending until a game changes the motors.
                             nio.Set(12, Serial, 0);
-                            if (nio.Call(bus.h, IoctlXusbNotification, 12, 12))
+                            bool ok;
+                            try { ok = nio.Call(bus.h, IoctlXusbNotification, 12, 12); }
+                            catch (ObjectDisposedException) { break; } // bus closed (session over)
+                            if (ok)
                             {
                                 fails = 0;
                                 if (!closed) try { onRumble(Marshal.ReadByte(nio.Buf, 8), Marshal.ReadByte(nio.Buf, 9)); } catch { }
@@ -284,7 +287,9 @@ namespace TVScreenPlus
                             else
                             {
                                 int err = Marshal.GetLastWin32Error();
-                                if (err == 995 /*ABORTED*/ || err == 5 /*ACCESS_DENIED*/ || err == 6 /*INVALID_HANDLE*/) break;
+                                // ABORTED: our own Dispose, or CancelIoEx on the shared handle when ANOTHER pad was unplugged:
+                                // only the first one ends this pad's rumble.
+                                if ((err == 995 /*ABORTED*/ && closed) || err == 5 /*ACCESS_DENIED*/ || err == 6 /*INVALID_HANDLE*/) break;
                                 fails++; Thread.Sleep(50);
                             }
                         }

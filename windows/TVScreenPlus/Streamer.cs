@@ -296,8 +296,17 @@ namespace TVScreenPlus
                 if (end - off < 4) continue;
 
                 // Length-prefixed NAL units -> Annex-B start codes, in place.
-                bool annexB = buf[off] == 0 && buf[off + 1] == 0 && (buf[off + 2] == 1 || (buf[off + 2] == 0 && buf[off + 3] == 1));
-                if (!annexB)
+                // Length-prefixed only if the lengths chain exactly to the end (a 256-511 byte first unit starts
+                // with "00 00 01", like an Annex-B start code).
+                bool lengths = true;
+                for (int i = off; i < end;)
+                {
+                    if (i + 4 > end) { lengths = false; break; }
+                    int len = buf[i] << 24 | buf[i + 1] << 16 | buf[i + 2] << 8 | buf[i + 3];
+                    if (len <= 0 || len > end - i - 4) { lengths = false; break; }
+                    i += 4 + len;
+                }
+                if (lengths)
                 {
                     for (int i = off; i + 4 <= end;)
                     {

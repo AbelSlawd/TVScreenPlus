@@ -3,6 +3,7 @@ package com.tvscreenplus
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -45,6 +46,9 @@ class MainActivity : Activity() {
     private val pcs = linkedMapOf<String, Pc>()
     private lateinit var surfaceView: SurfaceView
     private lateinit var overlay: FrameLayout
+    private lateinit var root: FrameLayout
+    /** Quick menu over the video while streaming (Menu key), or null. */
+    private var quickMenu: View? = null
     private lateinit var stats: TextView
     /** Mouse cursor drawn by the TV over the video (positions straight from the PC: no video latency). */
     private lateinit var cursorView: ImageView
@@ -67,13 +71,29 @@ class MainActivity : Activity() {
     private var inSettings = false
     private var surfaceReady = false
     @Volatile private var client: StreamClient? = null
-    /** Gamepads forwarded to the PC while streaming (null when the PC doesn't take them). */
-    @Volatile private var gamepads: Gamepads? = null
+    /** Gamepads connected to the TV: always tracked (menu), forwarded to the PC while streaming if it takes them. */
+    private val gamepads by lazy { Gamepads(this, prefs) }
+    // Controllers page: selected player slot, test mode (gamepad input stays on the page), live drawings.
+    private var padsPage = false
+    private var padSel = -1
+    private var padTest = false
+    private var padsShown = ""
+    private var padBig: PadView? = null
+    private val padMinis = HashMap<Int, PadView>()
+    private var padBar: LinearLayout? = null
     private var autoConnect = true
     @Volatile private var discovering = false
+    /** Bumped at each start: a discovery thread still waiting on its socket after a quick pause/resume stops. */
+    @Volatile private var discoveryRun = 0
+    private var discoveryAt = 0L
     private var wifiLock: WifiManager.WifiLock? = null
     private val prefs by lazy { getSharedPreferences("tvsp", Context.MODE_PRIVATE) }
     private val pairing by lazy { Pairing(prefs) }
+    /** Switch 2 controllers (Bluetooth LE), kept across streams; scanning while the setting is on. */
+    private val switch2 by lazy {
+        Switch2(this, { msg -> client?.post("LOG;$msg") ?: android.util.Log.i(StreamClient.TAG, msg) },
+            { msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }).also { it.pads = gamepads }
+    }
     private var release: Updater.Release? = null
     private var lastUpdateCheck = 0L
     @Volatile private var testing = false
@@ -88,7 +108,7 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         preferBestDisplayMode()
 
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         surfaceView = SurfaceView(this)
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(h: SurfaceHolder) { surfaceReady = true; tryAutoConnect() }
@@ -96,6 +116,7 @@ class MainActivity : Activity() {
             override fun surfaceDestroyed(h: SurfaceHolder) { surfaceReady = false; disconnect(null) }
         })
         root.addView(surfaceView, FrameLayout.LayoutParams(-1, -1))
+        applyZoom()
         cursorView = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_XY; visibility = View.GONE }
         root.addView(cursorView, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
         overlay = FrameLayout(this).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(BG_TOP, BG_BOTTOM)) }
@@ -110,6 +131,9 @@ class MainActivity : Activity() {
         setContentView(root)
         // Ask the TV for its "game" picture/sound path (ALLM): less processing, so less image and sound delay.
         if (Build.VERSION.SDK_INT >= 30) try { window.setPreferMinimalPostProcessing(true) } catch (_: Exception) {}
+        gamepads.onChange = { padsChanged() }
+        gamepads.onInput = { pad -> padMinis[pad.slot]?.invalidate(); if (padsPage && pad.slot == padSel) padBig?.invalidate() }
+        gamepads.start()
         showMain()
         handleInstallIntent(intent)
     }
@@ -142,16 +166,23 @@ class MainActivity : Activity() {
             background = rounded(CARD, 12); setPadding(dp(10), dp(3), dp(10), dp(3))
         }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(14) })
         row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        if (gear) row.addView(button("⚙  " + L.t("settings"), wide = false) { showSettings() })
-        else row.addView(button("←  " + L.t("back"), wide = false) { showMain() })
+        if (gear) {
+            row.addView(button(L.t("pads_title"), wide = false, icon = R.drawable.ic_gamepad) { showPads() })
+            row.addView(button(L.t("settings"), wide = false, icon = R.drawable.ic_settings) { showSettings() })
+        }
+        else row.addView(button(L.t("back"), wide = false, icon = R.drawable.ic_back) { showMain() })
         page.addView(row, LinearLayout.LayoutParams(-1, -2))
     }
 
     private fun page(): LinearLayout {
         overlay.removeAllViews()
-        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val scroll = object : ScrollView(this) {
+            // Scrolls so the focused item (and its focus zoom) stays clear of the edge, not flush with it.
+            override fun computeScrollDeltaToGetChildRectOnScreen(rect: android.graphics.Rect): Int =
+                super.computeScrollDeltaToGetChildRectOnScreen(android.graphics.Rect(rect).apply { inset(0, -dp(48)) })
+        }.apply { isFillViewport = true }
         val p = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+            orientation = LinearLayout.VERTICAL; clipChildren = false // focus zoom of rows and cards
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(dp(48), dp(32), dp(48), dp(24))
             alpha = 0f; animate().alpha(1f).setDuration(200).start()
@@ -162,7 +193,7 @@ class MainActivity : Activity() {
     }
 
     private fun showMain() {
-        inSettings = false
+        inSettings = false; padsPage = false; padTest = false; padBar = null
         val p = page()
         header(p, "TVScreenPlus", gear = true)
         val statusRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(28), 0, dp(8)) }
@@ -195,51 +226,281 @@ class MainActivity : Activity() {
         p.addView(text(L.t("help"), 15f, MUTED).apply {
             background = rounded(Color.argb(24, 255, 255, 255), 14); setPadding(dp(24), dp(16), dp(24), dp(16)); setLineSpacing(0f, 1.2f)
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(36) })
+        // Controller chips at the bottom left (pushed down by the spacer when the page is short).
+        p.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
+        padBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
+        p.addView(padBar, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) })
+        padBar()
         refreshList()
     }
 
+    // ---------------- setting rows (settings and controllers pages) ----------------
+    private fun section(p: LinearLayout, w: Int, title: String) = p.addView(text(title.uppercase(), 13f, ACCENT).apply {
+        gravity = Gravity.START; typeface = MEDIUM; letterSpacing = 0.12f; setPadding(dp(8), dp(26), 0, dp(4))
+    }, LinearLayout.LayoutParams(w, -2))
+
+    private fun note(p: LinearLayout, w: Int, s: String) =
+        text(s, 14f, MUTED).apply { gravity = Gravity.START; setPadding(dp(8), dp(2), 0, dp(4)) }.also { p.addView(it, LinearLayout.LayoutParams(w, -2)) }
+
+    /** A setting row: label on the left, current value on the right; OK changes it. */
+    private fun row(p: LinearLayout, w: Int, label: String, value: String, onClick: (TextView) -> Unit): LinearLayout {
+        val v = TextView(this).apply { text = value; textSize = 18f; setTextColor(onFocus(ACCENT)); isDuplicateParentStateEnabled = true; typeface = MEDIUM }
+        val r = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(22), dp(16), dp(22), dp(16))
+            focusStyle(this)
+            setOnClickListener { onClick(v) }
+        }
+        r.addView(TextView(this).apply { text = label; textSize = 18f; setTextColor(Color.WHITE) }, LinearLayout.LayoutParams(0, -2, 1f))
+        r.addView(v)
+        p.addView(r, LinearLayout.LayoutParams(w, -2).apply { setMargins(dp(4), dp(5), dp(4), dp(5)) })
+        return r
+    }
+
+    /** Cycles through options stored under [key]. */
+    private fun choice(p: LinearLayout, w: Int, label: String, values: List<String>, names: List<String>, key: String, def: String, onChange: (String) -> Unit = {}) {
+        var cur = values.indexOf(prefs.getString(key, def)).coerceAtLeast(0)
+        row(p, w, label, names[cur]) {
+            cur = (cur + 1) % values.size
+            prefs.edit().putString(key, values[cur]).apply()
+            it.text = names[cur]
+            onChange(values[cur])
+        }
+    }
+
+    private fun toggle(p: LinearLayout, w: Int, label: String, key: String, def: Boolean, onChange: (Boolean) -> Unit = {}) {
+        fun lbl(v: Boolean) = L.t(if (v) "on" else "off")
+        row(p, w, label, lbl(prefs.getBoolean(key, def))) {
+            val v = !prefs.getBoolean(key, def)
+            prefs.edit().putBoolean(key, v).apply()
+            it.text = lbl(v); onChange(v)
+        }
+    }
+
+    // ---------------- controllers ----------------
+    /** Main page: the connected controllers, small, at the bottom left; OK opens their page. */
+    private fun padBar() {
+        padMinis.clear()
+        val bar = padBar ?: return
+        bar.removeAllViews()
+        for (pad in gamepads.pads) {
+            val chip = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(6), dp(14), dp(6))
+                focusStyle(this)
+                setOnClickListener { showPads(pad.slot) }
+            }
+            chip.addView(PadView(this).apply { show(pad) }.also { padMinis[pad.slot] = it }, LinearLayout.LayoutParams(dp(64), dp(40)))
+            chip.addView(TextView(this).apply { text = L.t("player_short", pad.slot + 1); textSize = 15f; setTextColor(Color.WHITE); typeface = MEDIUM },
+                LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(6) })
+            bar.addView(chip, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(10) })
+        }
+    }
+
+    /** A controller came, left or was regrouped. */
+    private fun padsChanged() {
+        if (padBar != null && !inSettings) {
+            val focused = padBar?.findFocus() != null
+            padBar()
+            if (focused) (padBar?.getChildAt(0) ?: list?.getChildAt(0))?.requestFocus()
+        }
+        if (padsPage && padsSignature() != padsShown) showPads(padSel, padFocusPlayer)
+        padFocusPlayer = false
+    }
+
+    /** Which controllers are shown (the page is rebuilt only when this changes, not for a setting). */
+    private fun padsSignature() = gamepads.pads.joinToString { p -> "${p.slot}:" + p.srcs.joinToString("+") { it.id } }
+
+    private fun stopPadTest() {
+        padTest = false
+        if (padsPage) showPads(padSel)
+    }
+
+    /** Controllers page: every connected controller, the selected one drawn live with its settings, global settings. */
+    private fun showPads(select: Int = padSel, focusPlayer: Boolean = false) {
+        inSettings = true; padsPage = true; padTest = false; padBar = null; padMinis.clear()
+        status = null; spinner = null; list = null; updateButton = null
+        val p = page()
+        header(p, L.t("pads_title"), gear = false)
+        val w = dp(820)
+        val pads = gamepads.pads
+        padsShown = padsSignature()
+        padSel = pads.firstOrNull { it.slot == select }?.slot ?: pads.firstOrNull()?.slot ?: -1
+        padBig = null
+
+        if (pads.isEmpty()) {
+            p.addView(text(L.t("pads_none"), 18f, ACCENT).apply { setPadding(0, dp(24), 0, dp(8)) }, LinearLayout.LayoutParams(w, -2))
+        } else {
+            // No clipping: the focused card's zoom and frame spill over the row's edges.
+            val cards = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(18), 0, dp(6)); clipChildren = false; clipToPadding = false
+            }
+            val detail = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+            val cardViews = HashMap<Int, View>()
+            /** The selected card keeps an accent outline while the focus is down in its settings. */
+            fun outline(v: View, slot: Int) {
+                if (!v.isFocused) (v.background as? GradientDrawable)?.setStroke(dp(2), if (slot == padSel) ACCENT else Color.TRANSPARENT)
+            }
+            for (pad in pads) {
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+                    setPadding(dp(12), dp(12), dp(12), dp(10))
+                    focusStyle(this)
+                    // The controller under the focus is the one shown below.
+                    val style = onFocusChangeListener
+                    setOnFocusChangeListener { v, f ->
+                        style.onFocusChange(v, f)
+                        // A card of a controller that just left or was regrouped is skipped (the page is being rebuilt).
+                        if (f && padSel != pad.slot && pad.srcs.isNotEmpty() && pad in gamepads.pads) {
+                            padSel = pad.slot; detail.removeAllViews(); padDetail(detail, w, pad)
+                            cardViews.forEach { (slot, c) -> outline(c, slot) }
+                        }
+                        outline(v, pad.slot)
+                    }
+                }
+                cardViews[pad.slot] = card
+                card.addView(PadView(this).apply { show(pad) }.also { padMinis[pad.slot] = it }, LinearLayout.LayoutParams(dp(130), dp(78)))
+                card.addView(TextView(this).apply { text = L.t("player", pad.slot + 1); textSize = 16f; setTextColor(Color.WHITE); typeface = MEDIUM; gravity = Gravity.CENTER },
+                    LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+                card.addView(TextView(this).apply {
+                    text = displayName(pad); textSize = 13f; setTextColor(onFocus(MUTED)); isDuplicateParentStateEnabled = true
+                    gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                }, LinearLayout.LayoutParams(dp(150), -2))
+                cards.addView(card, LinearLayout.LayoutParams(-2, -2).apply { setMargins(dp(8), 0, dp(8), 0) })
+            }
+            p.addView(cards)
+            p.addView(detail, LinearLayout.LayoutParams(w, -2))
+            pads.firstOrNull { it.slot == padSel }?.let { padDetail(detail, w, it) }
+            cardViews.forEach { (slot, c) -> outline(c, slot) }
+            ui.post { (if (focusPlayer) padPlayerRow else cardViews[padSel])?.requestFocus() }
+        }
+
+        section(p, w, L.t("pads_all"))
+        toggle(p, w, L.t("pads"), "pads", true)
+        note(p, w, L.t("pads_note"))
+        toggle(p, w, L.t("sw2"), "switch2", false) { on ->
+            if (!on) switch2.close()
+            else switch2.missingPermissions().let {
+                if (it.isEmpty()) switch2.startScan(byUser = true)
+                else if (Build.VERSION.SDK_INT >= 23) requestPermissions(it, PERM_SWITCH2)
+            }
+        }
+        note(p, w, L.t("sw2_note"))
+
+        section(p, w, L.t("pads_supported"))
+        val gallery = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        fun demo(label: String, family: Int, vararg sides: Int) = gallery.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+            addView(PadView(context).apply { demo(family, *sides) }, LinearLayout.LayoutParams(dp(130), dp(78)))
+            addView(text(label, 13f, MUTED).apply { setLineSpacing(0f, 1.1f) }, LinearLayout.LayoutParams(dp(150), -2))
+        })
+        demo("Xbox 360 · One · Series", Gamepads.XBOX, Gamepads.FULL)
+        demo("DualShock · DualSense", Gamepads.PLAYSTATION, Gamepads.FULL)
+        demo(L.t("pad_pro"), Gamepads.NINTENDO, Gamepads.FULL)
+        demo("Joy-Con · Joy-Con 2", Gamepads.NINTENDO, Gamepads.JOYCON_L, Gamepads.JOYCON_R)
+        demo(L.t("pad_other"), Gamepads.OTHER, Gamepads.FULL)
+        p.addView(gallery, LinearLayout.LayoutParams(w, -2))
+    }
+
+    /** Short, readable name: "Nintendo Switch Pro Controller" -> "Pro Controller". */
+    private fun displayName(pad: Gamepads.Pad) = Gamepads.padName(pad).removePrefix("Nintendo Switch ").trim()
+
+    private var padPlayerRow: View? = null
+    private var padFocusPlayer = false
+
+    /** The selected controller: live drawing and what it is on the left, its settings and actions on the right. */
+    private fun padDetail(p: LinearLayout, w: Int, pad: Gamepads.Pad) {
+        // No clipping: the focus zoom of a row may spill over the panel's padding.
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP; clipChildren = false; clipToPadding = false
+            background = rounded(Color.argb(24, 255, 255, 255), 18); setPadding(dp(20), dp(20), dp(20), dp(20))
+        }
+        val lw = dp(320)
+        val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        left.addView(PadView(this).apply { show(pad) }.also { padBig = it }, LinearLayout.LayoutParams(lw, dp(192)))
+        left.addView(TextView(this).apply {
+            text = displayName(pad); textSize = 20f; setTextColor(Color.WHITE); typeface = MEDIUM; gravity = Gravity.CENTER
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(lw, -2).apply { topMargin = dp(10) })
+        for (s in pad.srcs) {
+            val kind = when {
+                s.side == Gamepads.JOYCON_L -> L.t("pad_jc_l")
+                s.side == Gamepads.JOYCON_R -> L.t("pad_jc_r")
+                s.family == Gamepads.XBOX -> "Xbox"
+                s.family == Gamepads.PLAYSTATION -> "PlayStation"
+                s.family == Gamepads.NINTENDO -> "Nintendo"
+                else -> L.t("pad_other")
+            }
+            val parts = mutableListOf(kind, if (s.external) "Bluetooth LE" else L.t("pad_android"))
+            s.batteryPercent().takeIf { it >= 0 }?.let { parts += L.t("pad_battery", it) }
+            left.addView(TextView(this).apply { text = parts.joinToString("  ·  "); textSize = 14f; setTextColor(MUTED); gravity = Gravity.CENTER },
+                LinearLayout.LayoutParams(lw, -2).apply { topMargin = dp(4) })
+        }
+        val sideways = pad.srcs.size == 1 && pad.srcs[0].side != Gamepads.FULL
+        val hint = TextView(this).apply {
+            textSize = 14f; gravity = Gravity.CENTER; setLineSpacing(0f, 1.15f)
+            text = if (padTest) L.t("pad_testing") else if (sideways) L.t("pad_sideways") else ""
+            setTextColor(ACCENT); visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+        }
+        left.addView(hint, LinearLayout.LayoutParams(lw, -2).apply { topMargin = dp(10) })
+        box.addView(left, LinearLayout.LayoutParams(lw, -2))
+
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        val cw = w - lw - dp(40 + 28)
+        /** A per-controller choice, applied to every half (Joy-Con pair). */
+        fun option(label: String, key: String, def: String, values: List<String>, names: List<String>) {
+            var cur = values.indexOf(gamepads.option(pad.srcs[0], key, def)).coerceAtLeast(0)
+            row(col, cw, label, names[cur]) {
+                cur = (cur + 1) % values.size
+                pad.srcs.forEach { s -> gamepads.setOption(s, key, values[cur]) }
+                it.text = names[cur]
+            }
+        }
+        /** An action: same row look as the settings, with a chevron. */
+        fun action(label: String, onClick: () -> Unit) = row(col, cw, label, "›") { onClick() }
+        padPlayerRow = row(col, cw, L.t("pad_player"), L.t("player", pad.slot + 1)) {
+            // The regrouping redraws the page once (padsChanged), on this controller, focus back on this row.
+            padSel = (pad.slot + 1) % Gamepads.MAX
+            padFocusPlayer = true
+            gamepads.moveTo(pad, padSel)
+        }
+        val held = pad.srcs.size == 2 || pad.srcs[0].side == Gamepads.FULL
+        if (held && pad.srcs.any { it.family == Gamepads.NINTENDO })
+            option(L.t("pad_layout"), Gamepads.LAYOUT, "pos", listOf("pos", "label"), listOf(L.t("pad_layout_pos"), L.t("pad_layout_label")))
+        val rumble = pad.srcs.any { it.canRumble() }
+        if (rumble) option(L.t("pad_rumble"), Gamepads.RUMBLE, "100", listOf("0", "50", "100", "150"),
+            listOf(L.t("off"), L.t("pad_low"), L.t("pad_normal"), L.t("pad_strong")))
+        else row(col, cw, L.t("pad_rumble"), L.t("pad_no_rumble")) {}.apply {
+            isFocusable = false; alpha = 0.6f // information only
+        }
+        option(L.t("pad_deadzone"), Gamepads.DEADZONE, "0", listOf("0", "5", "10", "15", "20"),
+            listOf(L.t("pad_none"), "5 %", "10 %", "15 %", "20 %"))
+        if (pad.srcs.size == 2 && gamepads.count < Gamepads.MAX) action(L.t("pad_split")) { gamepads.split(pad) } // needs a free place
+        else if (gamepads.canJoin(pad.srcs[0])) action(L.t("pad_join")) { gamepads.join(pad.srcs[0]) }
+        action(L.t("pad_test")) {
+            padTest = true
+            hint.text = L.t("pad_testing"); hint.visibility = View.VISIBLE
+        }
+        if (rumble) action(L.t("pad_identify")) { gamepads.identify(pad) }
+        val ext = pad.srcs.mapNotNull { it.ext }
+        if (ext.isNotEmpty()) action(L.t("pad_disconnect")) { ext.forEach { it.disconnect() } }
+        else action(L.t("pad_bt")) { try { startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS)) } catch (_: Exception) {} }
+        box.addView(col, LinearLayout.LayoutParams(cw, -2).apply { marginStart = dp(28) })
+        p.addView(box, LinearLayout.LayoutParams(w, -2).apply { topMargin = dp(14) })
+    }
+
     private fun showSettings() {
-        inSettings = true
+        inSettings = true; padsPage = false; padTest = false; padBar = null; padMinis.clear()
         status = null; spinner = null; list = null; updateButton = null
         val p = page()
         header(p, L.t("settings"), gear = false)
         val w = dp(720)
 
-        fun section(title: String) = p.addView(text(title.uppercase(), 13f, ACCENT).apply {
-            gravity = Gravity.START; typeface = MEDIUM; letterSpacing = 0.12f; setPadding(dp(8), dp(26), 0, dp(4))
-        }, LinearLayout.LayoutParams(w, -2))
-        fun note(s: String) = text(s, 14f, MUTED).apply { gravity = Gravity.START; setPadding(dp(8), dp(2), 0, dp(4)) }.also { p.addView(it, LinearLayout.LayoutParams(w, -2)) }
-        /** A setting row: label on the left, current value on the right; OK changes it. */
-        fun row(label: String, value: String, onClick: (TextView) -> Unit) {
-            val v = TextView(this).apply { text = value; textSize = 18f; setTextColor(onFocus(ACCENT)); isDuplicateParentStateEnabled = true; typeface = MEDIUM }
-            val r = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(22), dp(16), dp(22), dp(16))
-                focusStyle(this)
-                setOnClickListener { onClick(v) }
-            }
-            r.addView(TextView(this).apply { text = label; textSize = 18f; setTextColor(Color.WHITE) }, LinearLayout.LayoutParams(0, -2, 1f))
-            r.addView(v)
-            p.addView(r, LinearLayout.LayoutParams(w, -2).apply { setMargins(dp(4), dp(5), dp(4), dp(5)) })
-        }
-        /** Cycles through options. */
-        fun choice(label: String, values: List<String>, names: List<String>, key: String, def: String, onChange: (String) -> Unit = {}) {
-            var cur = values.indexOf(prefs.getString(key, def)).coerceAtLeast(0)
-            row(label, names[cur]) {
-                cur = (cur + 1) % values.size
-                prefs.edit().putString(key, values[cur]).apply()
-                it.text = names[cur]
-                onChange(values[cur])
-            }
-        }
-        fun toggle(label: String, key: String, def: Boolean, onChange: (Boolean) -> Unit = {}) {
-            fun lbl(v: Boolean) = L.t(if (v) "on" else "off")
-            row(label, lbl(prefs.getBoolean(key, def))) {
-                val v = !prefs.getBoolean(key, def)
-                prefs.edit().putBoolean(key, v).apply()
-                it.text = lbl(v); onChange(v)
-            }
-        }
+        fun section(title: String) = section(p, w, title)
+        fun note(s: String) = note(p, w, s)
+        fun choice(label: String, values: List<String>, names: List<String>, key: String, def: String, onChange: (String) -> Unit = {}) =
+            choice(p, w, label, values, names, key, def, onChange)
+        fun toggle(label: String, key: String, def: Boolean, onChange: (Boolean) -> Unit = {}) = toggle(p, w, label, key, def, onChange)
 
         section(L.t("lang"))
         choice(L.t("lang"), listOf("system") + L.CODES, listOf(L.t("lang_system")) + L.NAMES, "lang", "system") {
@@ -250,6 +511,8 @@ class MainActivity : Activity() {
         section(L.t("priority"))
         choice(L.t("priority"), listOf("auto", "smooth", "quality"), listOf(L.t("prio_auto"), L.t("prio_smooth"), L.t("prio_quality")), "pref", "auto")
         choice(L.t("maxres"), listOf("0", "720", "1080", "1440", "2160"), listOf(L.t("auto"), "720p", "1080p", "1440p", "4K"), "maxh", "0")
+        choice(L.t("zoom"), listOf("100", "98", "96", "94", "92", "90"), listOf("100 %", "98 %", "96 %", "94 %", "92 %", "90 %"), "zoom", "100") { applyZoom() }
+        note(L.t("zoom_note"))
         toggle(L.t("autoconnect"), "autoconnect", true) { autoConnect = it }
         toggle(L.t("showstats"), "showstats", false)
 
@@ -261,8 +524,6 @@ class MainActivity : Activity() {
             sync?.text = L.t("av_offset", prefs.getInt(offsetKey(), 0)) // each output keeps its own correction
         }
         note(L.t("sound_note"))
-        toggle(L.t("pads"), "pads", true)
-        note(L.t("pads_note"))
         val syncButton = button(L.t("av_offset", prefs.getInt(offsetKey(), 0))) {}
         sync = syncButton
         syncButton.setOnClickListener {
@@ -271,6 +532,7 @@ class MainActivity : Activity() {
         }
         p.addView(syncButton, LinearLayout.LayoutParams(w, -2))
         note(L.t("av_offset_note"))
+        p.addView(button(L.t("pads_title"), icon = R.drawable.ic_gamepad) { showPads() }, LinearLayout.LayoutParams(w, -2))
 
         section(L.t("hwtest"))
         val testNote = note(hwSummary())
@@ -311,11 +573,13 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(w, -2))
 
         section(L.t("about"))
+        var forgotten: TextView? = null
         p.addView(button(L.t("forget")) {
             prefs.edit().remove("last").remove("manual").apply()
+            prefs.edit().apply { prefs.all.keys.filter { it.startsWith("mac_") }.forEach { remove(it) } }.apply() // Wake-on-LAN
             pairing.forgetAll() // each PC will ask to accept this TV again
             pcs.clear()
-            note(L.t("forgotten"))
+            if (forgotten == null) forgotten = note(L.t("forgotten"))
         }, LinearLayout.LayoutParams(w, -2))
         note(L.t("about_text", versionName, Build.MODEL, Build.VERSION.RELEASE, localIp() ?: "?", networkLabel()))
         overlay.post { p.getChildAt(2)?.requestFocus() } // first setting
@@ -374,7 +638,7 @@ class MainActivity : Activity() {
                 val alat = c.audioLatencyMs
                 val extra = (if (alat >= 0) "\n" + L.t("stats_audio", alat) else "") +
                     (if (c.audioOutputMs >= 0) "\n" + L.t("stats_sync", c.audioOutputMs, c.appliedVideoDelayMs, c.audioExtraMs, c.userOffsetMs) else "") +
-                    (gamepads?.count?.takeIf { it > 0 }?.let { "\n" + L.t("stats_pads", it) } ?: "")
+                    (gamepads.count.takeIf { it > 0 && gamepads.client != null }?.let { "\n" + L.t("stats_pads", it) } ?: "")
                 stats.text = c.info + "\n" + L.t("stats", c.kbps / 1000.0, c.fps, c.dropped) + extra
                 ui.postDelayed(this, 1000)
             }
@@ -386,18 +650,40 @@ class MainActivity : Activity() {
         hideSystemUi()
         startDiscovery()
         checkUpdate()
+        if (prefs.getBoolean("switch2", false)) switch2.startScan()
     }
 
     override fun onPause() {
         super.onPause()
         discovering = false
         disconnect(null)
+        if (prefs.getBoolean("switch2", false)) switch2.stopScan()
+    }
+
+    override fun onDestroy() {
+        if (prefs.getBoolean("switch2", false)) switch2.close()
+        gamepads.stop()
+        super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(code, permissions, results)
+        if (code != PERM_SWITCH2) return
+        if (results.isNotEmpty() && results.all { it == PackageManager.PERMISSION_GRANTED }) switch2.startScan(byUser = true)
+        else {
+            prefs.edit().putBoolean("switch2", false).apply()
+            Toast.makeText(this, L.t("sw2_denied"), Toast.LENGTH_LONG).show()
+            if (inSettings) showSettings()
+        }
     }
 
     // ---------------- discovery ----------------
     private fun startDiscovery() {
         if (discovering) return
         discovering = true
+        val run = ++discoveryRun
+        discoveryAt = System.currentTimeMillis()
+        ui.postDelayed({ refreshList() }, 4500) // then sleeping PCs show up
         Thread({
             try {
                 DatagramSocket().use { s ->
@@ -406,7 +692,7 @@ class MainActivity : Activity() {
                     val q = "TVSP?".toByteArray()
                     val buf = ByteArray(512)
                     var lastSend = 0L
-                    while (discovering) {
+                    while (discovering && run == discoveryRun) {
                         val now = System.currentTimeMillis()
                         if (now - lastSend > 1000 && client == null) {
                             lastSend = now
@@ -419,7 +705,7 @@ class MainActivity : Activity() {
                             if (lines[0] != "TVSP!") continue
                             val kv = lines.drop(1).associate { val i = it.indexOf('='); it.substring(0, maxOf(i, 0)) to it.substring(i + 1) }
                             val ip = p.address.hostAddress ?: continue
-                            ui.post { found(ip, kv["name"] ?: ip, kv["busy"] == "1") }
+                            ui.post { found(ip, kv["name"] ?: ip, kv["busy"] == "1", kv["mac"]) }
                         } catch (_: SocketTimeoutException) {}
                         ui.post { expire() }
                     }
@@ -448,7 +734,14 @@ class MainActivity : Activity() {
         return out
     }
 
-    private fun found(ip: String, name: String, busy: Boolean) {
+    private fun found(ip: String, name: String, busy: Boolean, mac: String? = null) {
+        // Wake-on-LAN: remember the PC's network card (sent by PC 1.2.2+) to wake it up later.
+        if (mac != null && mac.matches(Regex("[0-9A-Fa-f]{12}")) && prefs.getString("mac_$ip", null) != "$mac|$name") {
+            val e = prefs.edit()
+            // The same PC under a new address (DHCP): forget the old one.
+            prefs.all.forEach { (k, v) -> if (k.startsWith("mac_") && (v as? String)?.substringBefore('|') == mac) e.remove(k) }
+            e.putString("mac_$ip", "$mac|$name").apply()
+        }
         val pc = pcs[ip]
         // Add first, then redraw: `.also { refreshList() }` ran before the assignment and drew an empty list,
         // which stayed empty until the PC's state changed (PC "not found" after Back, 13/11).
@@ -469,6 +762,8 @@ class MainActivity : Activity() {
         val focusList = l.childCount == 0 || l.findFocus() != null || currentFocus == null
         l.removeAllViews()
         for (pc in pcs.values) l.addView(pcCard(pc))
+        // PCs seen before (with their network card) that don't answer: offer to wake them, after a few seconds of search.
+        if (System.currentTimeMillis() - discoveryAt > 4000) for ((ip, mac, name) in sleepingPcs()) l.addView(sleepCard(ip, mac, name))
         if (client == null) setStatus(L.t(if (pcs.isEmpty()) "searching" else "choose"), busy = pcs.isEmpty())
         if (focusList) l.getChildAt(0)?.requestFocus()
     }
@@ -490,6 +785,53 @@ class MainActivity : Activity() {
             background = rounded(Color.rgb(230, 126, 34), 12); setPadding(dp(12), dp(4), dp(12), dp(4))
         })
         layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), dp(6), dp(4), dp(6)) }
+    }
+
+    /** Remembered PCs (ip, mac, name) not answering the discovery. */
+    private fun sleepingPcs() = prefs.all.keys.filter { it.startsWith("mac_") }.mapNotNull { k ->
+        val ip = k.removePrefix("mac_")
+        val v = prefs.getString(k, null)?.split('|', limit = 2) ?: return@mapNotNull null
+        // Not shown if it answers, even under another address (older PC version without the mac field).
+        if (pcs.containsKey(ip) || v.size < 2 || pcs.values.any { it.name == v[1] }) null else Triple(ip, v[0], v[1])
+    }
+
+    /** A PC that doesn't answer: dimmed card, OK sends the Wake-on-LAN packet and connects once it answers. */
+    private fun sleepCard(ip: String, mac: String, name: String) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(22), dp(14), dp(22), dp(14))
+        focusStyle(this)
+        alpha = 0.75f
+        setOnClickListener {
+            wake(mac)
+            prefs.edit().putString("last", ip).apply()
+            autoConnect = true // tryAutoConnect picks it as soon as it answers
+            setStatus(L.t("waking", name), busy = true)
+        }
+        addView(ImageView(context).apply { setImageResource(R.drawable.ic_pc); alpha = 0.6f }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginEnd = dp(18) })
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL; isDuplicateParentStateEnabled = true
+            addView(TextView(context).apply { text = name; textSize = 22f; setTextColor(Color.WHITE); typeface = MEDIUM })
+            addView(TextView(context).apply { text = L.t("asleep", ip); textSize = 14f; setTextColor(onFocus(MUTED)); isDuplicateParentStateEnabled = true })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), dp(6), dp(4), dp(6)) }
+    }
+
+    /** Wake-on-LAN "magic packet" (6 x FF, then the card's address 16 times), broadcast a few times. */
+    private fun wake(mac: String) {
+        val m = ByteArray(6) { mac.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+        val packet = ByteArray(102) { if (it < 6) 0xFF.toByte() else m[(it - 6) % 6] }
+        Thread({
+            try {
+                DatagramSocket().use { s ->
+                    s.broadcast = true
+                    repeat(3) {
+                        for (a in broadcastAddresses()) for (port in intArrayOf(9, 7))
+                            try { s.send(DatagramPacket(packet, packet.size, a, port)) } catch (_: Exception) {}
+                        Thread.sleep(300)
+                    }
+                }
+            } catch (_: Exception) {}
+        }, "wake").start()
     }
 
     /** Plug & play: reconnect to the last PC, or to the only PC found. */
@@ -557,13 +899,13 @@ class MainActivity : Activity() {
                     if (Build.VERSION.SDK_INT >= 30) try { surfaceView.holder.surface.setFrameRate(hz.toFloat(), android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE) } catch (_: Exception) {}
                     if (prefs.getBoolean("showstats", false)) { stats.visibility = View.VISIBLE; ui.removeCallbacks(statsTick); statsTick.run() }
                     // Gamepads go to the PC only if it takes them (older PC versions: they keep driving the TV).
-                    if (c.pads && gamepads == null) gamepads = Gamepads(this@MainActivity, c).also { it.start() }
+                    if (c.pads) gamepads.client = c
                     android.util.Log.i(StreamClient.TAG, "streaming $info from $name")
                 }
             }
 
             override fun onRumble(slot: Int, large: Int, small: Int) {
-                if (client === c) gamepads?.rumble(slot, large, small)
+                if (client === c) gamepads.rumble(slot, large, small)
             }
 
             override fun onCursorShape(bitmap: android.graphics.Bitmap, hotX: Int, hotY: Int) {
@@ -583,6 +925,7 @@ class MainActivity : Activity() {
             override fun onEnded(error: String?) {
                 ui.post {
                     if (client !== c) return@post
+                    hideQuickMenu()
                     client = null
                     stopGamepads()
                     releaseWifiLock()
@@ -604,6 +947,7 @@ class MainActivity : Activity() {
     }
 
     private fun disconnect(reason: String?) {
+        hideQuickMenu()
         val c = client ?: return
         client = null
         stopGamepads()
@@ -614,31 +958,106 @@ class MainActivity : Activity() {
         setStatus(reason ?: L.t("disconnected"))
     }
 
-    private fun stopGamepads() { gamepads?.stop(); gamepads = null }
+    /** Sound sync correction (ms), remembered per sound output; returns the value kept. */
+    private fun setSync(c: StreamClient, ms: Int): Int {
+        val v = ms.coerceIn(-200, 300)
+        prefs.edit().putInt(offsetKey(), v).apply()
+        c.userOffsetMs = v
+        return v
+    }
+
+    /** Picture size (TVs that crop the edges): the video surface gets margins; 100 % = whole screen. */
+    private fun applyZoom() {
+        val k = (prefs.getString("zoom", "100")?.toIntOrNull() ?: 100).coerceIn(80, 100) / 100f
+        val dm = resources.displayMetrics
+        val mx = Math.round(dm.widthPixels * (1 - k) / 2); val my = Math.round(dm.heightPixels * (1 - k) / 2)
+        surfaceView.layoutParams = FrameLayout.LayoutParams(-1, -1).apply { setMargins(mx, my, mx, my) }
+    }
+
+    /** Menu key while streaming: mode, sound sync, statistics, disconnect, over the video. */
+    private fun showQuickMenu() {
+        val c = client ?: return
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false
+            background = rounded(Color.argb(235, 12, 24, 40), 20); setPadding(dp(16), dp(18), dp(16), dp(14))
+        }
+        val w = dp(440)
+        panel.addView(text(L.t("qm_title").uppercase(), 13f, ACCENT).apply {
+            gravity = Gravity.START; typeface = MEDIUM; letterSpacing = 0.12f; setPadding(dp(10), 0, 0, dp(6))
+        })
+        fun modeName(game: Boolean) = L.t(if (game) "qm_game" else "qm_fluid")
+        if (c.modeSupported) row(panel, w, L.t("qm_mode"), modeName(c.gameMode)) {
+            val game = !c.gameMode
+            c.requestMode(game)
+            it.text = modeName(game)
+        }
+        // Sound sync: ◀ ▶ on the row move it by 10 ms, OK puts it back to 0.
+        val sync = row(panel, w, L.t("qm_sync"), L.t("qm_ms", prefs.getInt(offsetKey(), 0))) { it.text = L.t("qm_ms", setSync(c, 0)) }
+        sync.setOnKeyListener { v, code, e ->
+            if (e.action != KeyEvent.ACTION_DOWN || (code != KeyEvent.KEYCODE_DPAD_LEFT && code != KeyEvent.KEYCODE_DPAD_RIGHT)) return@setOnKeyListener false
+            val ms = setSync(c, prefs.getInt(offsetKey(), 0) + if (code == KeyEvent.KEYCODE_DPAD_RIGHT) 10 else -10)
+            ((v as LinearLayout).getChildAt(1) as TextView).text = L.t("qm_ms", ms)
+            true
+        }
+        panel.addView(text(L.t("qm_sync_note"), 13f, MUTED).apply { gravity = Gravity.START; setPadding(dp(10), 0, dp(10), dp(6)) },
+            LinearLayout.LayoutParams(w, -2))
+        fun statsName() = L.t(if (stats.visibility == View.VISIBLE) "on" else "off")
+        row(panel, w, L.t("showstats"), statsName()) {
+            stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            ui.removeCallbacks(statsTick); statsTick.run()
+            it.text = statsName()
+        }
+        row(panel, w, L.t("qm_disconnect"), "›") {
+            autoConnect = false // user wants out: no auto-reconnect until they pick a PC
+            disconnect(L.t("disconnected_back"))
+            list?.getChildAt(0)?.requestFocus()
+        }
+        root.addView(panel, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(48) })
+        quickMenu = panel
+        panel.alpha = 0f; panel.animate().alpha(1f).setDuration(150).start()
+        panel.getChildAt(1)?.requestFocus()
+    }
+
+    private fun hideQuickMenu() {
+        quickMenu?.let { root.removeView(it) }
+        quickMenu = null
+    }
+
+    private fun stopGamepads() { gamepads.client = null }
 
     /** While streaming, gamepad input goes to the PC first; the remote keeps its keys (Back, OK, Menu). */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val g = gamepads
-        if (g != null && client != null && overlay.visibility == View.GONE && g.onKey(event)) return true
+        // Gamepad state is always tracked (menu drawings); the input goes to the PC while streaming, or stays on the
+        // controllers page while testing (Start + Select, or the remote's Back, ends the test).
+        if (gamepads.onKey(event)) {
+            // Start + Select on one controller (a Joy-Con pair has them on two halves).
+            if (padTest && gamepads.pads.any { p -> p.srcs.fold(0) { k, s -> k or s.buttons } and (Gamepads.START or Gamepads.BACK) == Gamepads.START or Gamepads.BACK }) {
+                stopPadTest(); return true
+            }
+            if (padTest || (gamepads.client != null && overlay.visibility == View.GONE)) return true
+        }
         return super.dispatchKeyEvent(event)
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        val g = gamepads
-        if (g != null && client != null && overlay.visibility == View.GONE && g.onMotion(event)) return true
+        if (gamepads.onMotion(event) && (padTest || (gamepads.client != null && overlay.visibility == View.GONE))) return true
         return super.dispatchGenericMotionEvent(event)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (quickMenu != null && (keyCode == KeyEvent.KEYCODE_BACK || keyCode == KeyEvent.KEYCODE_MENU)) { hideQuickMenu(); return true }
+        if (quickMenu != null) return super.onKeyDown(keyCode, event) // focus moves in the menu
+        if (client != null && overlay.visibility == View.GONE && keyCode == KeyEvent.KEYCODE_MENU) { showQuickMenu(); return true }
         if (keyCode == KeyEvent.KEYCODE_BACK && client != null) {
             autoConnect = false // user wants out: no auto-reconnect until they pick a PC
             disconnect(L.t("disconnected_back"))
             list?.getChildAt(0)?.requestFocus()
             return true
         }
+        if (keyCode == KeyEvent.KEYCODE_BACK && padTest) { stopPadTest(); return true }
         if (keyCode == KeyEvent.KEYCODE_BACK && inSettings) { showMain(); return true }
         if (client != null && overlay.visibility == View.GONE &&
-            (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_INFO)) {
+            (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_INFO)) {
             stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
             ui.removeCallbacks(statsTick)
             statsTick.run()
@@ -648,9 +1067,7 @@ class MainActivity : Activity() {
         if (c != null && overlay.visibility == View.GONE &&
             (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)) {
             // Fine lip-sync by ear: < sound earlier, > sound later (10 ms steps, remembered).
-            val v = (prefs.getInt(offsetKey(), 0) + if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 10 else -10).coerceIn(-200, 300)
-            prefs.edit().putInt(offsetKey(), v).apply()
-            c.userOffsetMs = v
+            val v = setSync(c, prefs.getInt(offsetKey(), 0) + if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) 10 else -10)
             Toast.makeText(this, L.t("av_offset_now", v), Toast.LENGTH_SHORT).show()
             return true
         }
@@ -681,8 +1098,8 @@ class MainActivity : Activity() {
         val h = Math.round(curBmpH * sy).coerceAtLeast(1)
         val lp = cursorView.layoutParams
         if (lp.width != w || lp.height != h) { lp.width = w; lp.height = h; cursorView.layoutParams = lp }
-        cursorView.translationX = (curX - curHotX) * sx
-        cursorView.translationY = (curY - curHotY) * sy
+        cursorView.translationX = surfaceView.left + (curX - curHotX) * sx
+        cursorView.translationY = surfaceView.top + (curY - curHotY) * sy
         cursorView.visibility = View.VISIBLE
     }
 
@@ -760,8 +1177,14 @@ class MainActivity : Activity() {
         text = s; textSize = size; setTextColor(color); gravity = Gravity.CENTER; setPadding(0, dp(6), 0, dp(6))
     }
 
-    private fun button(label: String, wide: Boolean = true, onClick: () -> Unit) = Button(this).apply {
+    private fun button(label: String, wide: Boolean = true, icon: Int = 0, onClick: () -> Unit) = Button(this).apply {
         text = label; isAllCaps = false; textSize = 18f; setTextColor(Color.WHITE); typeface = MEDIUM
+        if (icon != 0) {
+            // A drawn icon sits on the text's centre line (font arrows / emoji don't).
+            val d = getDrawable(icon)!!.mutate().apply { setBounds(0, 0, dp(24), dp(24)) }
+            setCompoundDrawablesRelative(d, null, null, null)
+            compoundDrawablePadding = dp(12)
+        }
         gravity = if (wide) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.CENTER
         setPadding(dp(22), dp(12), dp(22), dp(12))
         stateListAnimator = null // the platform press "lift" fights the focus animation
@@ -801,5 +1224,6 @@ class MainActivity : Activity() {
         private val ACCENT = Color.rgb(144, 202, 249)
         private val MUTED = Color.rgb(150, 168, 190)
         private val MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        private const val PERM_SWITCH2 = 7
     }
 }

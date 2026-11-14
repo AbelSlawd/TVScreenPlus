@@ -75,7 +75,7 @@ object Codecs {
             val vc = ci.getCapabilitiesForType(mime).videoCapabilities ?: continue
             val h = HEIGHTS.firstOrNull { h ->
                 try { vc.areSizeAndRateSupported(width(h), h, 60.0) } catch (_: Exception) { false }
-            } ?: 1080 // capabilities not reported: assume a standard 1080p60 TV decoder
+            } ?: 1080 // claims none of these at 60 fps (some decoders under-report): assume a standard 1080p60 TV decoder
             best = maxOf(best, h)
         }
         best

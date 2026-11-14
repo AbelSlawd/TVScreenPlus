@@ -27,7 +27,7 @@ object Updater {
         setRequestProperty("User-Agent", "TVScreenPlus-Updater")
     }
 
-    /** Latest published release (tag v1.0.N, N = versionCode), or null. Network: call off the main thread. */
+    /** Latest published release (tag v<major>.<minor>.N, N = versionCode), or null. Network: call off the main thread. */
     fun latest(): Release? {
         val json = open(API).run { try { inputStream.bufferedReader().readText() } finally { disconnect() } }
         val tag = Regex("\"tag_name\"\\s*:\\s*\"v?([0-9.]+)\"").find(json)?.groupValues?.get(1) ?: return null
@@ -46,7 +46,8 @@ object Updater {
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
         val id = installer.createSession(params)
-        installer.openSession(id).use { session ->
+        // A failed download must not leave a half-written session behind (they pile up against the installer's quota).
+        try { installer.openSession(id).use { session ->
             val c = open(r.apkUrl)
             try {
                 val total = c.contentLength.toLong()
@@ -68,6 +69,9 @@ object Updater {
             val intent = Intent(activity, MainActivity::class.java).setAction(ACTION_STATUS).putExtra(TOKEN, token)
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
             session.commit(PendingIntent.getActivity(activity, 1, intent, flags).intentSender)
+        } } catch (e: Exception) {
+            try { installer.abandonSession(id) } catch (_: Exception) {}
+            throw e
         }
     }
 

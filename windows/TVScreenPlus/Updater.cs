@@ -157,8 +157,12 @@ namespace TVScreenPlus
         public static readonly string UpdateDir = Path.Combine(InstallDir, "update");
 
         /// <summary>Delete leftovers of previous update downloads (the running update copy is skipped: in use).</summary>
+        /// <summary>An update is being downloaded/unpacked into UpdateDir (the delayed startup cleanup leaves it).</summary>
+        public static volatile bool Installing;
+
         public static void CleanupTemp()
         {
+            if (Installing) return;
             try { foreach (var d in Directory.GetDirectories(Path.GetTempPath(), "TVScreenPlus_update_*")) try { Directory.Delete(d, true); } catch { } } catch { }
             if (Directory.Exists(UpdateDir) && !Program.Dir.StartsWith(UpdateDir, StringComparison.OrdinalIgnoreCase))
                 try { Directory.Delete(UpdateDir, true); } catch { }
@@ -176,10 +180,11 @@ namespace TVScreenPlus
             try { Registry.LocalMachine.DeleteSubKeyTree(UninstallKey, false); } catch { }
             try { File.Delete(ShortcutPath); } catch { }
             try { Directory.Delete(Program.DataDir, true); } catch { }
-            // Delete our own folder once this process has exited.
-            Process.Start(new ProcessStartInfo("cmd.exe", $"/c ping 127.0.0.1 -n 3 >nul & rmdir /s /q \"{Program.Dir.TrimEnd('\\')}\"")
-            { CreateNoWindow = true, UseShellExecute = false });
             MessageBox.Show("TVScreenPlus a été désinstallé.", "TVScreenPlus");
+            // Delete our own folder once this process has exited, and only if it is the installation folder.
+            if (string.Equals(Program.Dir.TrimEnd('\\'), InstallDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                Process.Start(new ProcessStartInfo("cmd.exe", $"/c ping 127.0.0.1 -n 3 >nul & rmdir /s /q \"{InstallDir.TrimEnd('\\')}\"")
+                { CreateNoWindow = true, UseShellExecute = false });
         }
     }
 
@@ -211,10 +216,10 @@ namespace TVScreenPlus
                 wc.Headers[HttpRequestHeader.UserAgent] = "TVScreenPlus-Updater";
                 wc.Headers[HttpRequestHeader.Accept] = "application/vnd.github+json";
                 string json = wc.DownloadString(TestChannel ? ApiAll : Api); // list: its first entry is the newest
-                var tag = Regex.Match(json, "\"tag_name\"\\s*:\\s*\"v?([0-9]+(\\.[0-9]+){1,3})\"");
-                // Only this repository's own release files.
-                var url = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"(" + Regex.Escape(Download) + "v[0-9.]+/TVScreenPlus-PC\\.zip)\"");
-                return tag.Success && url.Success ? Tuple.Create(new Version(tag.Groups[1].Value), url.Groups[1].Value) : null;
+                // Only this repository's own release files. The version is read from the zip's own URL: a pre-release
+                // whose zip is not uploaded yet must not be paired with the previous release's zip (reinstall loop).
+                var url = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"(" + Regex.Escape(Download) + "v([0-9]+(\\.[0-9]+){1,3})/TVScreenPlus-PC\\.zip)\"");
+                return url.Success ? Tuple.Create(new Version(url.Groups[2].Value), url.Groups[1].Value) : null;
             }
         }
 
@@ -226,6 +231,7 @@ namespace TVScreenPlus
         public static void Install(string zipUrl)
         {
             Installer.CleanupTemp();
+            Installer.Installing = true; // until this process is replaced
             string dir = Path.Combine(Installer.UpdateDir, DateTime.Now.Ticks.ToString());
             string zip = dir + ".zip";
             Directory.CreateDirectory(dir);

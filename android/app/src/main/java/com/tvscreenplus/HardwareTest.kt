@@ -121,7 +121,7 @@ object HardwareTest {
     /** Decode the clip 3 times as fast as possible; returns frames per second. */
     private fun throughput(mime: String, w: Int, h: Int, clip: Clip): Double {
         val (reader, surface) = output(w, h)
-        val dec = Codecs.lowLatencyDecoder(mime, w, h, surface)
+        val dec = try { Codecs.lowLatencyDecoder(mime, w, h, surface) } catch (e: Exception) { reader?.close(); throw e }
         val info = MediaCodec.BufferInfo()
         val inputs = ArrayList<Pair<ByteArray, Int>>()
         clip.csd?.let { inputs += it to MediaCodec.BUFFER_FLAG_CODEC_CONFIG }
@@ -153,7 +153,7 @@ object HardwareTest {
     /** Feed frames at 60 fps like a real stream and measure input → output delay (ms). */
     private fun latency(mime: String, w: Int, h: Int, clip: Clip): Int {
         val (reader, surface) = output(w, h)
-        val dec = Codecs.lowLatencyDecoder(mime, w, h, surface)
+        val dec = try { Codecs.lowLatencyDecoder(mime, w, h, surface) } catch (e: Exception) { reader?.close(); throw e }
         val info = MediaCodec.BufferInfo()
         val queued = HashMap<Long, Long>()
         val samples = ArrayList<Long>()
