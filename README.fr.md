@@ -6,10 +6,21 @@
 
 La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenêtres, la souris y passe, comme si elle était branchée en HDMI. L'image est encodée par la carte graphique du PC et décodée par la puce vidéo de la TV, pour une image nette et fluide avec très peu de latence.
 
-[![Télécharger pour Windows](https://img.shields.io/badge/T%C3%A9l%C3%A9charger-PC%20Windows-0078D6?style=for-the-badge&logo=windows)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)
+[![Installer sur Windows](https://img.shields.io/badge/Installer-PC%20Windows-0078D6?style=for-the-badge&logo=windows)](#1-sur-le-pc-windows)
 [![Télécharger pour Google TV](https://img.shields.io/badge/T%C3%A9l%C3%A9charger-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk)
 
-> 🧪 **Projet encore en phase de test.** TVScreenPlus est en développement actif et n'a été essayé que sur quelques PC et quelques TV. Un bug, un plantage, une TV ou une manette qui ne fonctionne pas ? Signalez-le dans la section [Issues](https://github.com/AbelSlawd/TVScreenPlus/issues), avec le modèle du PC et de la TV et, si possible, le journal (clic droit sur l'icône › *Ouvrir le journal*). Chaque retour aide à améliorer le projet.
+> [!IMPORTANT]
+> **🧪 Projet encore en phase de test**
+>
+> TVScreenPlus est en développement actif et n'a été essayé que sur quelques PC et quelques TV.
+>
+> **Un bug, un plantage, une TV ou une manette qui ne fonctionne pas ? Signalez-le dans la section [Issues](https://github.com/AbelSlawd/TVScreenPlus/issues)**, en indiquant :
+> - le modèle du PC et de la TV ;
+> - si possible, le journal (clic droit sur l'icône 📺 › *Ouvrir le journal*).
+>
+> Chaque retour aide à améliorer le projet.
+>
+> [![Signaler un problème](https://img.shields.io/badge/Signaler%20un%20probl%C3%A8me-Issues-D73A49?style=for-the-badge&logo=github)](https://github.com/AbelSlawd/TVScreenPlus/issues/new)
 
 ---
 
@@ -51,16 +62,28 @@ La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenê
 ## Installation
 
 ### 1. Sur le PC Windows
-1. Téléchargez **[TVScreenPlus-PC.zip](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)** et décompressez-le n'importe où.
-2. Lancez **`TVScreenPlus.exe`** et acceptez la demande d'autorisation administrateur.
-   - Si Windows SmartScreen affiche « Windows a protégé votre ordinateur » : cliquez sur *Informations complémentaires*, puis *Exécuter quand même* (le programme n'est pas signé numériquement).
-3. C'est installé. Le programme :
+1. Ouvrez **PowerShell** : clic droit sur le bouton Démarrer › *Terminal* (ou *Windows PowerShell*).
+2. Collez cette commande, puis appuyez sur Entrée :
+   ```powershell
+   cd $env:TEMP; curl.exe -fL -o TVScreenPlus-PC.zip https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip; tar -xf TVScreenPlus-PC.zip; .\TVScreenPlus-PC\TVScreenPlus.exe
+   ```
+   Elle télécharge la dernière version depuis les releases GitHub du projet, la décompresse dans le dossier temporaire de Windows et lance le programme. Téléchargé de cette façon, le fichier ne déclenche pas l'avertissement de Windows SmartScreen.
+3. Acceptez la demande d'autorisation administrateur. Elle indique « Éditeur : inconnu », car le programme n'est pas signé numériquement.
+4. C'est installé. Le programme :
    - s'installe dans `C:\Program Files\TVScreenPlus` et remplace l'ancienne version s'il y en a une ;
    - installe le pilote d'écran virtuel et autorise le pare-feu Windows ;
    - se lance à chaque démarrage de Windows, avec une icône 📺 près de l'horloge ;
    - apparaît dans *Paramètres › Applications*.
 
-   Vous pouvez supprimer le dossier décompressé.
+<details>
+<summary><b>Autre méthode : télécharger le zip à la main</b></summary>
+
+1. Téléchargez **[TVScreenPlus-PC.zip](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)** et décompressez-le n'importe où.
+2. Lancez **`TVScreenPlus.exe`** et acceptez la demande d'autorisation administrateur.
+   - Si Windows SmartScreen affiche « Windows a protégé votre ordinateur » : cliquez sur *Informations complémentaires*, puis *Exécuter quand même*. Pour l'éviter, faites un clic droit sur le zip › *Propriétés* › cochez *Débloquer* avant de le décompresser.
+3. Le programme s'installe comme avec la commande. Vous pouvez ensuite supprimer le dossier décompressé.
+
+</details>
 
 ### 2. Sur la TV
 L'application n'est pas sur le Play Store : il faut installer le fichier APK.

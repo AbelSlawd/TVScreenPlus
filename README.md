@@ -6,10 +6,21 @@
 
 The TV becomes a real second monitor (*extend* mode): you drag windows onto it and the mouse moves across, as if it were plugged in over HDMI. The picture is encoded by the PC's graphics card and decoded by the TV's video chip, for a sharp, smooth image with very little latency.
 
-[![Download - Windows PC](https://img.shields.io/badge/Download-Windows%20PC-0078D6?style=for-the-badge&logo=windows)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)
+[![Install - Windows PC](https://img.shields.io/badge/Install-Windows%20PC-0078D6?style=for-the-badge&logo=windows)](#1-on-the-windows-pc)
 [![Download - Google TV](https://img.shields.io/badge/Download-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk)
 
-> 🧪 **Still in testing.** TVScreenPlus is under active development and has only been tried on a few PCs and TVs so far. Found a bug, a crash, a TV or a gamepad that does not work? Please report it in the [Issues](https://github.com/AbelSlawd/TVScreenPlus/issues) section, with your PC and TV models and, if possible, the log (right-click the tray icon › *Open the log*). Every report helps improve the project.
+> [!IMPORTANT]
+> **🧪 Still in testing**
+>
+> TVScreenPlus is under active development and has only been tried on a few PCs and TVs so far.
+>
+> **Found a bug, a crash, a TV or a gamepad that does not work? Please report it in the [Issues](https://github.com/AbelSlawd/TVScreenPlus/issues) section**, with:
+> - your PC and TV models;
+> - if possible, the log (right-click the 📺 tray icon › *Open the log*).
+>
+> Every report helps improve the project.
+>
+> [![Report a problem](https://img.shields.io/badge/Report%20a%20problem-Issues-D73A49?style=for-the-badge&logo=github)](https://github.com/AbelSlawd/TVScreenPlus/issues/new)
 
 ---
 
@@ -51,16 +62,28 @@ The TV becomes a real second monitor (*extend* mode): you drag windows onto it a
 ## Installation
 
 ### 1. On the Windows PC
-1. Download **[TVScreenPlus-PC.zip](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)** and unzip it anywhere.
-2. Run **`TVScreenPlus.exe`** and accept the administrator permission prompt.
-   - If Windows SmartScreen shows "Windows protected your PC": click *More info*, then *Run anyway* (the program is not digitally signed).
-3. That's it. The program:
+1. Open **PowerShell**: right-click the Start button › *Terminal* (or *Windows PowerShell*).
+2. Paste this command, then press Enter:
+   ```powershell
+   cd $env:TEMP; curl.exe -fL -o TVScreenPlus-PC.zip https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip; tar -xf TVScreenPlus-PC.zip; .\TVScreenPlus-PC\TVScreenPlus.exe
+   ```
+   It downloads the latest version from the project's GitHub releases, unzips it in the Windows temporary folder and runs the program. Downloaded this way, the file does not trigger the Windows SmartScreen warning.
+3. Accept the administrator permission prompt. It says "Publisher: unknown", because the program is not digitally signed.
+4. That's it. The program:
    - installs itself in `C:\Program Files\TVScreenPlus` and replaces any previous version;
    - installs the virtual display driver and allows it through the Windows firewall;
    - starts with Windows, with a 📺 icon near the clock;
    - shows up in *Settings › Apps*.
 
-   You can delete the unzipped folder.
+<details>
+<summary><b>Other method: download the zip by hand</b></summary>
+
+1. Download **[TVScreenPlus-PC.zip](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)** and unzip it anywhere.
+2. Run **`TVScreenPlus.exe`** and accept the administrator permission prompt.
+   - If Windows SmartScreen shows "Windows protected your PC": click *More info*, then *Run anyway*. To avoid it, right-click the zip › *Properties* › tick *Unblock* before unzipping it.
+3. The program installs itself as with the command. You can then delete the unzipped folder.
+
+</details>
 
 ### 2. On the TV
 The app is not on the Play Store: you need to install the APK file.
