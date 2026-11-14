@@ -1,9 +1,8 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">
-    <path android:fillColor="#0B1626" android:pathData="M10,0h28a10,10 0 0 1 10,10v28a10,10 0 0 1 -10,10h-28a10,10 0 0 1 -10,-10v-28a10,10 0 0 1 10,-10z" />
-    <path android:fillColor="#90CAF9" android:pathData="M7,9h34v22h-34zM28,33h8v3h-8zM24,36h16v2.5h-16z" />
-    <path android:fillColor="#1565C0" android:pathData="M9.5,11.5h29v17h-29z" />
-    <path android:fillColor="#E3F2FD" android:pathData="M28,14h2.5v3.5h3.5v2.5h-3.5v3.5h-2.5v-3.5h-3.5v-2.5h3.5z" />
-    <path android:fillColor="#0B1626" android:pathData="M2,20h24v20h-24z" />
-    <path android:fillColor="#E3F2FD" android:pathData="M4,22.5h20v12h-20zM12,34.5h4v2.5h-4zM9,37h10v2h-10z" />
-    <path android:fillColor="#0D47A1" android:pathData="M5.5,24h17v9h-17z" />
+    <path android:fillColor="#0F2036" android:pathData="M10,0h28a10,10 0 0 1 10,10v28a10,10 0 0 1 -10,10h-28a10,10 0 0 1 -10,-10v-28a10,10 0 0 1 10,-10z" />
+    <path android:fillColor="#42A5F5" android:pathData="M22.43,30.62h3.13a0.01,0.01 0 0 1 0.01,0.01v3.13a0.01,0.01 0 0 1 -0.01,0.01h-3.13a0.01,0.01 0 0 1 -0.01,-0.01v-3.13a0.01,0.01 0 0 1 0.01,-0.01z" />
+    <path android:fillColor="#42A5F5" android:pathData="M18.28,33.45h11.45a0.7875,0.7875 0 0 1 0.7875,0.7875v0a0.7875,0.7875 0 0 1 -0.7875,0.7875h-11.45a0.7875,0.7875 0 0 1 -0.7875,-0.7875v-0a0.7875,0.7875 0 0 1 0.7875,-0.7875z" />
+    <path android:fillColor="#0B1A2C" android:strokeColor="#42A5F5" android:strokeWidth="1.47" android:pathData="M12.03,13.19h23.94a2.73,2.73 0 0 1 2.73,2.73v12.39a2.73,2.73 0 0 1 -2.73,2.73h-23.94a2.73,2.73 0 0 1 -2.73,-2.73v-12.39a2.73,2.73 0 0 1 2.73,-2.73z" />
+    <path android:fillColor="#2F7BEA" android:pathData="M13.29,16.13h21.42a1.05,1.05 0 0 1 1.05,1.05v9.87a1.05,1.05 0 0 1 -1.05,1.05h-21.42a1.05,1.05 0 0 1 -1.05,-1.05v-9.87a1.05,1.05 0 0 1 1.05,-1.05z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M21.48,19.48L27.15,22.11L21.48,24.73Z" />
 </vector>

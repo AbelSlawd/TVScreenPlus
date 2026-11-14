@@ -9,6 +9,8 @@ La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenê
 [![Télécharger pour Windows](https://img.shields.io/badge/T%C3%A9l%C3%A9charger-PC%20Windows-0078D6?style=for-the-badge&logo=windows)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)
 [![Télécharger pour Google TV](https://img.shields.io/badge/T%C3%A9l%C3%A9charger-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk)
 
+> 🧪 **Projet encore en phase de test.** TVScreenPlus est en développement actif et n'a été essayé que sur quelques PC et quelques TV. Un bug, un plantage, une TV ou une manette qui ne fonctionne pas ? Signalez-le dans la section [Issues](https://github.com/AbelSlawd/TVScreenPlus/issues), avec le modèle du PC et de la TV et, si possible, le journal (clic droit sur l'icône › *Ouvrir le journal*). Chaque retour aide à améliorer le projet.
+
 ---
 
 ## Sommaire

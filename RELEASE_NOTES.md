@@ -1,3 +1,8 @@
+**Nouveau en 1.2.3 : nouveau logo** (application TV)
+- Nouvelle icône et nouvelle bannière de l'application TV, avec le nom TVScreenPlus. L'icône est dessinée pour l'écran d'accueil de Google TV, qui affiche les applications dans des ronds.
+- Aucun changement de fonctionnement : la version du PC est identique à la 1.2.2.
+- Le projet est encore en phase de test : un bug, une TV ou une manette qui ne fonctionne pas ? Signalez-le dans la section [Issues](https://github.com/AbelSlawd/TVScreenPlus/issues).
+
 **Nouveau en 1.2.2 : toutes les manettes, page Manettes, menu rapide, réveil du PC** — mettez à jour le PC **et** l'application TV.
 
 Manettes

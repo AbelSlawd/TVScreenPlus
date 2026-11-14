@@ -9,6 +9,8 @@ The TV becomes a real second monitor (*extend* mode): you drag windows onto it a
 [![Download - Windows PC](https://img.shields.io/badge/Download-Windows%20PC-0078D6?style=for-the-badge&logo=windows)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-PC.zip)
 [![Download - Google TV](https://img.shields.io/badge/Download-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk)
 
+> 🧪 **Still in testing.** TVScreenPlus is under active development and has only been tried on a few PCs and TVs so far. Found a bug, a crash, a TV or a gamepad that does not work? Please report it in the [Issues](https://github.com/AbelSlawd/TVScreenPlus/issues) section, with your PC and TV models and, if possible, the log (right-click the tray icon › *Open the log*). Every report helps improve the project.
+
 ---
 
 ## Table of contents
