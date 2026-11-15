@@ -92,8 +92,8 @@ The app is not on the Play Store: you need to install the APK file.
 **Easy method, with the *Downloader* app** (free on the TV's Play Store):
 1. Install *Downloader* from the TV's Play Store.
 2. Allow it to install apps: *Settings › Apps › Security & restrictions › Unknown sources › Downloader*.
-3. In *Downloader*, enter the address:
-   `https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk`
+3. In *Downloader*, enter the code **`2652668`** and press *Go*.
+   *If the code doesn't work, enter the full address instead:* `https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk`
 4. Install, then open **TVScreenPlus** from the TV's home screen.
 
 *Other methods: the "Send Files to TV" app from the PC, or `adb install TVScreenPlus-TV.apk`.*

@@ -93,8 +93,8 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 **Méthode simple, avec l'appli *Downloader*** (gratuite sur le Play Store de la TV) :
 1. Installez *Downloader* depuis le Play Store de la TV.
 2. Autorisez-la à installer des applications : *Paramètres › Applications › Sécurité et restrictions › Sources inconnues › Downloader*.
-3. Dans *Downloader*, saisissez l'adresse :
-   `https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk`
+3. Dans *Downloader*, saisissez le code **`2652668`** et validez avec *Go*.
+   *Si le code ne fonctionne pas, saisissez plutôt l'adresse complète :* `https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk`
 4. Installez, puis ouvrez **TVScreenPlus** depuis l'accueil de la TV.
 
 *Autres méthodes : l'appli « Send Files to TV » depuis le PC, ou `adb install TVScreenPlus-TV.apk`.*
