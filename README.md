@@ -7,7 +7,7 @@
 The TV becomes a real second monitor (*extend* mode): you drag windows onto it and the mouse moves across, as if it were plugged in over HDMI. The picture is encoded by the PC's graphics card and decoded by the TV's video chip, for a sharp, smooth image with very little latency.
 
 [![Install - Windows PC](https://img.shields.io/badge/Install-Windows%20PC-0078D6?style=for-the-badge&logo=windows)](#1-on-the-windows-pc)
-[![Download - Google TV](https://img.shields.io/badge/Download-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://www.youtube.com/shorts/UEA5mgdk9aA)
+[![Download - Google TV](https://img.shields.io/badge/Download-Google%20TV-3DDC84?style=for-the-badge&logo=android)](#2-on-the-tv)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/xd2wfAApxr)
 
 > [!IMPORTANT]
@@ -92,8 +92,8 @@ The app is not on the Play Store: you need to install the APK file.
 **Easy method, with the *Downloader* app** (free on the TV's Play Store):
 1. Install *Downloader* from the TV's Play Store.
 2. Allow it to install apps: *Settings › Apps › Security & restrictions › Unknown sources › Downloader*.
-3. In *Downloader*, enter the address:
-   `https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk`
+3. In *Downloader*, enter the code **`2652668`** and press *Go*.
+   *If the code doesn't work, enter the full address instead:* `https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk`
 4. Install, then open **TVScreenPlus** from the TV's home screen.
 
 *Other methods: the "Send Files to TV" app from the PC, or `adb install TVScreenPlus-TV.apk`.*

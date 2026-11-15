@@ -7,7 +7,8 @@
 La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenêtres, la souris y passe, comme si elle était branchée en HDMI. L'image est encodée par la carte graphique du PC et décodée par la puce vidéo de la TV, pour une image nette et fluide avec très peu de latence.
 
 [![Installer sur Windows](https://img.shields.io/badge/Installer-PC%20Windows-0078D6?style=for-the-badge&logo=windows)](#1-sur-le-pc-windows)
-[![Télécharger pour Google TV](https://img.shields.io/badge/T%C3%A9l%C3%A9charger-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://www.youtube.com/shorts/UEA5mgdk9aA)
+[![Télécharger pour Google TV](https://img.shields.io/badge/T%C3%A9l%C3%A9charger-Google%20TV-3DDC84?style=for-the-badge&logo=android)](#2-sur-la-tv)
+[![Tuto vidéo](https://img.shields.io/badge/Tuto-Vid%C3%A9o-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/shorts/UEA5mgdk9aA)
 [![Discord](https://img.shields.io/badge/Discord-Rejoindre-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/xd2wfAApxr)
 
 > [!IMPORTANT]
@@ -92,8 +93,8 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 **Méthode simple, avec l'appli *Downloader*** (gratuite sur le Play Store de la TV) :
 1. Installez *Downloader* depuis le Play Store de la TV.
 2. Autorisez-la à installer des applications : *Paramètres › Applications › Sécurité et restrictions › Sources inconnues › Downloader*.
-3. Dans *Downloader*, saisissez l'adresse :
-   `https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk`
+3. Dans *Downloader*, saisissez le code **`2652668`** et validez avec *Go*.
+   *Si le code ne fonctionne pas, saisissez plutôt l'adresse complète :* `https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk`
 4. Installez, puis ouvrez **TVScreenPlus** depuis l'accueil de la TV.
 
 *Autres méthodes : l'appli « Send Files to TV » depuis le PC, ou `adb install TVScreenPlus-TV.apk`.*
