@@ -1,7 +1,7 @@
 **Nouveau en 1.2.4 : piloter le PC depuis la TV, chiffrement** — mettez à jour le PC **et** l'application TV.
 
 Piloter le PC (menu rapide : **OK**, désormais un appui court ; l'appui long affiche les statistiques)
-- **Télécommande = souris** : les flèches déplacent le curseur du PC (lentement puis plus vite), OK = clic, OK OK = clic droit, OK long = menu (glisser, quitter), Retour = quitter le mode souris, Chaîne + / − = défiler.
+- **Télécommande = souris**, activé dès la connexion : les flèches déplacent le curseur du PC (lentement puis plus vite), OK = clic, OK OK = clic droit, OK long = menu rapide (glisser, quitter le mode souris), Chaîne + / − = défiler. Retour ne quitte pas le mode souris (pas d'erreur de manipulation).
 - **Clavier** : le texte tapé (ou dicté) sur la TV s'écrit directement sur le PC ; il s'ouvre tout seul quand la souris clique dans un champ de texte. Touches Entrée, Effacer, Échap, Tab, Windows et *Fermer la fenêtre*.
 - **Fenêtres du PC** : liste des fenêtres ouvertes par écran ; OK amène une fenêtre en plein écran sur la TV, ◀ / ▶ la placent sur la moitié gauche / droite de la TV, OK long la renvoie sur l'écran principal du PC.
 - **Applications du PC** : programmes, applications du Store, jeux Steam et Steam Big Picture, avec leurs icônes, une recherche et des favoris. Lancées sans droits administrateur.

@@ -151,7 +151,7 @@ object L {
         "rc_t_apps" to arrayOf("Applis", "Apps", "Apps", "Apps"),
         "rc_t_windows" to arrayOf("Fenêtres", "Windows", "Ventanas", "Fenster"),
         "rc_t_drag" to arrayOf("Glisser", "Drag", "Arrastrar", "Ziehen"),
-        "rc_mouse_on" to arrayOf("Mode souris : flèches = curseur · OK = clic · OK OK = clic droit · OK maintenu = menu · Retour = quitter", "Mouse mode: arrows = cursor · OK = click · OK OK = right click · hold OK = menu · Back = exit", "Modo ratón: flechas = cursor · OK = clic · OK OK = clic derecho · mantener OK = menú · Atrás = salir", "Mausmodus: Pfeile = Zeiger · OK = Klick · OK OK = Rechtsklick · OK halten = Menü · Zurück = beenden"),
+        "rc_mouse_on" to arrayOf("Mode souris : flèches = curseur · OK = clic · OK OK = clic droit · OK maintenu = menu (pour quitter le mode souris)", "Mouse mode: arrows = cursor · OK = click · OK OK = right click · hold OK = menu (to leave mouse mode)", "Modo ratón: flechas = cursor · OK = clic · OK OK = clic derecho · mantener OK = menú (para salir del modo ratón)", "Mausmodus: Pfeile = Zeiger · OK = Klick · OK OK = Rechtsklick · OK halten = Menü (um den Mausmodus zu verlassen)"),
         "rc_mouse_off" to arrayOf("Mode souris désactivé", "Mouse mode off", "Modo ratón desactivado", "Mausmodus aus"),
         "rc_right" to arrayOf("Clic droit", "Right click", "Clic derecho", "Rechtsklick"),
         "rc_drag" to arrayOf("Maintenir le clic (glisser)", "Hold the click (drag)", "Mantener el clic (arrastrar)", "Klick halten (ziehen)"),

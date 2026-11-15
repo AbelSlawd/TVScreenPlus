@@ -306,22 +306,37 @@ namespace TVScreenPlus
         /// </summary>
         void CheckTextFocus()
         {
-            Thread.Sleep(250); // the click lands and the application moves its focus
-            try
+            // The click lands, then the application moves its focus (a browser can take a few hundred ms, more the
+            // first time it builds its accessibility tree): look a few times.
+            string seen = "?";
+            foreach (int wait in new[] { 200, 250, 350 })
             {
-                var e = System.Windows.Automation.AutomationElement.FocusedElement;
-                if (e == null) return;
-                var ct = e.Current.ControlType;
-                if (ct != System.Windows.Automation.ControlType.Edit && ct != System.Windows.Automation.ControlType.Document) return;
-                if (e.TryGetCurrentPattern(System.Windows.Automation.ValuePattern.Pattern, out object vp))
+                Thread.Sleep(wait);
+                try
                 {
-                    // A web page itself is a read-only "document" (its value is its address): not a field.
-                    if (((System.Windows.Automation.ValuePattern)vp).Current.IsReadOnly) return;
+                    var e = System.Windows.Automation.AutomationElement.FocusedElement;
+                    if (e == null) continue;
+                    seen = e.Current.ControlType.ProgrammaticName.Replace("ControlType.", "") + " " + e.Current.ClassName;
+                    if (TextField(e)) { send(10, "text_focus"); Log.W("Click into a text field (" + seen + "): TV keyboard"); return; }
                 }
-                else if (ct == System.Windows.Automation.ControlType.Document && !e.TryGetCurrentPattern(System.Windows.Automation.TextPattern.Pattern, out _)) return;
-                send(10, "text_focus");
+                catch { }
             }
-            catch { }
+            Log.W("Click focus: " + seen);
+        }
+
+        /// <summary>
+        /// Somewhere to type: an editable box (Edit, or a search box with suggestions such as YouTube's, which is a
+        /// "combobox"), or an editable document (Word, Notepad). A web page itself is a read-only document.
+        /// </summary>
+        static bool TextField(System.Windows.Automation.AutomationElement e)
+        {
+            var ct = e.Current.ControlType;
+            bool edit = ct == System.Windows.Automation.ControlType.Edit, combo = ct == System.Windows.Automation.ControlType.ComboBox;
+            if (!edit && !combo && ct != System.Windows.Automation.ControlType.Document) return false;
+            if (e.TryGetCurrentPattern(System.Windows.Automation.ValuePattern.Pattern, out object vp))
+                return !((System.Windows.Automation.ValuePattern)vp).Current.IsReadOnly;
+            // No value to read: a box you can type in, or a document with text (not a drop-down list).
+            return edit || (!combo && e.TryGetCurrentPattern(System.Windows.Automation.TextPattern.Pattern, out _));
         }
 
         /// <summary>SetForegroundWindow is refused to a process the user is not typing in: borrow the input of the current one.</summary>

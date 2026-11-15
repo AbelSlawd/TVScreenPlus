@@ -84,6 +84,7 @@ class MainActivity : Activity() {
     private var autoConnect = true
     // Remote control of the PC (encrypted connections to a PC that takes it): the arrows move its mouse.
     private var mouseMode = false
+    private var autoMouse: StreamClient? = null // connection whose mouse mode was turned on automatically
     private var dragging = false
     private val held = HashSet<Int>()     // arrow keys held in mouse mode
     private var heldSince = 0L
@@ -923,6 +924,8 @@ class MainActivity : Activity() {
                     if (prefs.getBoolean("showstats", false)) { stats.visibility = View.VISIBLE; ui.removeCallbacks(statsTick); statsTick.run() }
                     // Gamepads go to the PC only if it takes them (older PC versions: they keep driving the TV).
                     if (c.pads) gamepads.client = c
+                    // A PC that takes the remote: mouse mode from the start (left from the quick menu), once per connection.
+                    if (c.remote && autoMouse !== c) { autoMouse = c; if (!mouseMode) setMouseMode(true) }
                     android.util.Log.i(StreamClient.TAG, "streaming $info from $name")
                 }
             }
@@ -1203,7 +1206,7 @@ class MainActivity : Activity() {
                     held.add(keyCode)
                     return true
                 }
-                KeyEvent.KEYCODE_BACK -> { setMouseMode(false); return true }
+                KeyEvent.KEYCODE_BACK -> return true // never leaves mouse mode or disconnects by accident: the quick menu does
                 KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP -> { client?.post("WHEEL;3"); return true }
                 KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN -> { client?.post("WHEEL;-3"); return true }
             }
