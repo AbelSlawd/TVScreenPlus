@@ -1,0 +1,41 @@
+name: 💡 Idea or feature request
+description: Suggest a new feature or an improvement.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        You can write in **English or French**. Please check that the idea is not already in the [Issues](https://github.com/AbelSlawd/TVScreenPlus/issues).
+
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you want to do?
+      description: Describe the need or the situation, not only the solution.
+      placeholder: When I play on the TV, I would like to…
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How could TVScreenPlus help? Other apps that do it well are welcome as examples.
+    validations:
+      required: false
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Your hardware (if it matters)
+      placeholder: e.g. 120 Hz TV, AMD graphics card, PS5 controller
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Can you help?
+      options:
+        - label: I can test it on my hardware
+        - label: I would like to work on it (see CONTRIBUTING.md)

@@ -38,6 +38,7 @@ The TV becomes a real second monitor (*extend* mode): you drag windows onto it a
 - [Building from source](#building-from-source)
 - [Contributing](#contributing)
 - [Credits](#credits)
+- [License](#license)
 
 ---
 
@@ -330,3 +331,6 @@ Help is welcome, and not only code: testing on your PC and TV (AMD or Intel grap
 - [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT license): Windows virtual display.
 - [FFmpeg](https://ffmpeg.org/), [BtbN](https://github.com/BtbN/FFmpeg-Builds) build (GPL license): fallback encoder, still bundled.
 - [ViGEmBus](https://github.com/nefarius/ViGEmBus) 1.22 (BSD 3-clause license, © 2016-2020 Nefarius Software Solutions e.U.): virtual Xbox gamepads. The signed installer is included as-is in `TVScreenPlus-PC.zip`, with its license (`ViGEmBus_LICENSE.txt`). The requests sent to the driver follow those of [ViGEmClient](https://github.com/nefarius/ViGEmClient) (MIT license). The ViGEm project is no longer developed, but the driver remains signed and works on Windows 10 and 11.
+
+## License
+TVScreenPlus is released under the [MIT license](LICENSE.md). The third-party components bundled in `TVScreenPlus-PC.zip` (FFmpeg, the virtual display driver, ViGEmBus) keep their own licenses, listed in [Credits](#credits).

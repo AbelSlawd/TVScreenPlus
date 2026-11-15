@@ -39,6 +39,7 @@ La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenê
 - [Compiler soi-même](#compiler-soi-même)
 - [Contribuer](#contribuer)
 - [Crédits](#crédits)
+- [Licence](#licence)
 
 ---
 
@@ -331,3 +332,6 @@ Toute aide est la bienvenue, et pas seulement du code : tests sur votre PC et vo
 - [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (licence MIT) : écran virtuel Windows.
 - [FFmpeg](https://ffmpeg.org/), version [BtbN](https://github.com/BtbN/FFmpeg-Builds) (licence GPL) : encodeur de repli, toujours inclus.
 - [ViGEmBus](https://github.com/nefarius/ViGEmBus) 1.22 (licence BSD 3 clauses, © 2016-2020 Nefarius Software Solutions e.U.) : manettes Xbox virtuelles. Le programme d'installation signé est inclus tel quel dans `TVScreenPlus-PC.zip`, avec sa licence (`ViGEmBus_LICENSE.txt`). Les requêtes envoyées au pilote suivent celles de [ViGEmClient](https://github.com/nefarius/ViGEmClient) (licence MIT). Le projet ViGEm n'est plus développé, mais le pilote reste signé et fonctionne sous Windows 10 et 11.
+
+## Licence
+TVScreenPlus est distribué sous [licence MIT](LICENSE.md). Les composants tiers inclus dans `TVScreenPlus-PC.zip` (FFmpeg, le pilote d'écran virtuel, ViGEmBus) gardent leur propre licence, indiquée dans [Crédits](#crédits).

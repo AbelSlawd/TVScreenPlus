@@ -1,0 +1,84 @@
+name: 📺 Hardware report
+description: Tell us how TVScreenPlus runs on your PC, TV or gamepad, even if everything works.
+labels: [hardware]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        TVScreenPlus has only been tested on a few devices, so **every report helps**, including "it works perfectly". You can write in **English or French**.
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: Overall result
+      options:
+        - ✅ Works well
+        - ⚠️ Works, with problems
+        - ❌ Does not work
+    validations:
+      required: true
+
+  - type: input
+    id: tv
+    attributes:
+      label: TV
+      description: Brand and model of the TV (or Google TV box).
+      placeholder: e.g. Philips 55PUS8808, Nvidia Shield TV Pro
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: PC graphics card
+      placeholder: e.g. Intel Arc A770, NVIDIA GTX 1660 laptop
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: TV connection
+      options:
+        - Wi-Fi
+        - Ethernet cable
+        - I don't know
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: tested
+    attributes:
+      label: What did you try?
+      options:
+        - label: Picture (extended display)
+        - label: Sound on the TV
+        - label: Game mode
+        - label: Gamepads
+        - label: Driving the PC with the remote (mouse, keyboard, windows, apps)
+
+  - type: input
+    id: pads
+    attributes:
+      label: Gamepads used
+      placeholder: e.g. Xbox Series controller (Bluetooth), DualSense, Switch Pro Controller
+    validations:
+      required: false
+
+  - type: textarea
+    id: report
+    attributes:
+      label: Report from the PC (optional)
+      description: |
+        On the PC: right-click the 📺 tray icon › *Mode debug (statistiques en direct)* › **Copier pour un signalement**, then paste here.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Latency feel, picture quality, problems seen, anything worth knowing.
+    validations:
+      required: false
