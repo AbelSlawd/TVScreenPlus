@@ -109,8 +109,8 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 **Télécommande pendant la diffusion**
 | Touche | Action |
 |---|---|
-| **OK** | Afficher / masquer les statistiques (résolution, débit, images/s, son, manettes) |
-| **OK long** (ou **Menu**) | Menu rapide par-dessus l'image : souris, clavier, fenêtres et applications du PC, mode fluide / jeu, synchro du son (◀ ▶, OK = 0), statistiques, déconnecter |
+| **OK long** | Afficher / masquer les statistiques (résolution, débit, images/s, son, manettes) |
+| **OK** (ou **Menu**) | Menu rapide par-dessus l'image : souris, clavier, fenêtres et applications du PC, mode fluide / jeu, synchro du son (◀ ▶, OK = 0), statistiques, déconnecter |
 | **Retour** | Se déconnecter. L'écran disparaît de Windows |
 | **▲ / ▼** | Mode **fluide** (60 i/s réguliers, son synchronisé) / mode **jeu** (latence minimale). Appliqué en une fraction de seconde, sans déconnexion |
 | **◀ / ▶** | Avancer / retarder le son de 10 ms (réglage de la synchronisation à l'oreille, mémorisé) |
@@ -120,7 +120,7 @@ Les touches des **manettes** ne pilotent pas la TV pendant la diffusion : elles 
 **Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, **mode jeu**, **encodeur vidéo** (TVScreenPlus / ffmpeg), **son sur la TV**, **couper le son du PC pendant la diffusion**, **manettes de la TV**, **contrôle du PC depuis la TV**, **chiffrement de l'image et du son**, démarrage avec Windows, mises à jour, recalibrage, **oublier les TV autorisées**, **mode debug**, journal.
 
 ### Piloter le PC avec la télécommande
-Depuis le menu rapide (**OK long**), avec TVScreenPlus PC 1.2.4 ou plus récent :
+Depuis le menu rapide (**OK**), avec TVScreenPlus PC 1.2.4 ou plus récent :
 - **Télécommande = souris** : les flèches déplacent le curseur du PC, lentement d'abord puis de plus en plus vite. **OK** = clic, **OK long** = menu (clic droit, maintenir le clic pour glisser, quitter), **Retour** = quitter le mode souris. Les touches Chaîne + / − (ou Page haut / bas) font défiler.
 - **Clavier** : ce que vous tapez avec le clavier de la TV (ou dictez avec le micro de la télécommande) s'écrit directement sur le PC. Touches Entrée, Effacer, Échap, Tab, Windows et *Fermer la fenêtre* (Alt + F4).
 - **Fenêtres du PC** : la liste des fenêtres ouvertes, par écran. **OK** amène la fenêtre sur la TV et la met au premier plan (une fenêtre agrandie le reste) ; **OK long** la renvoie sur l'écran principal du PC.

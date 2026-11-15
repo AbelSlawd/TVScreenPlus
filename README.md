@@ -109,8 +109,8 @@ The app is not on the Play Store: you need to install the APK file.
 **Remote control while streaming**
 | Key | Action |
 |---|---|
-| **OK** | Show / hide the statistics (resolution, bitrate, frames/s, sound, gamepads) |
-| **Hold OK** (or **Menu**) | Quick menu over the picture: PC mouse, keyboard, windows and applications, fluid / game mode, sound sync (◀ ▶, OK = 0), statistics, disconnect |
+| **Hold OK** | Show / hide the statistics (resolution, bitrate, frames/s, sound, gamepads) |
+| **OK** (or **Menu**) | Quick menu over the picture: PC mouse, keyboard, windows and applications, fluid / game mode, sound sync (◀ ▶, OK = 0), statistics, disconnect |
 | **Back** | Disconnect. The display disappears from Windows |
 | **▲ / ▼** | **Fluid** mode (steady 60 fps, synced sound) / **game** mode (minimal latency). Applied within a fraction of a second, without disconnecting |
 | **◀ / ▶** | Advance / delay the sound by 10 ms (by-ear sync adjustment, remembered) |
@@ -120,7 +120,7 @@ The app is not on the Play Store: you need to install the APK file.
 **PC tray icon menu** (right-click): *Restart the connection*, resolution, quality, **game mode**, **video encoder** (TVScreenPlus / ffmpeg), **sound on the TV**, **mute PC sound while streaming**, **TV gamepads**, **control of the PC from the TV**, **picture and sound encryption**, start with Windows, updates, recalibration, **forget the allowed TVs**, **debug mode**, log.
 
 ### Driving the PC with the remote
-From the quick menu (**hold OK**), with TVScreenPlus PC 1.2.4 or newer:
+From the quick menu (**OK**), with TVScreenPlus PC 1.2.4 or newer:
 - **Remote = mouse**: the arrows move the PC's cursor, slowly at first, then faster and faster. **OK** = click, **hold OK** = menu (right click, hold the click to drag, exit), **Back** = leave mouse mode. Channel + / − (or Page up / down) scroll.
 - **Keyboard**: what you type with the TV keyboard (or dictate with the remote's microphone) is typed on the PC at once. Enter, Delete, Esc, Tab, Windows and *Close the window* (Alt + F4) keys.
 - **PC windows**: the open windows, by screen. **OK** brings the window to the TV and to the front (a maximized window stays maximized); **hold OK** sends it back to the PC's main screen.

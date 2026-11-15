@@ -1,6 +1,6 @@
 **Nouveau en 1.2.4 : piloter le PC depuis la TV, chiffrement** — mettez à jour le PC **et** l'application TV.
 
-Piloter le PC (menu rapide : **appui long sur OK**)
+Piloter le PC (menu rapide : **OK**, désormais un appui court ; l'appui long affiche les statistiques)
 - **Télécommande = souris** : les flèches déplacent le curseur du PC (lentement puis plus vite), OK = clic, clic droit et glisser depuis le menu, Retour = quitter le mode souris, Chaîne + / − = défiler.
 - **Clavier** : le texte tapé (ou dicté) sur la TV s'écrit directement sur le PC, avec Entrée, Effacer, Échap, Tab, Windows et *Fermer la fenêtre*.
 - **Fenêtres du PC** : liste des fenêtres ouvertes par écran ; OK amène une fenêtre sur la TV, OK long la renvoie sur l'écran principal du PC.

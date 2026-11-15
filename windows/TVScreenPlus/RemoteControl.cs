@@ -21,7 +21,8 @@ namespace TVScreenPlus
     ///   "WINS?" -> extension [8]: open windows, Alt-Tab order, "id\tscreen\tstate\ttitle\tpng(base64)" per line
     ///             (screen: tv | main | 2 | 3…; state: n normal, m minimized, x maximized)
     ///   "WIN;id;tv|pc" -> that window moves to the TV screen (or the PC's main screen) and comes to the front
-    ///   "APPS?" -> extension [9]: applications of the Start menu, "id\tfavorite 0|1\tname\tpng(base64)" per line
+    ///   "APPS?" or "APPS?;1" -> extension [9]: applications of the Start menu, "id\tfavorite 0|1\tname\t" per line;
+    ///             with ";1" (the TV has no icons yet), extension [12] "id\tpng" lines follow in small, spaced batches
     ///   "APP;id" launches one (without administrator rights), "FAV;id;1|0" sets a favorite (kept on the PC)
     /// Answers and messages for the user: extension [10] text. Only ids from the last list sent are accepted:
     /// the TV never names a file, a command or a window handle of its own.
@@ -97,7 +98,7 @@ namespace TVScreenPlus
                     break;
                 case "WINS?": Queue(SendWindows); break;
                 case "WIN": if (a.Length == 2) Queue(() => MoveWindow(a[0], a[1] == "tv")); break;
-                case "APPS?": Queue(SendApps); break;
+                case "APPS?": Queue(() => SendApps(arg == "1")); break;
                 case "APP": Queue(() => Launch(arg)); break;
                 case "FAV": if (a.Length == 2) Queue(() => Favorite(a[0], a[1] == "1")); break;
             }
@@ -319,40 +320,37 @@ namespace TVScreenPlus
 
         // ---------------- applications ----------------
 
-        void SendApps()
+        /// <param name="icons">The TV has no icons yet ("APPS?;1"); later requests only refresh the list.</param>
+        void SendApps(bool icons)
         {
             var favs = new HashSet<string>(Settings.Get("fav_apps", "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
             var found = new Dictionary<string, App>();
             foreach (var a in ListApps()) found[a.Id] = a;
             apps = found;
-            // The list goes at once; icons not extracted yet follow in small batches (extension [12] "id\tpng" lines):
-            // ~30 ms each, 8 s for 270 applications the first time.
-            var missing = new List<App>();
+            // The list goes alone (a few KB); the icons follow in small, spaced batches (extension [12] "id\tpng"
+            // lines). They travel in the video stream: 2 MB at once froze the picture for a second on a 100 Mb/s TV port.
             var sb = new StringBuilder();
             foreach (var a in found.Values.OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase))
-            {
-                string png;
-                lock (iconCache) iconCache.TryGetValue(a.IconPath, out png);
-                if (png == null) missing.Add(a);
-                sb.Append(a.Id).Append('\t').Append(favs.Contains(a.Id) ? '1' : '0').Append('\t').Append(Clean(a.Name)).Append('\t').Append(png ?? "").Append('\n');
-            }
+                sb.Append(a.Id).Append('\t').Append(favs.Contains(a.Id) ? '1' : '0').Append('\t').Append(Clean(a.Name)).Append('\t').Append('\n');
             send(9, sb.ToString());
-            if (missing.Count == 0) return;
+            if (!icons) return;
             int run = ++iconRun;
+            var order = found.Values.OrderByDescending(x => favs.Contains(x.Id)).ThenBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
             try
             {
                 iconWork.Add(() =>
                 {
                     var b = new StringBuilder();
                     int n = 0;
-                    foreach (var a in missing.OrderByDescending(x => favs.Contains(x.Id)))
+                    foreach (var a in order)
                     {
                         if (run != iconRun) return; // newer request or session over
                         string png;
                         lock (iconCache) iconCache.TryGetValue(a.IconPath, out png);
-                        if (png == null) { png = ShellIcon(a.IconPath, 96); lock (iconCache) iconCache[a.IconPath] = png; }
+                        if (png == null) { png = ShellIcon(a.IconPath, 72); lock (iconCache) iconCache[a.IconPath] = png; }
                         if (png.Length > 0) { b.Append(a.Id).Append('\t').Append(png).Append('\n'); n++; }
-                        if (n == 16) { send(12, b.ToString()); b.Clear(); n = 0; }
+                        // ~50 KB every 40 ms at most: about 10 Mb/s for a second or two, next to the video.
+                        if (n == 8) { send(12, b.ToString()); b.Clear(); n = 0; Thread.Sleep(40); }
                     }
                     if (n > 0) send(12, b.ToString());
                 });

@@ -98,6 +98,7 @@ class MainActivity : Activity() {
     private val appIcons = HashMap<String, android.graphics.Bitmap>()
     private val appTiles = HashMap<String, ImageView>()
     private var appsFilter = ""
+    private val iconThread = java.util.concurrent.Executors.newSingleThreadExecutor()
     @Volatile private var discovering = false
     /** Bumped at each start: a discovery thread still waiting on its socket after a quick pause/resume stops. */
     @Volatile private var discoveryRun = 0
@@ -944,26 +945,23 @@ class MainActivity : Activity() {
                 if (cursorPending.compareAndSet(false, true)) ui.post(cursorTick) // latest position only
             }
 
-            override fun onWindows(text: String) {
+            // Icons are decoded on their own thread: on the network thread they held the video back (1 s freezes).
+            override fun onWindows(text: String) = iconThread.execute {
                 val rows = text.lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 5 } }
                     .map { f -> WinItem(f[0], f[1], f[2], f[3], decodeIcon(f[4])) }
                 ui.post { if (client === c && remoteKind == "windows") fillWindows(c, rows) }
             }
 
             override fun onApps(text: String) {
-                val icons = HashMap<String, android.graphics.Bitmap>()
-                val list = text.lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 4 } }.map { f ->
-                    decodeIcon(f[3])?.let { icons[f[0]] = it }
-                    AppItem(f[0], f[2], f[1] == "1")
-                }
+                val list = text.lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 3 } }.map { f -> AppItem(f[0], f[2], f[1] == "1") }
                 ui.post {
                     if (client !== c) return@post
-                    apps = list; appIcons.putAll(icons)
+                    apps = list
                     if (remoteKind == "apps") fillApps(c)
                 }
             }
 
-            override fun onAppIcons(text: String) {
+            override fun onAppIcons(text: String) = iconThread.execute {
                 val icons = text.lines().mapNotNull { l -> l.split('\t').takeIf { it.size >= 2 }?.let { f -> decodeIcon(f[1])?.let { f[0] to it } } }
                 ui.post {
                     if (client !== c) return@post
@@ -1050,50 +1048,74 @@ class MainActivity : Activity() {
         }
         val w = dp(440)
         panel.addView(text(L.t("qm_title").uppercase(), 13f, ACCENT).apply {
-            gravity = Gravity.START; typeface = MEDIUM; letterSpacing = 0.12f; setPadding(dp(10), 0, 0, dp(6))
+            gravity = Gravity.START; typeface = MEDIUM; letterSpacing = 0.12f; setPadding(dp(10), 0, 0, dp(4))
         })
-        // Driving the PC first: the most used entries.
+        // The content scrolls if it is taller than the screen; rows are tighter than on the settings pages.
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false; setPadding(0, dp(4), 0, dp(4)) }
+        panel.addView(ScrollView(this).apply { clipChildren = false; clipToPadding = false; isVerticalScrollBarEnabled = false; addView(content) })
+        fun compact(r: LinearLayout) = r.apply {
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+            for (i in 0 until childCount) (getChildAt(i) as? TextView)?.textSize = 16f
+            (layoutParams as LinearLayout.LayoutParams).setMargins(dp(4), dp(3), dp(4), dp(3))
+        }
+        // Driving the PC first, as tiles on one line: the most used entries.
         if (c.remote) {
-            row(panel, w, L.t("rc_mouse"), L.t(if (mouseMode) "on" else "off")) { hideQuickMenu(); setMouseMode(!mouseMode) }
-            if (mouseMode) {
-                row(panel, w, L.t("rc_right"), "›") { hideQuickMenu(); click("r") }
-                row(panel, w, L.t("rc_drag"), L.t(if (dragging) "on" else "off")) { hideQuickMenu(); setDrag(!dragging) }
+            fun tiles(vararg t: Triple<String, String, () -> Unit>) {
+                val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
+                val tw = (w - dp(8)) / 4 - dp(8)
+                for ((icon, label, onClick) in t) line.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+                    setPadding(dp(4), dp(8), dp(4), dp(8))
+                    focusStyle(this)
+                    setOnClickListener { onClick() }
+                    addView(TextView(this@MainActivity).apply { text = icon; textSize = 22f; gravity = Gravity.CENTER; setTextColor(Color.WHITE) })
+                    addView(TextView(this@MainActivity).apply {
+                        text = label; textSize = 13f; gravity = Gravity.CENTER; setTextColor(onFocus(ACCENT)); isDuplicateParentStateEnabled = true; maxLines = 1
+                    })
+                }, LinearLayout.LayoutParams(tw, dp(78)).apply { setMargins(dp(4), dp(3), dp(4), dp(3)) })
+                content.addView(line)
             }
-            row(panel, w, L.t("rc_keyboard"), "›") { hideQuickMenu(); showKeyboard(c) }
-            row(panel, w, L.t("rc_windows"), "›") { hideQuickMenu(); showWindows(c) }
-            row(panel, w, L.t("rc_apps"), "›") { hideQuickMenu(); showApps(c) }
+            tiles(
+                Triple("🖱", L.t("rc_t_mouse") + if (mouseMode) " ✓" else "", { hideQuickMenu(); setMouseMode(!mouseMode) }),
+                Triple("⌨", L.t("rc_keyboard"), { hideQuickMenu(); showKeyboard(c) }),
+                Triple("❐", L.t("rc_t_windows"), { hideQuickMenu(); showWindows(c) }),
+                Triple("▦", L.t("rc_t_apps"), { hideQuickMenu(); showApps(c) }))
+            if (mouseMode) tiles(
+                Triple("◩", L.t("rc_right"), { hideQuickMenu(); click("r") }),
+                Triple("✥", L.t("rc_t_drag") + if (dragging) " ✓" else "", { hideQuickMenu(); setDrag(!dragging) }))
         }
         fun modeName(game: Boolean) = L.t(if (game) "qm_game" else "qm_fluid")
-        if (c.modeSupported) row(panel, w, L.t("qm_mode"), modeName(c.gameMode)) {
+        if (c.modeSupported) compact(row(content, w, L.t("qm_mode"), modeName(c.gameMode)) {
             val game = !c.gameMode
             c.requestMode(game)
             it.text = modeName(game)
-        }
-        // Sound sync: ◀ ▶ on the row move it by 10 ms, OK puts it back to 0.
-        val sync = row(panel, w, L.t("qm_sync"), L.t("qm_ms", prefs.getInt(offsetKey(), 0))) { it.text = L.t("qm_ms", setSync(c, 0)) }
+        })
+        // Sound sync: ◀ ▶ on the row move it by 10 ms, OK puts it back to 0 (the arrows on the value say so).
+        val sync = compact(row(content, w, L.t("qm_sync"), L.t("qm_ms", prefs.getInt(offsetKey(), 0))) { it.text = L.t("qm_ms", setSync(c, 0)) })
         sync.setOnKeyListener { v, code, e ->
             if (e.action != KeyEvent.ACTION_DOWN || (code != KeyEvent.KEYCODE_DPAD_LEFT && code != KeyEvent.KEYCODE_DPAD_RIGHT)) return@setOnKeyListener false
             val ms = setSync(c, prefs.getInt(offsetKey(), 0) + if (code == KeyEvent.KEYCODE_DPAD_RIGHT) 10 else -10)
             ((v as LinearLayout).getChildAt(1) as TextView).text = L.t("qm_ms", ms)
             true
         }
-        panel.addView(text(L.t("qm_sync_note"), 13f, MUTED).apply { gravity = Gravity.START; setPadding(dp(10), 0, dp(10), dp(6)) },
-            LinearLayout.LayoutParams(w, -2))
         fun statsName() = L.t(if (stats.visibility == View.VISIBLE) "on" else "off")
-        row(panel, w, L.t("showstats"), statsName()) {
+        compact(row(content, w, L.t("showstats"), statsName()) {
             stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
             ui.removeCallbacks(statsTick); statsTick.run()
             it.text = statsName()
-        }
-        row(panel, w, L.t("qm_disconnect"), "›") {
+        })
+        compact(row(content, w, L.t("qm_disconnect"), "›") {
             autoConnect = false // user wants out: no auto-reconnect until they pick a PC
             disconnect(L.t("disconnected_back"))
             list?.getChildAt(0)?.requestFocus()
-        }
-        root.addView(panel, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(48) })
+        })
+        root.addView(panel, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.CENTER_VERTICAL).apply { setMargins(0, dp(24), dp(48), dp(24)) })
         quickMenu = panel
         panel.alpha = 0f; panel.animate().alpha(1f).setDuration(150).start()
-        panel.getChildAt(1)?.requestFocus()
+        // First entry: the first tile of the tiles line, or the first row.
+        val first: View? = content.getChildAt(0)
+        val tile: View? = (first as? android.view.ViewGroup)?.getChildAt(0)
+        (if (tile != null && tile.isFocusable) tile else first)?.requestFocus()
     }
 
     private fun hideQuickMenu() {
@@ -1124,8 +1146,18 @@ class MainActivity : Activity() {
 
     override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
         if (client != null && overlay.visibility == View.GONE && quickMenu == null && remotePanel == null &&
-            (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)) { showQuickMenu(); return true }
+            (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)) {
+            // Long OK: statistics; in mouse mode OK is the click, so the long press opens the menu there.
+            if (mouseMode) showQuickMenu() else toggleStats()
+            return true
+        }
         return super.onKeyLongPress(keyCode, event)
+    }
+
+    private fun toggleStats() {
+        stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        ui.removeCallbacks(statsTick)
+        statsTick.run()
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
@@ -1135,9 +1167,8 @@ class MainActivity : Activity() {
             (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_INFO)) {
             // Mouse mode: short OK = left click (or releases a held click).
             if (mouseMode && keyCode != KeyEvent.KEYCODE_INFO) { if (dragging) setDrag(false) else click("l"); return true }
-            stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-            ui.removeCallbacks(statsTick)
-            statsTick.run()
+            // Short OK: quick menu (the Info key keeps showing the statistics).
+            if (keyCode == KeyEvent.KEYCODE_INFO) toggleStats() else showQuickMenu()
             return true
         }
         return super.onKeyUp(keyCode, event)
@@ -1173,7 +1204,7 @@ class MainActivity : Activity() {
         if (keyCode == KeyEvent.KEYCODE_BACK && inSettings) { showMain(); return true }
         if (client != null && overlay.visibility == View.GONE &&
             (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_INFO)) {
-            // Short press (on release) = statistics, long press = quick menu (most Google TV remotes have no Menu key).
+            // Short press (on release) = quick menu, long press = statistics (most Google TV remotes have no Menu key).
             if (event.repeatCount == 0) event.startTracking()
             return true
         }
@@ -1284,11 +1315,13 @@ class MainActivity : Activity() {
             root.removeView(it)
         }
         remotePanel = null; remoteKind = ""; remoteBody = null; appTiles.clear()
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_UNSPECIFIED)
     }
 
     /** Panel over the video with a title, a scrolling body and a hint line; returns the body. */
     private fun remoteFrame(kind: String, title: String, hint: String, width: Int, height: Int, place: Int, header: View? = null): LinearLayout {
         closeRemotePanel()
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING) // the search keyboard must not move the video
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false
             background = rounded(Color.argb(240, 12, 24, 40), 20); setPadding(dp(20), dp(16), dp(20), dp(12))
@@ -1311,16 +1344,19 @@ class MainActivity : Activity() {
     /** Text field whose every change is typed on the PC at once (TV keyboard, voice typing included). */
     private fun showKeyboard(c: StreamClient) {
         closeRemotePanel()
+        // At the top of the screen: the TV keyboard opens at the bottom. The window must not resize or pan for it
+        // (the video would move up and the bar would end up behind the keyboard).
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false
-            background = rounded(Color.argb(240, 12, 24, 40), 20); setPadding(dp(20), dp(14), dp(20), dp(12))
+            background = rounded(Color.argb(240, 12, 24, 40), 20); setPadding(dp(16), dp(12), dp(16), dp(10))
         }
         val field = android.widget.EditText(this).apply {
-            textSize = 22f; setTextColor(Color.WHITE); setHintTextColor(MUTED); hint = L.t("rc_type_hint"); isSingleLine = true
+            textSize = 19f; setTextColor(Color.WHITE); setHintTextColor(MUTED); hint = L.t("rc_type_hint"); isSingleLine = true
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEND or android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI or
                 android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN
-            background = rounded(CARD, 12); setPadding(dp(18), dp(12), dp(18), dp(12))
+            background = rounded(CARD, 12); setPadding(dp(16), dp(8), dp(16), dp(8))
         }
         var sent = ""
         field.addTextChangedListener(object : android.text.TextWatcher {
@@ -1338,8 +1374,12 @@ class MainActivity : Activity() {
         })
         field.setOnEditorActionListener { _, _, _ -> key(c, 0x0D); sent = ""; field.setText(""); true }
         bar.addView(field, LinearLayout.LayoutParams(-1, -2))
-        val keys = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(0, dp(6), 0, 0) }
-        fun k(label: String, onClick: () -> Unit) = keys.addView(button(label, wide = false) { onClick() })
+        val keys = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; clipChildren = false; clipToPadding = false; setPadding(0, dp(4), 0, 0) }
+        // Seven keys on one line: smaller than the menu buttons, each as wide as its text.
+        fun k(label: String, onClick: () -> Unit) = keys.addView(button(label, wide = false) { onClick() }.apply {
+            textSize = 14f; setPadding(dp(14), dp(6), dp(14), dp(6)); minHeight = 0; minimumHeight = 0; minWidth = 0; minimumWidth = 0
+            layoutParams = LinearLayout.LayoutParams(-2, -2).apply { setMargins(dp(3), dp(4), dp(3), dp(2)) }
+        })
         k(L.t("rc_enter")) { key(c, 0x0D) }
         k(L.t("rc_backspace")) { key(c, 0x08) }
         k(L.t("rc_esc")) { key(c, 0x1B) }
@@ -1348,7 +1388,7 @@ class MainActivity : Activity() {
         k(L.t("rc_close_win")) { key(c, 0x73, 0x12) } // Alt + F4
         k(L.t("rc_hide")) { closeRemotePanel() }
         bar.addView(keys)
-        root.addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(40), 0, dp(40), dp(24)) })
+        root.addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { setMargins(dp(40), dp(20), dp(40), 0) })
         remotePanel = bar; remoteKind = "keyboard"
         field.requestFocus()
         ui.postDelayed({
@@ -1357,7 +1397,7 @@ class MainActivity : Activity() {
     }
 
     private fun showWindows(c: StreamClient) {
-        val body = remoteFrame("windows", L.t("rc_windows"), L.t("rc_windows_hint"), dp(760), -1, Gravity.END)
+        val body = remoteFrame("windows", L.t("rc_windows"), L.t("rc_windows_hint"), dp(640), -1, Gravity.END)
         body.addView(text(L.t("rc_loading"), 16f, MUTED))
         c.post("WINS?")
     }
@@ -1367,22 +1407,22 @@ class MainActivity : Activity() {
         val body = remoteBody ?: return
         body.removeAllViews()
         if (rows.isEmpty()) { body.addView(text(L.t("rc_no_windows"), 16f, MUTED)); return }
-        val w = dp(700)
+        val w = dp(580)
         val order = rows.map { it.screen }.distinct().sortedBy { when (it) { "tv" -> 0; "main" -> 1; else -> 2 + (it.toIntOrNull() ?: 9) } }
         var first: View? = null
         for (screen in order) {
             section(body, w, when (screen) { "tv" -> L.t("rc_on_tv"); "main" -> L.t("rc_on_main"); else -> L.t("rc_on_screen", screen) })
-            for (it in rows.filter { r -> r.screen == screen }) {
+            for (win in rows.filter { r -> r.screen == screen }) {
                 val r = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                     setPadding(dp(16), dp(10), dp(16), dp(10))
                     focusStyle(this)
-                    setOnClickListener { c.post("WIN;${it.id};tv") }
-                    setOnLongClickListener { c.post("WIN;${it.id};pc"); true }
+                    setOnClickListener { c.post("WIN;${win.id};tv") }
+                    setOnLongClickListener { c.post("WIN;${win.id};pc"); true }
                 }
-                r.addView(ImageView(this).apply { it.icon?.let { b -> setImageBitmap(b) } }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(16) })
+                r.addView(ImageView(this).apply { win.icon?.let { b -> setImageBitmap(b) } }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(16) })
                 r.addView(TextView(this).apply {
-                    text = it.title + if (it.state == "m") "  ·  " + L.t("rc_minimized") else ""
+                    text = win.title + if (win.state == "m") "  ·  " + L.t("rc_minimized") else ""
                     textSize = 17f; setTextColor(Color.WHITE); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 body.addView(r, LinearLayout.LayoutParams(w, -2).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
@@ -1407,7 +1447,7 @@ class MainActivity : Activity() {
         search.layoutParams = LinearLayout.LayoutParams(dp(420), -2)
         val body = remoteFrame("apps", L.t("rc_apps"), L.t("rc_apps_hint"), -1, -1, Gravity.CENTER, search)
         if (apps.isEmpty()) body.addView(text(L.t("rc_loading"), 16f, MUTED)) else fillApps(c)
-        c.post("APPS?") // fresh list (new favorites, installs); icons come from the PC's cache
+        c.post(if (appIcons.isEmpty()) "APPS?;1" else "APPS?") // fresh list (new favorites, installs); icons only the first time
     }
 
     /** Favorites first, then every application A-Z, as a grid of tiles; the search field filters by name. */
