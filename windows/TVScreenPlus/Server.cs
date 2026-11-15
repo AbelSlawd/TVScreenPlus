@@ -27,7 +27,10 @@ namespace TVScreenPlus
     ///  Optional features, used only when the TV announces them in its hello line (older TV apps are unaffected):
     ///   audio=1: PC sound in flag 0x08 packets whose payload starts with 1 (see AudioLoopback);
     ///   pads=1:  "PADON/PADOFF/PAD" lines from the TV, rumble in flag 0x08 packets starting with 2 (see PadHub).
-    ///   The PC confirms what it accepted with "audio=0|1;pads=0|1" in its config packet (0x20).
+    ///   sec=1;aes=MB/s: right after authentication the PC sends extension [11][1 commands | 2 picture and sound],
+    ///          the TV answers "SEC" in clear and the connection continues encrypted (see SecureChannel);
+    ///   remote=1: mouse, keyboard, windows and applications from the TV, only when encrypted (see RemoteControl).
+    ///   The PC confirms what it accepted with "audio=0|1;pads=0|1;remote=1;sec=1|3" in its config packet (0x20).
     /// </summary>
     sealed class Server
     {
@@ -230,7 +233,7 @@ namespace TVScreenPlus
         readonly AutoResetEvent ack = new AutoResetEvent(false);
         public readonly SessionStats Stats = new SessionStats();
         readonly object sendLock = new object();
-        NetworkStream ns;
+        Stream ns;                    // the TV connection (a SecureStream once encrypted)
         volatile bool closed;
         volatile Streamer streamer;       // encoder currently streaming
         volatile Streamer streamerNext;   // encoder starting to replace it (seamless switch)
@@ -249,6 +252,12 @@ namespace TVScreenPlus
         IPEndPoint audioUdp;          // TV's UDP port for the sound (audioudp=), null = sound in the TCP stream
         UdpClient udpOut;
         volatile PadHub pads;         // TV gamepads -> virtual Xbox 360 controllers
+        byte[] secBase;               // from the pairing key and this connection's challenge (SecureChannel)
+        volatile bool secureUp;       // what the TV sends is encrypted and authenticated: remote control allowed
+        bool secureDown;              // the picture and the sound are encrypted too
+        SecureDatagrams udpSeal;      // UDP sound / cursor packets encrypted (with secureDown)
+        volatile RemoteControl remote; // mouse, keyboard, windows, applications from the TV
+        volatile string tvDevice;     // GDI name of the TV's virtual display (remote control)
 
         public Session(TcpClient c, Action<string> status, Action<string, string> notify)
         {
@@ -266,6 +275,17 @@ namespace TVScreenPlus
             try { pads?.Dispose(); } catch { }
             try { cursor?.Dispose(); } catch { }
             try { udpOut?.Close(); } catch { }
+            try { remote?.Dispose(); } catch { }
+            try { udpSeal?.Dispose(); } catch { }
+            try { (ns as SecureStream)?.Dispose(); } catch { }
+        }
+
+        /// <summary>Sound and cursor packets to the TV, encrypted when the picture is.</summary>
+        void SendUdp(UdpClient u, byte[] p, IPEndPoint ep)
+        {
+            var s = udpSeal;
+            var d = s != null ? s.Seal(p) : p;
+            u.Send(d, d.Length, ep);
         }
 
         UdpClient Udp()
@@ -314,7 +334,7 @@ namespace TVScreenPlus
                         // (measured: up to 177 ms of arrival jitter when YouTube pushed the video to 40-58 Mb/s).
                         // 5 ms packets (~1 kB) fit in one Ethernet frame.
                         var ep = audioUdp; var u = Udp();
-                        audio = new AudioLoopback(p => { if (!closed) try { u.Send(p, p.Length, ep); } catch { } }, Stats, 5);
+                        audio = new AudioLoopback(p => { if (!closed) try { SendUdp(u, p, ep); } catch { } }, Stats, 5);
                         Log.W($"Audio to TV: on (UDP {ep})");
                     }
                     else
@@ -415,7 +435,11 @@ namespace TVScreenPlus
                     string answer = ReadReply("AUTH;");
                     if (answer != "none")
                     {
-                        if (Pairing.Same(Pairing.Unhex(answer), Pairing.Proof(key, nonce))) return true;
+                        if (Pairing.Same(Pairing.Unhex(answer), Pairing.Proof(key, nonce)))
+                        {
+                            secBase = SecureChannel.Base(key, nonce);
+                            return Secure();
+                        }
                         Log.W($"TV '{tvName}' {ip}: wrong pairing key, refused");
                         Deny("auth_failed");
                         return false;
@@ -443,10 +467,34 @@ namespace TVScreenPlus
                     Send(0x08, new byte[] { 7, 1 });
                     Pairing.Trust(id, tvName, shared);
                     Log.W($"TV '{tvName}' {ip} paired");
-                    return true;
+                    secBase = SecureChannel.Base(shared, ex.PublicKey);
+                    return Secure();
                 }
             }
             catch (Exception e) { Log.W("Handshake failed: " + e.Message); return false; }
+        }
+
+        /// <summary>
+        /// Authenticated TV: switch the connection to encryption if its app can (sec=1). [11][bits] tells it what is
+        /// encrypted; it answers "SEC" in clear and only sends encrypted records after it. What the TV sends is always
+        /// encrypted (a few bytes); the picture and the sound follow Settings.Crypt (auto: if the TV is fast enough).
+        /// </summary>
+        bool Secure()
+        {
+            if (Int(hello, "sec", 0) != 1) { Stats.Crypt = "non (application TV ancienne)"; return true; }
+            int aes = Int(hello, "aes", 0);
+            bool wifi = hello.TryGetValue("net", out var net) && net == "wifi";
+            string mode = Settings.Crypt;
+            bool down = mode == "on" || (mode == "auto" && SecureChannel.AutoDown(aes, wifi));
+            Send(0x08, new byte[] { 11, (byte)(SecureChannel.UpBit | (down ? SecureChannel.DownBit : 0)) });
+            ReadReply("SEC");
+            ns = new SecureStream(ns, down ? SecureChannel.Key(secBase, "down") : null, SecureChannel.Key(secBase, "up"));
+            secureUp = true; secureDown = down;
+            if (down) udpSeal = new SecureDatagrams(SecureChannel.Key(secBase, "udp"));
+            Stats.Crypt = down ? "image, son et commandes (AES-256-GCM)"
+                               : "commandes seulement" + (mode == "off" ? " (image et son : réglage Jamais)" : $" (TV trop lente pour l'image : {aes} Mo/s)");
+            Log.W($"Encryption: commands{(down ? " + picture and sound" : "")} (setting {mode}, TV AES {aes} MB/s, {(wifi ? "Wi-Fi" : "wired")})");
+            return true;
         }
 
         /// <summary>Tells the TV it is refused (it then stops reconnecting by itself) and why.</summary>
@@ -463,9 +511,18 @@ namespace TVScreenPlus
             {
                 string l = ReadLine(ns, true) ?? throw new IOException("TV disconnected");
                 if (l.StartsWith(prefix)) return l.Substring(prefix.Length).Trim();
-                if (l.StartsWith("LOG;")) Log.W("TV: " + l.Substring(4));
+                if (l.StartsWith("LOG;")) TvLog(l.Substring(4));
             }
             throw new IOException("no answer from the TV");
+        }
+
+        /// <summary>A diagnostic line from the TV: logged; its model and settings are kept for "Copy for a report".</summary>
+        void TvLog(string text)
+        {
+            Log.W("TV: " + text);
+            if (text.StartsWith("device ")) SessionStats.LastTvDevice = text.Substring(7);
+            else if (text.StartsWith("settings ")) SessionStats.LastTvSettings = text.Substring(9);
+            else if (text.StartsWith("crypto: ")) SessionStats.LastTvCrypto = text.Substring(8);
         }
 
         /// <summary>Ends a refused connection; an old TV app keeps it a minute so that our message stays on its screen.</summary>
@@ -588,6 +645,14 @@ namespace TVScreenPlus
                     }
                 }
                 if (plan == null) plan = new EncodePlan { Enc = enc, Quality = false, Fps = 30 };
+                tvDevice = target.GdiName;
+                // Remote control only over an encrypted, authenticated upstream (keyboard input = full control of the PC).
+                if (secureUp && Int(hello, "remote", 0) == 1)
+                    remote = new RemoteControl((kind, text) =>
+                    {
+                        if (closed) return;
+                        try { Send(0x08, new[] { kind }.Concat(Encoding.UTF8.GetBytes(text)).ToArray()); } catch { }
+                    }, () => tvDevice);
                 bool hevc = enc.Codec == "hevc";
                 double ideal = Ideal(target.Width, target.Height, plan.Fps, hevc);
                 int kbps = (int)(autoQ ? Math.Max(ideal * 0.6, Math.Min(budget, ideal * 2.5)) : ideal * 1.4 * Settings.Quality);
@@ -638,7 +703,8 @@ namespace TVScreenPlus
                     int vpc = (plan.Enc.Native ? 0 : plan.Enc.Name.Contains("nvenc") ? (Settings.GameMode ? 0 : 2) : 1) * 1000 / plan.Fps + 8 + 15;
                     Stats.PcVideoMs = vpc;
                     return $";audio={(tvAudio ? 1 : 0)};pads={(pads != null ? 1 : 0)};vpc={vpc};apc=5;avsync={(Settings.GameMode ? 0 : 1)};mode={(Settings.GameMode ? "game" : "fluid")}" +
-                           (tvStamp ? ";ts=1;lpc=15" : "") + (tvCursor ? ";cursor=1" : "");
+                           (tvStamp ? ";ts=1;lpc=15" : "") + (tvCursor ? ";cursor=1" : "") +
+                           (remote != null ? ";remote=1" : "") + (secureUp ? ";sec=" + (secureDown ? 3 : 1) : "");
                 }
                 Send(0x20, ConfigPacket());
                 string info = $"{target.Width}x{target.Height} {plan.Fps} i/s {enc.Codec.ToUpper()} {kbps / 1000} Mb/s";
@@ -651,7 +717,7 @@ namespace TVScreenPlus
                     // The TV draws the cursor: positions over UDP (or TCP), shapes over TCP; not drawn in the video.
                     var ep = audioUdp;
                     cursor = new CursorSender(target,
-                        p => { if (closed) return; try { if (ep != null) Udp().Send(p, p.Length, ep); else Send(0x08, p); } catch { } },
+                        p => { if (closed) return; try { if (ep != null) SendUdp(Udp(), p, ep); else Send(0x08, p); } catch { } },
                         p => { if (closed) return; try { Send(0x08, p); } catch { } });
                 }
 
@@ -855,6 +921,7 @@ namespace TVScreenPlus
                         Log.W("Encoder keeps failing, re-probing");
                         Streamer.Forget(target);
                         target = Dxgi.Find(target.GdiName) ?? VirtualDisplay.Attach(target.Width, target.Height, plan.Fps);
+                        tvDevice = target.GdiName;
                         var e2 = Streamer.Pick(target, hevcTv, tvCursor && Settings.NativeEncoder);
                         plan = new EncodePlan { Enc = e2, Quality = false, Fps = plan.Fps };
                         quickFails = 0;
@@ -957,7 +1024,13 @@ namespace TVScreenPlus
                             if (d.ContainsKey("alat")) Stats.OnTvAudio(Int(d, "alat", -1), Int(d, "aund", 0), Int(d, "adrop", 0), Int(d, "ajit", -1));
                             if (d.ContainsKey("vdel")) Stats.OnTvSync(Int(d, "aout", -1), Int(d, "abuf", -1), Int(d, "aext", 0), Int(d, "vdel", 0), Int(d, "avoff", 0));
                         }
-                        else if (l.StartsWith("LOG;")) Log.W("TV: " + l.Substring(4));
+                        else if (l.StartsWith("LOG;")) TvLog(l.Substring(4));
+                        else if (RemoteLine(l))
+                        {
+                            // remote is only created over an encrypted upstream; the tray switch applies at once.
+                            var r = remote;
+                            if (r != null && secureUp && Settings.RemoteControl) r.OnLine(l);
+                        }
                         else if (l.StartsWith("MODE;"))
                         {
                             // Up/down keys of the TV remote: fluid <-> game mode (also updates the tray menu).
@@ -971,6 +1044,9 @@ namespace TVScreenPlus
                 Close();
             }) { IsBackground = true, Name = "tv-reader" }.Start();
         }
+
+        static readonly string[] RemoteCommands = { "MOUSE;", "BTN;", "WHEEL;", "KEY;", "TEXT;", "WINS?", "WIN;", "APPS?", "APP;", "FAV;" };
+        static bool RemoteLine(string l) => RemoteCommands.Any(l.StartsWith);
 
         static int Int(Dictionary<string, string> d, string k, int def) => d.TryGetValue(k, out var v) && int.TryParse(v, out int i) ? i : def;
 
@@ -1012,6 +1088,10 @@ namespace TVScreenPlus
         public bool Streaming;
         /// <summary>PC sound and gamepads, as shown in the debug window.</summary>
         public volatile string Audio = "—", Pads = "—";
+        /// <summary>What travels encrypted on this connection (debug window).</summary>
+        public volatile string Crypt = "—";
+        /// <summary>Last TV seen (model, its settings, its encryption speed), kept after it disconnects: "Copy for a report".</summary>
+        public static volatile string LastTvDevice, LastTvSettings, LastTvCrypto;
         public double AudioKbps;
         public int AudioSkipped, TvAudioMs = -1, TvAudioUnderruns, TvAudioDrops, TvAudioJitter = -1;
         public DateTime Since = DateTime.Now;
@@ -1141,6 +1221,7 @@ namespace TVScreenPlus
                 $"\r\n" +
                 $"Son sur la TV         {AudioLine}\r\n" +
                 $"Manettes              {Pads}\r\n" +
+                $"Chiffrement           {Crypt}\r\n" +
                 $"\r\n" +
                 $"Connectée depuis      {(int)up.TotalHours:00}:{up.Minutes:00}:{up.Seconds:00}";
         }

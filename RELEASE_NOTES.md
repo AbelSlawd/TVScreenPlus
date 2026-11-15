@@ -1,3 +1,18 @@
+**Nouveau en 1.2.4 : piloter le PC depuis la TV, chiffrement** — mettez à jour le PC **et** l'application TV.
+
+Piloter le PC (menu rapide : **appui long sur OK**)
+- **Télécommande = souris** : les flèches déplacent le curseur du PC (lentement puis plus vite), OK = clic, clic droit et glisser depuis le menu, Retour = quitter le mode souris, Chaîne + / − = défiler.
+- **Clavier** : le texte tapé (ou dicté) sur la TV s'écrit directement sur le PC, avec Entrée, Effacer, Échap, Tab, Windows et *Fermer la fenêtre*.
+- **Fenêtres du PC** : liste des fenêtres ouvertes par écran ; OK amène une fenêtre sur la TV, OK long la renvoie sur l'écran principal du PC.
+- **Applications du PC** : programmes, applications du Store, jeux Steam et Steam Big Picture, avec leurs icônes, une recherche et des favoris. Lancées sans droits administrateur.
+- Désactivable sur le PC : menu de l'icône › *Contrôle du PC depuis la TV*.
+
+Sécurité
+- **Connexion chiffrée** (AES-256-GCM) : ce que la TV envoie (manettes, souris, clavier) est toujours chiffré ; l'image et le son aussi en mode *Automatique* si la TV est assez rapide (~0,4 ms par image sur une TCL), ou selon le réglage *Chiffrement de l'image et du son* du PC (Automatique / Toujours / Jamais).
+
+PC
+- Mode debug : bouton **Copier pour un signalement** (version, configuration du PC et de la TV, statistiques et fin du journal, prêts à coller dans une issue ; jamais les clés de jumelage).
+
 **Nouveau en 1.2.3 : nouveau logo** (application TV)
 - Nouvelle icône et nouvelle bannière de l'application TV, avec le nom TVScreenPlus. L'icône est dessinée pour l'écran d'accueil de Google TV, qui affiche les applications dans des ronds.
 - Aucun changement de fonctionnement : la version du PC est identique à la 1.2.2.

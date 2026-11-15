@@ -175,6 +175,15 @@ namespace TVScreenPlus
         public static bool MutePc { get => Get("mutepc", "0") == "1"; set => Set("mutepc", value ? "1" : "0"); }
         /// <summary>Gamepads connected to the TV appear on the PC as Xbox 360 controllers.</summary>
         public static bool Pads { get => Get("pads", "1") == "1"; set => Set("pads", value ? "1" : "0"); }
+        /// <summary>The TV may move the mouse, type, bring windows to its screen and launch applications.</summary>
+        public static bool RemoteControl { get => Get("remote", "1") == "1"; set => Set("remote", value ? "1" : "0"); }
+        /// <summary>Picture and sound encryption: "auto" (when the TV encrypts fast enough), "on" or "off".
+        /// What the TV sends (gamepads, mouse, keyboard) is always encrypted.</summary>
+        public static string Crypt
+        {
+            get { var v = Get("crypt", "auto"); return v == "on" || v == "off" ? v : "auto"; }
+            set => Set("crypt", value);
+        }
     }
 
     sealed class TrayApp : ApplicationContext
@@ -244,6 +253,15 @@ namespace TVScreenPlus
             var pads = Switch("Manettes de la TV (à la prochaine connexion)", '', Settings.Pads);
             pads.CheckedChanged += (s, e) => Settings.Pads = pads.Checked;
             menu.Items.Add(pads);
+
+            menu.Items.Add(Section("CONTRÔLE ET SÉCURITÉ"));
+            var remote = Switch("Contrôle du PC depuis la TV (souris, clavier, applications)", '', Settings.RemoteControl);
+            remote.CheckedChanged += (s, e) => Settings.RemoteControl = remote.Checked;
+            menu.Items.Add(remote);
+            var crypt = Submenu("Chiffrement de l'image et du son", '');
+            foreach (var (label, v) in new[] { ("Automatique (si la TV est assez rapide)", "auto"), ("Toujours", "on"), ("Jamais (les commandes restent chiffrées)", "off") })
+                crypt.DropDownItems.Add(Radio(label, () => Settings.Crypt == v, () => Settings.Crypt = v));
+            menu.Items.Add(crypt);
 
             menu.Items.Add(Section("APPLICATION"));
             var auto = Switch("Lancer au démarrage de Windows", '', Settings.AutoStart);

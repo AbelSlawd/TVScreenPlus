@@ -110,14 +110,25 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 | Touche | Action |
 |---|---|
 | **OK** | Afficher / masquer les statistiques (résolution, débit, images/s, son, manettes) |
-| **OK long** (ou **Menu**) | Menu rapide par-dessus l'image : mode fluide / jeu, synchro du son (◀ ▶, OK = 0), statistiques, déconnecter |
+| **OK long** (ou **Menu**) | Menu rapide par-dessus l'image : souris, clavier, fenêtres et applications du PC, mode fluide / jeu, synchro du son (◀ ▶, OK = 0), statistiques, déconnecter |
 | **Retour** | Se déconnecter. L'écran disparaît de Windows |
 | **▲ / ▼** | Mode **fluide** (60 i/s réguliers, son synchronisé) / mode **jeu** (latence minimale). Appliqué en une fraction de seconde, sans déconnexion |
 | **◀ / ▶** | Avancer / retarder le son de 10 ms (réglage de la synchronisation à l'oreille, mémorisé) |
 
 Les touches des **manettes** ne pilotent pas la TV pendant la diffusion : elles vont au PC (le bouton B ne déconnecte pas). La télécommande garde toujours ses touches.
 
-**Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, **mode jeu**, **encodeur vidéo** (TVScreenPlus / ffmpeg), **son sur la TV**, **couper le son du PC pendant la diffusion**, **manettes de la TV**, démarrage avec Windows, mises à jour, recalibrage, **oublier les TV autorisées**, **mode debug**, journal.
+**Menu de l'icône sur le PC** (clic droit) : *Redémarrer la connexion*, résolution, qualité, **mode jeu**, **encodeur vidéo** (TVScreenPlus / ffmpeg), **son sur la TV**, **couper le son du PC pendant la diffusion**, **manettes de la TV**, **contrôle du PC depuis la TV**, **chiffrement de l'image et du son**, démarrage avec Windows, mises à jour, recalibrage, **oublier les TV autorisées**, **mode debug**, journal.
+
+### Piloter le PC avec la télécommande
+Depuis le menu rapide (**OK long**), avec TVScreenPlus PC 1.2.4 ou plus récent :
+- **Télécommande = souris** : les flèches déplacent le curseur du PC, lentement d'abord puis de plus en plus vite. **OK** = clic, **OK long** = menu (clic droit, maintenir le clic pour glisser, quitter), **Retour** = quitter le mode souris. Les touches Chaîne + / − (ou Page haut / bas) font défiler.
+- **Clavier** : ce que vous tapez avec le clavier de la TV (ou dictez avec le micro de la télécommande) s'écrit directement sur le PC. Touches Entrée, Effacer, Échap, Tab, Windows et *Fermer la fenêtre* (Alt + F4).
+- **Fenêtres du PC** : la liste des fenêtres ouvertes, par écran. **OK** amène la fenêtre sur la TV et la met au premier plan (une fenêtre agrandie le reste) ; **OK long** la renvoie sur l'écran principal du PC.
+- **Applications du PC** : toutes les applications du menu Démarrer (programmes, applications du Store, jeux Steam) et Steam Big Picture, avec leurs icônes. **OK** lance l'application, **OK long** l'ajoute aux favoris (affichés en premier). Un champ de recherche filtre la liste. Les applications démarrent sans droits administrateur, comme depuis le menu Démarrer.
+
+Ces commandes ne passent que par une connexion chiffrée. Menu de l'icône du PC › *Contrôle du PC depuis la TV* pour les désactiver (effet immédiat).
+
+**Copier pour un signalement** : la fenêtre du mode debug (PC) a un bouton qui copie la version, la configuration (réglages du PC, matériel, modèle et réglages de la TV ; jamais les clés de jumelage), les statistiques et la fin du journal, prêts à coller dans une [issue](https://github.com/AbelSlawd/TVScreenPlus/issues).
 
 ### Mode fluide ou mode jeu (PC)
 Avec l'**encodeur TVScreenPlus** (par défaut), les deux modes gardent **60 images/s régulières** et ne retiennent aucune image : l'ancien pipeline de l'encodeur ffmpeg (environ 30 ms) n'existe plus. La différence porte sur le son et sur le réglage de l'encodeur :
@@ -269,7 +280,10 @@ PC Windows                                                       TV Google TV
 **Sécurité**
 - Seules les TV acceptées sur le PC reçoivent son écran. Le jumelage utilise un échange de clés ECDH P-256 : la TV et le PC affichent le même code à 6 chiffres, qu'un appareil intercalé ne peut pas reproduire. À chaque connexion, la TV prouve ensuite qu'elle détient la clé (HMAC-SHA256 d'un défi aléatoire). *Oublier les TV autorisées* (PC) ou *Oublier les ordinateurs mémorisés* (TV) annule les jumelages.
 - Le PC ne répond qu'aux adresses du réseau local (privées ou link-local). Une nouvelle TV n'interrompt jamais la diffusion en cours avant d'être authentifiée.
-- Le flux vidéo n'est pas chiffré (performances de la TV, latence) : le jumelage empêche un autre appareil de se connecter, pas une écoute du réseau local.
+- **Chiffrement** (PC et TV 1.2.4 ou plus récents) : AES-256-GCM, avec des clés tirées de la clé de jumelage et d'un défi propre à chaque connexion. Un paquet modifié, rejoué ou envoyé par un autre appareil coupe la connexion.
+  - Ce que la TV envoie (manettes, souris, clavier) est **toujours** chiffré : quelques octets, aucun coût.
+  - L'image et le son suivent le réglage *Chiffrement de l'image et du son* du PC. **Automatique** (par défaut) les chiffre si la TV est assez rapide pour que le surcoût reste sous ~1 ms par image (elle mesure sa vitesse à chaque connexion : 267 Mo/s sur une TCL de 2024, soit ~0,4 ms par image). **Toujours** ou **Jamais** forcent le choix. Appliqué à la connexion suivante.
+  - Les statistiques de la TV (OK) et la fenêtre du mode debug indiquent ce qui est chiffré (🔒).
 - Les mises à jour ne viennent que des releases GitHub du projet ; l'APK de la TV doit en plus être signé avec la même clé. Sur le PC, rien n'est téléchargé puis exécuté en dehors des mises à jour : ffmpeg, le pilote d'écran et le pilote de manettes sont dans le zip. Le dossier `C:\ProgramData\TVScreenPlus` n'est modifiable que par les administrateurs, et `settings.txt` (clés de jumelage) n'est lisible que par eux.
 
 <details>

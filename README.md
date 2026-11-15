@@ -110,14 +110,25 @@ The app is not on the Play Store: you need to install the APK file.
 | Key | Action |
 |---|---|
 | **OK** | Show / hide the statistics (resolution, bitrate, frames/s, sound, gamepads) |
-| **Hold OK** (or **Menu**) | Quick menu over the picture: fluid / game mode, sound sync (◀ ▶, OK = 0), statistics, disconnect |
+| **Hold OK** (or **Menu**) | Quick menu over the picture: PC mouse, keyboard, windows and applications, fluid / game mode, sound sync (◀ ▶, OK = 0), statistics, disconnect |
 | **Back** | Disconnect. The display disappears from Windows |
 | **▲ / ▼** | **Fluid** mode (steady 60 fps, synced sound) / **game** mode (minimal latency). Applied within a fraction of a second, without disconnecting |
 | **◀ / ▶** | Advance / delay the sound by 10 ms (by-ear sync adjustment, remembered) |
 
 **Gamepad** buttons do not control the TV while streaming: they go to the PC (the B button does not disconnect). The remote always keeps its keys.
 
-**PC tray icon menu** (right-click): *Restart the connection*, resolution, quality, **game mode**, **video encoder** (TVScreenPlus / ffmpeg), **sound on the TV**, **mute PC sound while streaming**, **TV gamepads**, start with Windows, updates, recalibration, **forget the allowed TVs**, **debug mode**, log.
+**PC tray icon menu** (right-click): *Restart the connection*, resolution, quality, **game mode**, **video encoder** (TVScreenPlus / ffmpeg), **sound on the TV**, **mute PC sound while streaming**, **TV gamepads**, **control of the PC from the TV**, **picture and sound encryption**, start with Windows, updates, recalibration, **forget the allowed TVs**, **debug mode**, log.
+
+### Driving the PC with the remote
+From the quick menu (**hold OK**), with TVScreenPlus PC 1.2.4 or newer:
+- **Remote = mouse**: the arrows move the PC's cursor, slowly at first, then faster and faster. **OK** = click, **hold OK** = menu (right click, hold the click to drag, exit), **Back** = leave mouse mode. Channel + / − (or Page up / down) scroll.
+- **Keyboard**: what you type with the TV keyboard (or dictate with the remote's microphone) is typed on the PC at once. Enter, Delete, Esc, Tab, Windows and *Close the window* (Alt + F4) keys.
+- **PC windows**: the open windows, by screen. **OK** brings the window to the TV and to the front (a maximized window stays maximized); **hold OK** sends it back to the PC's main screen.
+- **PC applications**: every application of the Start menu (programs, Store apps, Steam games) and Steam Big Picture, with their icons. **OK** launches it, **hold OK** adds it to the favorites (shown first). A search field filters the list. Applications start without administrator rights, as from the Start menu.
+
+These commands only travel over an encrypted connection. PC tray menu › *Control of the PC from the TV* turns them off (immediately).
+
+**Copy for a report**: the debug mode window (PC) has a button that copies the version, the configuration (PC settings, hardware, TV model and settings; never the pairing keys), the statistics and the end of the log, ready to paste in an [issue](https://github.com/AbelSlawd/TVScreenPlus/issues).
 
 ### Fluid mode or game mode (PC)
 With the **TVScreenPlus encoder** (the default), both modes keep a **steady 60 frames/s** and neither holds back any frame: the roughly 30 ms of pipelining of the old ffmpeg encoder is gone. The difference lies in the sound and in the encoder setting:
@@ -269,7 +280,10 @@ Windows PC                                                       Google TV
 **Security**
 - Only TVs accepted on the PC receive its screen. Pairing uses an ECDH P-256 key exchange: the TV and the PC show the same 6-digit code, which a device in the middle cannot reproduce. On every connection the TV then proves it holds the key (HMAC-SHA256 of a random challenge). *Forget the allowed TVs* (PC) or *Forget saved computers* (TV) cancels the pairings.
 - The PC only answers local network addresses (private or link-local). A new TV never interrupts the current stream before it is authenticated.
-- The video stream is not encrypted (TV performance, latency): pairing keeps other devices from connecting, not a local network eavesdropper.
+- **Encryption** (PC and TV 1.2.4 or newer): AES-256-GCM, with keys derived from the pairing key and a challenge unique to each connection. A packet that is changed, replayed or sent by another device ends the connection.
+  - What the TV sends (gamepads, mouse, keyboard) is **always** encrypted: a few bytes, no cost.
+  - The picture and the sound follow the PC setting *Picture and sound encryption*. **Automatic** (default) encrypts them when the TV is fast enough to keep the extra cost under ~1 ms per frame (it measures its speed at every connection: 267 MB/s on a 2024 TCL, ~0.4 ms per frame). **Always** or **Never** force the choice. Applied at the next connection.
+  - The TV statistics (OK) and the debug window show what is encrypted (🔒).
 - Updates only come from the project's GitHub releases; the TV APK must also be signed with the same key. On the PC nothing is downloaded and run outside updates: ffmpeg, the display driver and the gamepad driver are in the zip. `C:\ProgramData\TVScreenPlus` can only be modified by administrators, and `settings.txt` (pairing keys) can only be read by them.
 
 <details>

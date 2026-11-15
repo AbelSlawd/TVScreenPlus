@@ -27,6 +27,9 @@ import java.util.concurrent.Executors
  * Upstream: "ACK", "STAT;fps=;kbps=;drop=;dec=;decmax=;wait=[;alat=;aund=;adrop=;ajit=]" every 2 s,
  * "LOG;<text>" lines that the PC writes to its log (diagnostics, decoder in use, errors),
  * and "PADON / PADOFF / PAD" gamepad lines (see Gamepads).
+ * Encryption (sec=1 in the hello): after authentication the PC sends extension [11][bits], we answer "SEC" in clear
+ * and from then on only send encrypted records; bit 2 = the PC encrypts too (see SecureChannel).
+ * Remote control (remote=1, encrypted connections only): mouse, keyboard, windows and applications (see RemoteControl.cs).
  */
 class StreamClient(
     private val host: String,
@@ -46,6 +49,11 @@ class StreamClient(
         fun onCursorShape(bitmap: Bitmap, hotX: Int, hotY: Int) {}
         /** Cursor position in stream pixels (stream size given), or hidden. Called often, from network threads. */
         fun onCursorMove(x: Int, y: Int, visible: Boolean, streamW: Int, streamH: Int) {}
+        /** Remote control answers (network thread): open windows, applications, late icons, a message for the user. */
+        fun onWindows(text: String) {}
+        fun onApps(text: String) {}
+        fun onAppIcons(text: String) {}
+        fun onRemoteMessage(text: String) {}
     }
 
     @Volatile private var running = true
@@ -60,6 +68,17 @@ class StreamClient(
     private var pairKey: ByteArray? = null
     private var socket: Socket? = null
     private var out: OutputStream? = null
+    /** All writes go under this lock: the switch to encryption must not interleave with a line being sent. */
+    private val outLock = Any()
+    /** Derived from the pairing key and this connection's challenge (SecureChannel). */
+    private var secBase: ByteArray? = null
+    /** Set by the PC's switch packet: the stream that follows is encrypted with this key (applied by the read loop). */
+    private var pendingInKey: ByteArray? = null
+    @Volatile private var udpOpen: SecureDatagrams? = null
+    /** What is encrypted (SecureChannel.UP / DOWN bits), 0 = nothing (older PC). */
+    @Volatile var secure = 0
+    /** The PC accepts mouse, keyboard, windows and applications from us (encrypted connections only). */
+    @Volatile var remote = false
     @Volatile private var decoder: Decoder? = null
     /** The PC accepted our gamepads / plays its sound here (from its config packet). */
     @Volatile var pads = false
@@ -255,8 +274,10 @@ class StreamClient(
     }
 
     private fun send(line: String) {
-        val o = out ?: return
-        synchronized(o) { o.write((line + "\n").toByteArray()); o.flush() }
+        synchronized(outLock) {
+            val o = out ?: return
+            o.write((line + "\n").toByteArray()); o.flush()
+        }
     }
 
     /** Line for the PC log (single line, short). */
@@ -302,9 +323,11 @@ class StreamClient(
             val port = startUdp()
             renderThread = HandlerThread("frame-rendered").apply { start() }
             // ts=1: frames carry their capture time; cursor=1: we draw the cursor.
-            send((if (port > 0) "$hello;audioudp=$port" else hello) + ";ts=1;cursor=1")
+            // sec=1: we can encrypt (aes = our AES-GCM speed, MB/s); remote=1: we can drive the PC.
+            send((if (port > 0) "$hello;audioudp=$port" else hello) + ";ts=1;cursor=1;sec=1;aes=${SecureChannel.speedMBps};remote=1")
             diagnostics.forEach { log(it) }
-            val input = DataInputStream(BufferedInputStream(s.getInputStream(), 256 shl 10))
+            log("crypto: AES-GCM ${SecureChannel.speedMBps} MB/s")
+            var input = DataInputStream(BufferedInputStream(s.getInputStream(), 256 shl 10))
             startStats()
 
             // Old PC versions answer with a text line "OK;...", new ones only send packets.
@@ -336,6 +359,8 @@ class StreamClient(
                         } else video(buf, len, flags and 1 != 0, -1)
                     }
                 }
+                // The PC switched to encryption: everything after its switch packet is encrypted records.
+                pendingInKey?.let { input = DataInputStream(SecureIn(input, it)); pendingInKey = null }
             }
         } catch (e: Exception) {
             if (running) {
@@ -423,9 +448,14 @@ class StreamClient(
                     u.receive(pk)
                     if (!running) break
                     if (pk.address != pc) continue // only our PC: nobody else on the network plays sound here
-                    when (b[0].toInt()) {
-                        1 -> if (pk.length > 12 && audioOn) audioPacket(b, pk.length)
-                        3 -> cursorPacket(b, pk.length)
+                    val sec = udpOpen
+                    // Encrypted connection: only datagrams sealed by the PC (others are dropped).
+                    val p = if (sec != null) sec.open(b, pk.length) ?: continue else b
+                    val n = if (sec != null) p.size else pk.length
+                    if (n < 1) continue
+                    when (p[0].toInt()) {
+                        1 -> if (n > 12 && audioOn) audioPacket(p, n)
+                        3 -> cursorPacket(p, n)
                     }
                 }
             } catch (_: Exception) {}
@@ -478,13 +508,16 @@ class StreamClient(
             // Authentication (see Pairing): challenge from a PC we may know, then pairing request and result.
             5 -> if (len >= 49) {
                 val key = pairing.keyFor(b.copyOfRange(1, 17))
-                send("AUTH;" + (key?.let { Pairing.hex(Pairing.proof(it, b.copyOfRange(17, 49))) } ?: "none"))
+                val nonce = b.copyOfRange(17, 49)
+                if (key != null) secBase = SecureChannel.base(key, nonce)
+                send("AUTH;" + (key?.let { Pairing.hex(Pairing.proof(it, nonce)) } ?: "none"))
             }
             6 -> if (len >= 81) {
                 val ex = Pairing.Exchange()
                 val pcPublic = b.copyOfRange(17, 81)
                 val key = ex.key(pcPublic)
                 pairPc = b.copyOfRange(1, 17); pairKey = key
+                secBase = SecureChannel.base(key, pcPublic)
                 send("PAIR;" + Pairing.hex(ex.publicKey))
                 val code = Pairing.code(key, pcPublic, ex.publicKey)
                 listener.onStatus(L.t("pair_code", code.substring(0, 3) + " " + code.substring(3)))
@@ -494,6 +527,25 @@ class StreamClient(
                 if (b[1].toInt() == 1 && pc != null && key != null) pairing.trust(pc, key) else refused = true
                 pairKey = null
             }
+            // Switch to encryption: "SEC" in clear, then every line we send is an encrypted record.
+            11 -> if (len >= 2) {
+                val base = secBase ?: throw java.io.IOException("encryption asked before authentication")
+                val bits = b[1].toInt()
+                synchronized(outLock) {
+                    send("SEC")
+                    out = SecureOut(out ?: return, SecureChannel.key(base, "up"))
+                }
+                if (bits and SecureChannel.DOWN != 0) {
+                    pendingInKey = SecureChannel.key(base, "down")
+                    udpOpen = SecureDatagrams(SecureChannel.key(base, "udp"))
+                }
+                secure = bits
+                log("encrypted connection: ${if (bits and SecureChannel.DOWN != 0) "picture, sound and commands" else "commands"} (AES ${SecureChannel.speedMBps} MB/s)")
+            }
+            8 -> listener.onWindows(String(b, 1, len - 1, Charsets.UTF_8))
+            9 -> listener.onApps(String(b, 1, len - 1, Charsets.UTF_8))
+            12 -> listener.onAppIcons(String(b, 1, len - 1, Charsets.UTF_8))
+            10 -> listener.onRemoteMessage(String(b, 1, len - 1, Charsets.UTF_8))
         }
     }
 
@@ -528,6 +580,7 @@ class StreamClient(
         pcPlaybackMs = c["lpc"]?.toIntOrNull() ?: 15
         if (!cursorOn) listener.onCursorMove(0, 0, false, w, h)
         pads = c["pads"] == "1"
+        remote = c["remote"] == "1" && secure and SecureChannel.UP != 0
         streaming = true
         listener.onStarted(info)
     }
