@@ -109,9 +109,8 @@ The app is not on the Play Store: you need to install the APK file.
 **Remote control while streaming**
 | Key | Action |
 |---|---|
-| **Hold OK** | Show / hide the statistics (resolution, bitrate, frames/s, sound, gamepads) |
-| **OK** (or **Menu**) | Quick menu over the picture: PC mouse, keyboard, windows and applications, fluid / game mode, sound sync (◀ ▶, OK = 0), statistics, disconnect |
-| **Back** | Disconnect. The display disappears from Windows |
+| **OK**, **hold OK** (or **Menu**) | Quick menu over the picture: PC mouse, keyboard, windows and applications, fluid / game mode, sound sync (◀ ▶, OK = 0), statistics (resolution, bitrate, frames/s, sound, gamepads, encryption), disconnect |
+| **Back** | Disconnect (except in mouse mode, where it does nothing). The display disappears from Windows |
 | **▲ / ▼** | **Fluid** mode (steady 60 fps, synced sound) / **game** mode (minimal latency). Applied within a fraction of a second, without disconnecting |
 | **◀ / ▶** | Advance / delay the sound by 10 ms (by-ear sync adjustment, remembered) |
 
@@ -226,6 +225,7 @@ To force a value: right-click the icon › *Resolution* or *Quality / bitrate*. 
 - **PC**: the program checks every 6 hours and installs itself when no TV is connected. Manual check: right-click › *Check for updates*.
 - **TV**: at launch, the app offers the new version. Android always asks for confirmation.
 - **Manual installation**: running a newer `.exe` or `.apk` automatically replaces the old one.
+- **Test versions**: click *Check for updates* 5 times in a row (within 10 s; PC tray menu, or *Settings › Check for updates* on the TV) to install the latest test version before its official release. It may have bugs: please report them in the [Issues](https://github.com/AbelSlawd/TVScreenPlus/issues). The PC then follows the test versions, and goes back to the official ones by itself with the next one.
 
 All versions are listed in the [Releases](https://github.com/AbelSlawd/TVScreenPlus/releases).
 

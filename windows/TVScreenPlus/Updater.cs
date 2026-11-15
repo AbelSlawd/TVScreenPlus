@@ -208,14 +208,18 @@ namespace TVScreenPlus
             Math.Max(v.Build, 0) > Math.Max(Program.Version.Build, 0);
 
         /// <summary>Returns (version, zip url) of the latest release, or null.</summary>
-        public static Tuple<Version, string> Latest()
+        public static Tuple<Version, string> Latest() => Latest(TestChannel);
+
+        /// <param name="test">The newest of all releases, pre-releases included (test channel, or the hidden
+        /// "5 clicks on Check for updates" that switches to it).</param>
+        public static Tuple<Version, string> Latest(bool test)
         {
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
             using (var wc = new WebClient())
             {
                 wc.Headers[HttpRequestHeader.UserAgent] = "TVScreenPlus-Updater";
                 wc.Headers[HttpRequestHeader.Accept] = "application/vnd.github+json";
-                string json = wc.DownloadString(TestChannel ? ApiAll : Api); // list: its first entry is the newest
+                string json = wc.DownloadString(test ? ApiAll : Api); // list: its first entry is the newest
                 // Only this repository's own release files. The version is read from the zip's own URL: a pre-release
                 // whose zip is not uploaded yet must not be paired with the previous release's zip (reinstall loop).
                 var url = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"(" + Regex.Escape(Download) + "v([0-9]+(\\.[0-9]+){1,3})/TVScreenPlus-PC\\.zip)\"");

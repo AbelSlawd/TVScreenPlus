@@ -1,6 +1,6 @@
 **Nouveau en 1.2.4 : piloter le PC depuis la TV, chiffrement** — mettez à jour le PC **et** l'application TV.
 
-Piloter le PC (menu rapide : **OK**, désormais un appui court ; l'appui long affiche les statistiques)
+Piloter le PC (menu rapide : **OK** pendant la diffusion ; les statistiques se trouvent désormais dans ce menu)
 - **Télécommande = souris**, activé dès la connexion : les flèches déplacent le curseur du PC (lentement puis plus vite), OK = clic, OK OK = clic droit, OK long = menu rapide (glisser, quitter le mode souris), Chaîne + / − = défiler. Retour ne quitte pas le mode souris (pas d'erreur de manipulation).
 - **Clavier** : le texte tapé (ou dicté) sur la TV s'écrit directement sur le PC ; il s'ouvre tout seul quand la souris clique dans un champ de texte. Touches Entrée, Effacer, Échap, Tab, Windows et *Fermer la fenêtre*.
 - **Fenêtres du PC** : liste des fenêtres ouvertes par écran ; OK amène une fenêtre en plein écran sur la TV, ◀ / ▶ la placent sur la moitié gauche / droite de la TV, OK long la renvoie sur l'écran principal du PC.
@@ -12,6 +12,7 @@ Sécurité
 
 PC
 - Mode debug : bouton **Copier pour un signalement** (version, configuration du PC et de la TV, statistiques et fin du journal, prêts à coller dans une issue ; jamais les clés de jumelage).
+- **Versions de test** : cliquer 5 fois de suite sur *Rechercher une mise à jour* (menu de l'icône du PC, ou Paramètres de la TV) propose la dernière version de test. Le PC suit ensuite les versions de test jusqu'à la prochaine version officielle.
 
 **Nouveau en 1.2.3 : nouveau logo** (application TV)
 - Nouvelle icône et nouvelle bannière de l'application TV, avec le nom TVScreenPlus. L'icône est dessinée pour l'écran d'accueil de Google TV, qui affiche les applications dans des ronds.

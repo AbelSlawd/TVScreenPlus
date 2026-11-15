@@ -576,10 +576,16 @@ class MainActivity : Activity() {
 
         section(L.t("check_updates"))
         val updNote = note("")
+        val taps = ArrayList<Long>()
         p.addView(button(L.t("check_updates")) {
-            updNote.text = L.t("checking")
+            // Pressed 5 times within 10 s: the latest test version (pre-release of the test branch), hidden on purpose.
+            val now = System.currentTimeMillis()
+            taps.add(now); taps.removeAll { now - it > 10_000 }
+            val test = taps.size >= 5
+            if (test) taps.clear()
+            updNote.text = L.t(if (test) "checking_test" else "checking")
             Thread({
-                val r = try { Updater.latest() } catch (_: Exception) { null }
+                val r = try { Updater.latest(test) } catch (_: Exception) { null }
                 ui.post {
                     when {
                         r == null -> updNote.text = L.t("update_check_failed")

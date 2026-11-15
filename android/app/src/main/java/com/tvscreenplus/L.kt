@@ -68,6 +68,7 @@ object L {
         "none" to arrayOf("non pris en charge", "not supported", "no compatible", "nicht unterstützt"),
         "check_updates" to arrayOf("Rechercher les mises à jour", "Check for updates", "Buscar actualizaciones", "Nach Updates suchen"),
         "checking" to arrayOf("Recherche…", "Checking…", "Buscando…", "Suche…"),
+        "checking_test" to arrayOf("Recherche de la version de test…", "Looking for the test version…", "Buscando la versión de prueba…", "Testversion wird gesucht…"),
         "uptodate" to arrayOf("Vous avez la dernière version (%s).", "You have the latest version (%s).", "Tiene la última versión (%s).", "Sie haben die neueste Version (%s)."),
         "update_check_failed" to arrayOf("Impossible de vérifier les mises à jour.", "Unable to check for updates.", "No se pueden buscar actualizaciones.", "Updates können nicht geprüft werden."),
         "forget" to arrayOf("Oublier les ordinateurs mémorisés", "Forget saved computers", "Olvidar ordenadores guardados", "Gespeicherte Computer vergessen"),

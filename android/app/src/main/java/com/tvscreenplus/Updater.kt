@@ -11,6 +11,7 @@ import java.net.URL
 /** Self-update from GitHub Releases: download the APK and hand it to the system installer. */
 object Updater {
     private const val API = "https://api.github.com/repos/AbelSlawd/TVScreenPlus/releases/latest"
+    private const val API_ALL = "https://api.github.com/repos/AbelSlawd/TVScreenPlus/releases?per_page=5"
     private const val DOWNLOAD = "https://github.com/AbelSlawd/TVScreenPlus/releases/download/"
     const val ACTION_STATUS = "com.tvscreenplus.INSTALL_STATUS"
     private const val TOKEN = "token"
@@ -27,16 +28,19 @@ object Updater {
         setRequestProperty("User-Agent", "TVScreenPlus-Updater")
     }
 
-    /** Latest published release (tag v<major>.<minor>.N, N = versionCode), or null. Network: call off the main thread. */
-    fun latest(): Release? {
-        val json = open(API).run { try { inputStream.bufferedReader().readText() } finally { disconnect() } }
+    /**
+     * Latest published release (tag v<major>.<minor>.N, N = versionCode), or null. Network: call off the main thread.
+     * test = the newest of all, pre-releases (test branch) included: the list's first entry, read the same way.
+     */
+    fun latest(test: Boolean = false): Release? {
+        val json = open(if (test) API_ALL else API).run { try { inputStream.bufferedReader().readText() } finally { disconnect() } }
         val tag = Regex("\"tag_name\"\\s*:\\s*\"v?([0-9.]+)\"").find(json)?.groupValues?.get(1) ?: return null
         // Only this repository's own release files (Android also refuses an APK not signed with our key).
         val apk = Regex("\"browser_download_url\"\\s*:\\s*\"(" + Regex.escape(DOWNLOAD) + "v[0-9.]+/TVScreenPlus-TV\\.apk)\"")
             .find(json)?.groupValues?.get(1) ?: return null
         val code = tag.substringAfterLast('.').toIntOrNull() ?: return null
         // Shown version: the release title "TVScreenPlus 1.1.0" (the tag's last number is only the update code).
-        val name = Regex("\"name\"\\s*:\\s*\"TVScreenPlus ([0-9.]+)\"").find(json)?.groupValues?.get(1) ?: tag
+        val name = Regex("\"name\"\\s*:\\s*\"TVScreenPlus ([0-9.]+(-test)?)\"").find(json)?.groupValues?.get(1) ?: tag
         return Release(code, name, apk)
     }
 

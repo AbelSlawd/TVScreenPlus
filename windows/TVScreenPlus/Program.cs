@@ -270,7 +270,7 @@ namespace TVScreenPlus
             var upd = Switch("Mises à jour automatiques", '', Settings.AutoUpdate);
             upd.CheckedChanged += (s, e) => Settings.AutoUpdate = upd.Checked;
             menu.Items.Add(upd);
-            menu.Items.Add(Item("Rechercher une mise à jour", '', () => Task.Run(() => CheckUpdate(true))));
+            menu.Items.Add(Item("Rechercher une mise à jour", '', UpdateClicked));
             menu.Items.Add(Item("Recalibrer (nouveau matériel)", '', () => { Settings.ResetCalibration(); Notify("TVScreenPlus", "Le calibrage sera refait à la prochaine connexion."); }));
             menu.Items.Add(Item("Oublier les TV autorisées", '', () =>
             {
@@ -296,6 +296,48 @@ namespace TVScreenPlus
         readonly System.Threading.Timer updateTimer;
         DateTime lastCheck = DateTime.MinValue;
         int updating;
+
+        readonly List<DateTime> updateClicks = new List<DateTime>();
+
+        /// <summary>"Check for updates"; clicked 5 times within 10 s: offers the latest test version (hidden on purpose).</summary>
+        void UpdateClicked()
+        {
+            var now = DateTime.UtcNow;
+            updateClicks.Add(now);
+            updateClicks.RemoveAll(t => now - t > TimeSpan.FromSeconds(10));
+            if (updateClicks.Count >= 5) { updateClicks.Clear(); Task.Run(InstallTestVersion); }
+            else Task.Run(() => CheckUpdate(true));
+        }
+
+        /// <summary>
+        /// Installs the newest pre-release (test branch). A test version then follows the pre-releases by itself, and
+        /// goes back to the official versions with the next release (the newest of all).
+        /// </summary>
+        void InstallTestVersion()
+        {
+            if (Interlocked.Exchange(ref updating, 1) == 1) return;
+            try
+            {
+                var t = Updater.Latest(true);
+                if (t == null || !Updater.Newer(t.Item1))
+                {
+                    Notify("TVScreenPlus", "Aucune version de test plus récente que " + Program.DisplayVersion + ".");
+                    return;
+                }
+                if (MessageBox.Show("Installer la version de test " + t.Item1.ToString(3) + " ?\n\nElle peut contenir des bugs. Ce PC suivra ensuite " +
+                                    "les versions de test, jusqu'à la prochaine version officielle.", "TVScreenPlus – version de test",
+                                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                Log.W("Test version requested: " + t.Item1);
+                Notify("TVScreenPlus", "Installation de la version de test " + t.Item1.ToString(3) + "…");
+                Updater.Install(t.Item2);
+            }
+            catch (Exception e)
+            {
+                Log.W("Test version: " + e.Message);
+                Notify("TVScreenPlus", "Version de test impossible : " + e.Message);
+            }
+            finally { Interlocked.Exchange(ref updating, 0); }
+        }
 
         /// <summary>Checks GitHub every 6 h (or on demand) and installs when no TV is connected.</summary>
         void CheckUpdate(bool manual)

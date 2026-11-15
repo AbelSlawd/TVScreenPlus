@@ -109,9 +109,8 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 **Télécommande pendant la diffusion**
 | Touche | Action |
 |---|---|
-| **OK long** | Afficher / masquer les statistiques (résolution, débit, images/s, son, manettes) |
-| **OK** (ou **Menu**) | Menu rapide par-dessus l'image : souris, clavier, fenêtres et applications du PC, mode fluide / jeu, synchro du son (◀ ▶, OK = 0), statistiques, déconnecter |
-| **Retour** | Se déconnecter. L'écran disparaît de Windows |
+| **OK**, **OK long** (ou **Menu**) | Menu rapide par-dessus l'image : souris, clavier, fenêtres et applications du PC, mode fluide / jeu, synchro du son (◀ ▶, OK = 0), statistiques (résolution, débit, images/s, son, manettes, chiffrement), déconnecter |
+| **Retour** | Se déconnecter (sauf en mode souris, où il ne fait rien). L'écran disparaît de Windows |
 | **▲ / ▼** | Mode **fluide** (60 i/s réguliers, son synchronisé) / mode **jeu** (latence minimale). Appliqué en une fraction de seconde, sans déconnexion |
 | **◀ / ▶** | Avancer / retarder le son de 10 ms (réglage de la synchronisation à l'oreille, mémorisé) |
 
@@ -226,6 +225,7 @@ Pour forcer une valeur : clic droit sur l'icône › *Résolution* ou *Qualité 
 - **PC** : le programme vérifie toutes les 6 heures et s'installe tout seul quand aucune TV n'est connectée. Vérification manuelle : clic droit › *Rechercher une mise à jour*.
 - **TV** : au lancement, l'application propose la nouvelle version. Android demande toujours une confirmation.
 - **Installation manuelle** : lancer une version plus récente du `.exe` ou de l'`.apk` remplace automatiquement l'ancienne.
+- **Versions de test** : cliquez 5 fois de suite (en moins de 10 s) sur *Rechercher une mise à jour* (menu de l'icône du PC, ou *Paramètres › Rechercher les mises à jour* sur la TV) pour installer la dernière version de test, avant sa sortie officielle. Elle peut contenir des bugs : signalez-les dans les [Issues](https://github.com/AbelSlawd/TVScreenPlus/issues). Le PC suit ensuite les versions de test, et revient de lui-même aux versions officielles avec la suivante.
 
 Toutes les versions sont listées dans les [Releases](https://github.com/AbelSlawd/TVScreenPlus/releases).
 
