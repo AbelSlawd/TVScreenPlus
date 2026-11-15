@@ -7,7 +7,8 @@
 La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenêtres, la souris y passe, comme si elle était branchée en HDMI. L'image est encodée par la carte graphique du PC et décodée par la puce vidéo de la TV, pour une image nette et fluide avec très peu de latence.
 
 [![Installer sur Windows](https://img.shields.io/badge/Installer-PC%20Windows-0078D6?style=for-the-badge&logo=windows)](#1-sur-le-pc-windows)
-[![Télécharger pour Google TV](https://img.shields.io/badge/T%C3%A9l%C3%A9charger-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk)
+[![Télécharger pour Google TV](https://img.shields.io/badge/T%C3%A9l%C3%A9charger-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://www.youtube.com/shorts/UEA5mgdk9aA)
+[![Discord](https://img.shields.io/badge/Discord-Rejoindre-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/xd2wfAApxr)
 
 > [!IMPORTANT]
 > **🧪 Projet encore en phase de test**

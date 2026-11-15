@@ -7,7 +7,8 @@
 The TV becomes a real second monitor (*extend* mode): you drag windows onto it and the mouse moves across, as if it were plugged in over HDMI. The picture is encoded by the PC's graphics card and decoded by the TV's video chip, for a sharp, smooth image with very little latency.
 
 [![Install - Windows PC](https://img.shields.io/badge/Install-Windows%20PC-0078D6?style=for-the-badge&logo=windows)](#1-on-the-windows-pc)
-[![Download - Google TV](https://img.shields.io/badge/Download-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://github.com/AbelSlawd/TVScreenPlus/releases/latest/download/TVScreenPlus-TV.apk)
+[![Download - Google TV](https://img.shields.io/badge/Download-Google%20TV-3DDC84?style=for-the-badge&logo=android)](https://www.youtube.com/shorts/UEA5mgdk9aA)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/xd2wfAApxr)
 
 > [!IMPORTANT]
 > **🧪 Still in testing**
