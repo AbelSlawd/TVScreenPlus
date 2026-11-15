@@ -37,6 +37,7 @@ La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenê
 - [Désinstallation](#désinstallation)
 - [Fonctionnement technique](#fonctionnement-technique)
 - [Compiler soi-même](#compiler-soi-même)
+- [Contribuer](#contribuer)
 - [Crédits](#crédits)
 
 ---
@@ -320,6 +321,11 @@ Le programme ne télécharge rien au lancement : placez à côté de `TVScreenPl
 - La version affichée aux utilisateurs vient du fichier `VERSION` (par exemple 1.1.2) ; le texte de la Release vient de `RELEASE_NOTES.md`.
 - Le tag est `v<majeur>.<mineur>.<numéro d'exécution de la CI>` (par exemple v1.1.30), car les applications installées le comparent (la TV en lit le dernier nombre comme code de mise à jour).
 - Pour que les mises à jour de l'APK s'installent par-dessus les précédentes, la CI signe l'APK avec une clé fixe fournie par deux secrets du dépôt : `ANDROID_KEYSTORE_BASE64` (keystore en base64, alias `tvsp`) et `ANDROID_KEYSTORE_PASSWORD`.
+
+## Contribuer
+Toute aide est la bienvenue, et pas seulement du code : tests sur votre PC et votre TV (cartes graphiques AMD ou Intel, autres marques de TV), signalements de bugs, traductions, idées. Voir [CONTRIBUTING.md](CONTRIBUTING.md) (en anglais ; issues et pull requests peuvent être écrites en français).
+- **Un problème de sécurité ?** N'ouvrez pas d'issue publique : signalez-le en privé comme indiqué dans [SECURITY.md](SECURITY.md).
+- **Vous utilisez un agent IA pour coder ?** [AGENTS.md](AGENTS.md) lui donne l'organisation du projet, les commandes de compilation et les règles.
 
 ## Crédits
 - [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (licence MIT) : écran virtuel Windows.

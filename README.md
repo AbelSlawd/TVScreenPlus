@@ -36,6 +36,7 @@ The TV becomes a real second monitor (*extend* mode): you drag windows onto it a
 - [Uninstalling](#uninstalling)
 - [How it works](#how-it-works)
 - [Building from source](#building-from-source)
+- [Contributing](#contributing)
 - [Credits](#credits)
 
 ---
@@ -319,6 +320,11 @@ The program downloads nothing at startup: put the files of the published zip (`f
 - The version shown to users comes from the `VERSION` file (for example 1.1.2); the Release text comes from `RELEASE_NOTES.md`.
 - The tag is `v<major>.<minor>.<CI run number>` (for example v1.1.30), because installed apps compare it (the TV reads its last number as its update code).
 - So that APK updates install over the previous ones, CI signs the APK with a fixed key provided by two repository secrets: `ANDROID_KEYSTORE_BASE64` (base64 keystore, alias `tvsp`) and `ANDROID_KEYSTORE_PASSWORD`.
+
+## Contributing
+Help is welcome, and not only code: testing on your PC and TV (AMD or Intel graphics, other TV brands), bug reports, translations, ideas. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Security problem?** Do not open a public issue: report it privately as described in [SECURITY.md](SECURITY.md).
+- **Using an AI coding agent?** [AGENTS.md](AGENTS.md) gives it the project's layout, build commands and rules.
 
 ## Credits
 - [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT license): Windows virtual display.
