@@ -121,9 +121,9 @@ The app is not on the Play Store: you need to install the APK file.
 
 ### Driving the PC with the remote
 From the quick menu (**OK**), with TVScreenPlus PC 1.2.4 or newer:
-- **Remote = mouse**: the arrows move the PC's cursor, slowly at first, then faster and faster. **OK** = click, **hold OK** = menu (right click, hold the click to drag, exit), **Back** = leave mouse mode. Channel + / − (or Page up / down) scroll.
-- **Keyboard**: what you type with the TV keyboard (or dictate with the remote's microphone) is typed on the PC at once. Enter, Delete, Esc, Tab, Windows and *Close the window* (Alt + F4) keys.
-- **PC windows**: the open windows, by screen. **OK** brings the window to the TV and to the front (a maximized window stays maximized); **hold OK** sends it back to the PC's main screen.
+- **Remote = mouse**: the arrows move the PC's cursor, slowly at first, then faster and faster. **OK** = click, **OK OK** (two quick presses) = right click, **hold OK** = menu (drag, exit…), **Back** = leave mouse mode. Channel + / − (or Page up / down) scroll.
+- **Keyboard**: what you type with the TV keyboard (or dictate with the remote's microphone) is typed on the PC at once. It opens **by itself** when the mouse clicks into a text field, and stays in the menu. Enter, Delete, Esc, Tab, Windows and *Close the window* (Alt + F4) keys.
+- **PC windows**: the open windows, by screen. **OK** brings the window to the TV, full screen, and to the front; **◀ / ▶** put it on the left / right half of the TV (two windows side by side); **hold OK** sends it back to the PC's main screen.
 - **PC applications**: every application of the Start menu (programs, Store apps, Steam games) and Steam Big Picture, with their icons. **OK** launches it, **hold OK** adds it to the favorites (shown first). A search field filters the list. Applications start without administrator rights, as from the Start menu.
 
 These commands only travel over an encrypted connection. PC tray menu › *Control of the PC from the TV* turns them off (immediately).

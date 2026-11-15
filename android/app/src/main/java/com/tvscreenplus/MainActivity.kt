@@ -975,6 +975,9 @@ class MainActivity : Activity() {
                     val f = text.split(';', limit = 2)
                     val msg = when (f[0]) {
                         "moved_tv" -> { if (remoteKind == "windows") closeRemotePanel(); L.t("rc_moved_tv") }
+                        "moved_half" -> { c.post("WINS?"); null } // stays open: put another window on the other half
+                        // The mouse clicked into a text field on the PC: the keyboard opens by itself.
+                        "text_focus" -> { if (mouseMode && remotePanel == null && quickMenu == null) showKeyboard(c); null }
                         "moved_pc" -> { if (remoteKind == "windows") closeRemotePanel(); L.t("rc_moved_pc") }
                         "gone" -> { c.post("WINS?"); L.t("rc_gone") }
                         "launched" -> L.t("rc_launched", f.getOrElse(1) { "" })
@@ -1147,12 +1150,16 @@ class MainActivity : Activity() {
     override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
         if (client != null && overlay.visibility == View.GONE && quickMenu == null && remotePanel == null &&
             (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)) {
-            // Long OK: statistics; in mouse mode OK is the click, so the long press opens the menu there.
-            if (mouseMode) showQuickMenu() else toggleStats()
+            // Long OK: the quick menu too (in mouse mode it is the only way to it: OK is the click there).
+            showQuickMenu()
             return true
         }
         return super.onKeyLongPress(keyCode, event)
     }
+
+    /** Mouse mode: a first OK waits a little in case a second one follows (two OK = right click). */
+    private var clickPending = false
+    private val leftClick = Runnable { clickPending = false; click("l") }
 
     private fun toggleStats() {
         stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -1165,9 +1172,16 @@ class MainActivity : Activity() {
         if (client != null && overlay.visibility == View.GONE && quickMenu == null && remotePanel == null && event.isTracking &&
             event.flags and KeyEvent.FLAG_CANCELED_LONG_PRESS == 0 &&
             (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_INFO)) {
-            // Mouse mode: short OK = left click (or releases a held click).
-            if (mouseMode && keyCode != KeyEvent.KEYCODE_INFO) { if (dragging) setDrag(false) else click("l"); return true }
-            // Short OK: quick menu (the Info key keeps showing the statistics).
+            // Mouse mode: OK = left click, two OK in a row = right click (or OK releases a held click).
+            if (mouseMode && keyCode != KeyEvent.KEYCODE_INFO) {
+                when {
+                    dragging -> setDrag(false)
+                    clickPending -> { ui.removeCallbacks(leftClick); clickPending = false; click("r") }
+                    else -> { clickPending = true; ui.postDelayed(leftClick, DOUBLE_OK_MS) }
+                }
+                return true
+            }
+            // Short OK: quick menu (the Info key, on remotes that have one, shows the statistics).
             if (keyCode == KeyEvent.KEYCODE_INFO) toggleStats() else showQuickMenu()
             return true
         }
@@ -1304,6 +1318,7 @@ class MainActivity : Activity() {
     /** Stream ended: no mouse mode, no panel; a click held on the PC is released. */
     private fun endRemote() {
         if (dragging) client?.post("BTN;l;0")
+        ui.removeCallbacks(leftClick); clickPending = false
         dragging = false; mouseMode = false; held.clear()
         closeRemotePanel()
         apps = listOf(); appIcons.clear()
@@ -1405,6 +1420,7 @@ class MainActivity : Activity() {
     /** Open windows grouped by screen (the TV first); OK brings one to the TV, holding OK sends it back to the PC. */
     private fun fillWindows(c: StreamClient, rows: List<WinItem>) {
         val body = remoteBody ?: return
+        val keep = currentFocus?.tag as? String // refreshed list: the focus stays on the same window
         body.removeAllViews()
         if (rows.isEmpty()) { body.addView(text(L.t("rc_no_windows"), 16f, MUTED)); return }
         val w = dp(580)
@@ -1414,11 +1430,20 @@ class MainActivity : Activity() {
             section(body, w, when (screen) { "tv" -> L.t("rc_on_tv"); "main" -> L.t("rc_on_main"); else -> L.t("rc_on_screen", screen) })
             for (win in rows.filter { r -> r.screen == screen }) {
                 val r = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; tag = win.id
                     setPadding(dp(16), dp(10), dp(16), dp(10))
                     focusStyle(this)
                     setOnClickListener { c.post("WIN;${win.id};tv") }
                     setOnLongClickListener { c.post("WIN;${win.id};pc"); true }
+                    // ◀ ▶ on a row: that window takes the left or right half of the TV.
+                    setOnKeyListener { _, code, e ->
+                        if (e.action != KeyEvent.ACTION_DOWN || e.repeatCount > 0) return@setOnKeyListener false
+                        when (code) {
+                            KeyEvent.KEYCODE_DPAD_LEFT -> { c.post("WIN;${win.id};left"); true }
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> { c.post("WIN;${win.id};right"); true }
+                            else -> false
+                        }
+                    }
                 }
                 r.addView(ImageView(this).apply { win.icon?.let { b -> setImageBitmap(b) } }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(16) })
                 r.addView(TextView(this).apply {
@@ -1426,7 +1451,7 @@ class MainActivity : Activity() {
                     textSize = 17f; setTextColor(Color.WHITE); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 body.addView(r, LinearLayout.LayoutParams(w, -2).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
-                if (first == null) first = r
+                if (first == null || win.id == keep) first = r
             }
         }
         first?.requestFocus()
@@ -1624,6 +1649,8 @@ class MainActivity : Activity() {
         private val MUTED = Color.rgb(150, 168, 190)
         private val MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         private const val PERM_SWITCH2 = 7
+        /** Time for a second OK to turn the click into a right click (the left click waits this long). */
+        private const val DOUBLE_OK_MS = 300L
         private val ARROWS = setOf(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN)
     }
 }

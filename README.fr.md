@@ -121,9 +121,9 @@ Les touches des **manettes** ne pilotent pas la TV pendant la diffusion : elles 
 
 ### Piloter le PC avec la télécommande
 Depuis le menu rapide (**OK**), avec TVScreenPlus PC 1.2.4 ou plus récent :
-- **Télécommande = souris** : les flèches déplacent le curseur du PC, lentement d'abord puis de plus en plus vite. **OK** = clic, **OK long** = menu (clic droit, maintenir le clic pour glisser, quitter), **Retour** = quitter le mode souris. Les touches Chaîne + / − (ou Page haut / bas) font défiler.
-- **Clavier** : ce que vous tapez avec le clavier de la TV (ou dictez avec le micro de la télécommande) s'écrit directement sur le PC. Touches Entrée, Effacer, Échap, Tab, Windows et *Fermer la fenêtre* (Alt + F4).
-- **Fenêtres du PC** : la liste des fenêtres ouvertes, par écran. **OK** amène la fenêtre sur la TV et la met au premier plan (une fenêtre agrandie le reste) ; **OK long** la renvoie sur l'écran principal du PC.
+- **Télécommande = souris** : les flèches déplacent le curseur du PC, lentement d'abord puis de plus en plus vite. **OK** = clic, **OK OK** (deux appuis rapides) = clic droit, **OK long** = menu (glisser, quitter…), **Retour** = quitter le mode souris. Les touches Chaîne + / − (ou Page haut / bas) font défiler.
+- **Clavier** : ce que vous tapez avec le clavier de la TV (ou dictez avec le micro de la télécommande) s'écrit directement sur le PC. Il s'ouvre **tout seul** quand la souris clique dans un champ de texte, et reste dans le menu. Touches Entrée, Effacer, Échap, Tab, Windows et *Fermer la fenêtre* (Alt + F4).
+- **Fenêtres du PC** : la liste des fenêtres ouvertes, par écran. **OK** amène la fenêtre sur la TV en plein écran et la met au premier plan ; **◀ / ▶** la place sur la moitié gauche / droite de la TV (deux fenêtres côte à côte) ; **OK long** la renvoie sur l'écran principal du PC.
 - **Applications du PC** : toutes les applications du menu Démarrer (programmes, applications du Store, jeux Steam) et Steam Big Picture, avec leurs icônes. **OK** lance l'application, **OK long** l'ajoute aux favoris (affichés en premier). Un champ de recherche filtre la liste. Les applications démarrent sans droits administrateur, comme depuis le menu Démarrer.
 
 Ces commandes ne passent que par une connexion chiffrée. Menu de l'icône du PC › *Contrôle du PC depuis la TV* pour les désactiver (effet immédiat).

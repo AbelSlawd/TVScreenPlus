@@ -20,7 +20,8 @@ namespace TVScreenPlus
     ///   "KEY;vk;1|0" | "TEXT;characters" (typed as Unicode)
     ///   "WINS?" -> extension [8]: open windows, Alt-Tab order, "id\tscreen\tstate\ttitle\tpng(base64)" per line
     ///             (screen: tv | main | 2 | 3…; state: n normal, m minimized, x maximized)
-    ///   "WIN;id;tv|pc" -> that window moves to the TV screen (or the PC's main screen) and comes to the front
+    ///   "WIN;id;tv|left|right|pc" -> that window goes to the TV (maximized), to the left / right half of the TV, or back
+    ///             to the PC main screen, and comes to the front. A left click into a text field sends [10] "text_focus".
     ///   "APPS?" or "APPS?;1" -> extension [9]: applications of the Start menu, "id\tfavorite 0|1\tname\t" per line;
     ///             with ";1" (the TV has no icons yet), extension [12] "id\tpng" lines follow in small, spaced batches
     ///   "APP;id" launches one (without administrator rights), "FAV;id;1|0" sets a favorite (kept on the PC)
@@ -85,7 +86,7 @@ namespace TVScreenPlus
                     else if (a.Length == 2 && int.TryParse(a[0], out int dx) && int.TryParse(a[1], out int dy)) MoveBy(dx, dy);
                     break;
                 case "BTN":
-                    if (a.Length == 2) Button(a[0], a[1] == "1");
+                    if (a.Length == 2) { Button(a[0], a[1] == "1"); if (a[0] == "l" && a[1] == "0") Queue(CheckTextFocus); }
                     break;
                 case "WHEEL":
                     if (int.TryParse(arg, out int n)) Mouse(0x0800 /*WHEEL*/, Math.Max(-20, Math.Min(20, n)) * 120);
@@ -97,7 +98,7 @@ namespace TVScreenPlus
                     Text(arg);
                     break;
                 case "WINS?": Queue(SendWindows); break;
-                case "WIN": if (a.Length == 2) Queue(() => MoveWindow(a[0], a[1] == "tv")); break;
+                case "WIN": if (a.Length == 2) Queue(() => MoveWindow(a[0], a[1])); break;
                 case "APPS?": Queue(() => SendApps(arg == "1")); break;
                 case "APP": Queue(() => Launch(arg)); break;
                 case "FAV": if (a.Length == 2) Queue(() => Favorite(a[0], a[1] == "1")); break;
@@ -258,12 +259,13 @@ namespace TVScreenPlus
 
         static string Clean(string s) => new string((s ?? "").Where(c => c != '\t' && c != '\n' && c != '\r').ToArray()).Trim();
 
-        void MoveWindow(string id, bool toTv)
+        /// <param name="where">"tv" (maximized on the TV), "left" / "right" (that half of the TV), "pc" (the PC's main screen).</param>
+        void MoveWindow(string id, string where)
         {
             if (!windows.TryGetValue(id, out var h) || !IsWindow(h)) { send(10, "gone"); return; }
             var mons = Monitors();
-            var dest = toTv ? mons.FirstOrDefault(m => m.Device == tvDevice()) : mons.FirstOrDefault(m => m.Primary);
-            if (dest == null) return;
+            var dest = where == "pc" ? mons.FirstOrDefault(m => m.Primary) : mons.FirstOrDefault(m => m.Device == tvDevice());
+            if (dest == null || (where != "tv" && where != "left" && where != "right" && where != "pc")) return;
             var wp = new WINDOWPLACEMENT { length = Marshal.SizeOf(typeof(WINDOWPLACEMENT)) };
             GetWindowPlacement(h, ref wp);
             bool max = wp.showCmd == 3 || (wp.showCmd == 2 && (wp.flags & 2) != 0); // maximized, or minimized from maximized
@@ -272,7 +274,17 @@ namespace TVScreenPlus
             GetWindowRect(h, out var rr);
             var r = rr.R;
             var src = mons.OrderByDescending(m => Area(Rectangle.Intersect(m.Bounds, r))).First();
-            if (src.Device != dest.Device)
+            const int Place = 0x0004 | 0x0010; // NOZORDER | NOACTIVATE
+            if (where == "left" || where == "right")
+            {
+                // Half of the TV, edge to edge: Windows 10/11 frames have invisible borders, added back around the visible frame.
+                var half = new Rectangle(dest.Work.X + (where == "right" ? dest.Work.Width / 2 : 0), dest.Work.Y, dest.Work.Width / 2, dest.Work.Height);
+                var vis = r;
+                if (DwmGetWindowAttribute(h, 9 /*EXTENDED_FRAME_BOUNDS*/, out RECT f, Marshal.SizeOf(typeof(RECT))) == 0) vis = f.R;
+                int l = vis.Left - r.Left, t = vis.Top - r.Top, rt = r.Right - vis.Right, b = r.Bottom - vis.Bottom;
+                SetWindowPos(h, IntPtr.Zero, half.X - l, half.Y - t, half.Width + l + rt, half.Height + t + b, Place);
+            }
+            else if (src.Device != dest.Device)
             {
                 // Same place relative to the screen, size kept (shrunk if the screen is smaller).
                 int w = Math.Min(r.Width, dest.Work.Width), hh = Math.Min(r.Height, dest.Work.Height);
@@ -280,11 +292,36 @@ namespace TVScreenPlus
                 double fy = src.Work.Height > r.Height ? (r.Y - src.Work.Y) / (double)(src.Work.Height - r.Height) : 0;
                 int x = dest.Work.X + (int)(Math.Max(0, Math.Min(1, fx)) * (dest.Work.Width - w));
                 int y = dest.Work.Y + (int)(Math.Max(0, Math.Min(1, fy)) * (dest.Work.Height - hh));
-                SetWindowPos(h, IntPtr.Zero, x, y, w, hh, 0x0004 | 0x0010 /*NOZORDER | NOACTIVATE*/);
+                SetWindowPos(h, IntPtr.Zero, x, y, w, hh, Place);
             }
-            if (max) ShowWindow(h, 3 /*MAXIMIZE*/);
+            // On the TV a window always fills the screen; back on the PC it keeps the state it had.
+            if (where == "tv" || (where == "pc" && max)) ShowWindow(h, 3 /*MAXIMIZE*/);
             Front(h);
-            send(10, toTv ? "moved_tv" : "moved_pc");
+            send(10, where == "tv" ? "moved_tv" : where == "pc" ? "moved_pc" : "moved_half");
+        }
+
+        /// <summary>
+        /// After a left click from the TV: if it put the focus in a text field, the TV opens its keyboard.
+        /// UI Automation sees fields in every kind of application (classic, Store, browsers).
+        /// </summary>
+        void CheckTextFocus()
+        {
+            Thread.Sleep(250); // the click lands and the application moves its focus
+            try
+            {
+                var e = System.Windows.Automation.AutomationElement.FocusedElement;
+                if (e == null) return;
+                var ct = e.Current.ControlType;
+                if (ct != System.Windows.Automation.ControlType.Edit && ct != System.Windows.Automation.ControlType.Document) return;
+                if (e.TryGetCurrentPattern(System.Windows.Automation.ValuePattern.Pattern, out object vp))
+                {
+                    // A web page itself is a read-only "document" (its value is its address): not a field.
+                    if (((System.Windows.Automation.ValuePattern)vp).Current.IsReadOnly) return;
+                }
+                else if (ct == System.Windows.Automation.ControlType.Document && !e.TryGetCurrentPattern(System.Windows.Automation.TextPattern.Pattern, out _)) return;
+                send(10, "text_focus");
+            }
+            catch { }
         }
 
         /// <summary>SetForegroundWindow is refused to a process the user is not typing in: borrow the input of the current one.</summary>
@@ -601,6 +638,7 @@ namespace TVScreenPlus
         [DllImport("advapi32.dll", SetLastError = true)] static extern bool DuplicateTokenEx(IntPtr tok, int access, IntPtr attrs, int level, int type, out IntPtr dup);
         [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         static extern bool CreateProcessWithTokenW(IntPtr tok, int logon, string app, string cmd, int flags, IntPtr env, string dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+        [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT value, int size);
         [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
         [DllImport("gdi32.dll")] static extern int GetObject(IntPtr h, int size, ref BITMAP bm);
         [DllImport("gdi32.dll")] static extern int GetDIBits(IntPtr dc, IntPtr hbm, uint start, uint lines, byte[] bits, ref BITMAPINFOHEADER bi, uint usage);
