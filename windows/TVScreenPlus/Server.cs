@@ -39,6 +39,7 @@ namespace TVScreenPlus
         readonly Action<string, string> notify;
         readonly Func<string, string, string, bool> approve;
         int handshaking;              // connections not yet authenticated (bounded: they hold a thread each)
+        readonly Dictionary<string, int> handshakesFrom = new Dictionary<string, int>();
         UdpClient udp;
         TcpListener tcp;
         volatile Session current;
@@ -194,19 +195,33 @@ namespace TVScreenPlus
                     c.Close();
                     continue;
                 }
-                if (Interlocked.Increment(ref handshaking) > 4)
+                // At most 2 handshakes per address and 6 in all (each holds a thread until it ends or times out).
+                var addr = from.Address.ToString();
+                lock (handshakesFrom)
                 {
-                    Interlocked.Decrement(ref handshaking);
-                    Log.W($"Connection from {from} refused: too many at once");
-                    c.Close();
-                    continue;
+                    handshakesFrom.TryGetValue(addr, out int fromAddr);
+                    if (handshaking >= 6 || fromAddr >= 2)
+                    {
+                        Log.W($"Connection from {from} refused: too many at once");
+                        c.Close();
+                        continue;
+                    }
+                    handshaking++;
+                    handshakesFrom[addr] = fromAddr + 1;
                 }
                 new Thread(() =>
                 {
                     var s = new Session(c, status, notify);
                     bool ok;
                     try { ok = s.Handshake(approve); }
-                    finally { Interlocked.Decrement(ref handshaking); }
+                    finally
+                    {
+                        lock (handshakesFrom)
+                        {
+                            handshaking--;
+                            if (--handshakesFrom[addr] == 0) handshakesFrom.Remove(addr);
+                        }
+                    }
                     if (!ok) { s.Refuse(); return; }
                     // Only an authenticated TV takes over: stop the previous session, then run this one.
                     current?.Close();
@@ -407,44 +422,66 @@ namespace TVScreenPlus
         /// <summary>
         /// Reads the TV's hello and checks that it is a paired TV, or pairs it if the person at the PC accepts.
         /// Runs before this TV can affect anything (the current stream keeps going meanwhile). False = refused.
+        /// TV apps with auth2=1 (1.2.5+) answer a challenge that covers their hello line and this PC's address, and
+        /// committed to their pairing key in the hello; 1.2.4 apps (no auth2) keep working, but always fully encrypted
+        /// (their answer could be relayed by a fake PC); apps that cannot encrypt (before 1.2.4) must be updated.
         /// </summary>
         public bool Handshake(Func<string, string, string, bool> approve)
         {
+            // A connection that never finishes its handshake (slow drip of bytes) is closed: it holds a slot.
+            var deadline = new Timer(_ => { if (!approving) try { client.Close(); } catch { } }, null, 15000, Timeout.Infinite);
             try
             {
                 client.NoDelay = true;
                 client.ReceiveTimeout = 5000;
                 ns = client.GetStream();
-                hello = Parse(ReadLine(ns));
+                var raw = ReadHello(ns);
+                hello = Parse(Encoding.UTF8.GetString(raw));
                 if (!hello.ContainsKey("TVSP1")) return false;
                 lang = hello.TryGetValue("lang", out var lg) ? lg : "fr";
                 tvName = Clean(hello.TryGetValue("name", out var n) ? n : "");
                 string id = hello.TryGetValue("id", out var i) ? i : null;
                 string ip = (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "?";
-                if (Int(hello, "v", 1) < 2 || Int(hello, "auth", 0) != 1 || !Pairing.ValidId(id))
+                if (Int(hello, "v", 1) < 2 || Int(hello, "auth", 0) != 1 || Int(hello, "sec", 0) != 1 || !Pairing.ValidId(id))
                 {
-                    Log.W($"TV '{tvName}' {ip}: app too old (no authentication), asked to update");
+                    Log.W($"TV '{tvName}' {ip}: app too old (no authentication or no encryption), asked to update");
                     if (Int(hello, "v", 1) >= 2) { TvText("update_tv"); lingerOnRefuse = true; }
                     return false;
                 }
+                bool v2 = Int(hello, "auth2", 0) == 1;
+                var helloHash = Pairing.Sha256(raw);
+                var local = (client.Client.LocalEndPoint as IPEndPoint)?.Address;
+                if (local != null && local.IsIPv4MappedToIPv6) local = local.MapToIPv4();
+                var pcAddress = local?.GetAddressBytes() ?? new byte[0];
+
                 var key = Pairing.KeyOf(id);
                 if (key != null)
                 {
                     var nonce = Pairing.Random(32);
-                    Send(0x08, new byte[] { 5 }.Concat(Pairing.PcId).Concat(nonce).ToArray());
+                    Send(0x08, new byte[] { (byte)(v2 ? 13 : 5) }.Concat(Pairing.PcId).Concat(nonce).ToArray());
                     string answer = ReadReply("AUTH;");
                     if (answer != "none")
                     {
-                        if (Pairing.Same(Pairing.Unhex(answer), Pairing.Proof(key, nonce)))
+                        var expected = v2 ? Pairing.Proof2(key, nonce, helloHash, pcAddress) : Pairing.Proof(key, nonce);
+                        if (Pairing.Same(Pairing.Unhex(answer), expected))
                         {
                             secBase = SecureChannel.Base(key, nonce);
-                            return Secure();
+                            return Secure(forceDown: !v2);
                         }
-                        Log.W($"TV '{tvName}' {ip}: wrong pairing key, refused");
+                        Log.W($"TV '{tvName}' {ip}: wrong pairing key{(v2 ? " or connection relayed by another device" : "")}, refused");
                         Deny("auth_failed");
                         return false;
                     }
                     Log.W($"TV '{tvName}' {ip} lost its pairing key: pairing again");
+                }
+                // Pairing needs the TV's commitment to its key (sent before it saw ours): without it, a device in the
+                // middle could try keys until both screens show the same code.
+                var commit = v2 && hello.TryGetValue("commit", out var cm) ? Pairing.Unhex(cm) : null;
+                if (commit == null || commit.Length != 32)
+                {
+                    Log.W($"TV '{tvName}' {ip}: app too old to pair safely, asked to update");
+                    Deny("update_tv");
+                    return false;
                 }
                 lock (refusedAt)
                     if (refusedAt.TryGetValue(ip, out var t) && DateTime.UtcNow - t < TimeSpan.FromMinutes(1)) { Deny("refused"); return false; }
@@ -452,10 +489,17 @@ namespace TVScreenPlus
                 {
                     Send(0x08, new byte[] { 6 }.Concat(Pairing.PcId).Concat(ex.PublicKey).ToArray());
                     var tvPublic = Pairing.Unhex(ReadReply("PAIR;"));
+                    if (tvPublic == null || !Pairing.Same(Pairing.Sha256(tvPublic), commit))
+                    {
+                        Log.W($"Pairing with TV '{tvName}' {ip}: key does not match its commitment (device in the middle?), refused");
+                        Deny("auth_failed");
+                        return false;
+                    }
                     var shared = ex.Key(tvPublic);
                     string code = Pairing.Code(shared, ex.PublicKey, tvPublic);
                     Log.W($"Pairing request from TV '{tvName}' {ip}");
-                    client.ReceiveTimeout = 0; // the person may take a while to answer
+                    approving = true;     // the person may take a while to answer
+                    client.ReceiveTimeout = 0;
                     bool ok = approve(tvName, ip, code);
                     if (!ok)
                     {
@@ -465,35 +509,52 @@ namespace TVScreenPlus
                         return false;
                     }
                     Send(0x08, new byte[] { 7, 1 });
+                    // The TV confirms on its side too, then proves the new key like on every connection.
+                    client.ReceiveTimeout = 180000;
+                    var nonce = Pairing.Random(32);
+                    Send(0x08, new byte[] { 13 }.Concat(Pairing.PcId).Concat(nonce).ToArray());
+                    var proof = Pairing.Unhex(ReadReply("AUTH;"));
+                    client.ReceiveTimeout = 5000;
+                    if (!Pairing.Same(proof, Pairing.Proof2(shared, nonce, helloHash, pcAddress)))
+                    {
+                        Log.W($"Pairing with TV '{tvName}' {ip}: not confirmed on the TV");
+                        return false;
+                    }
                     Pairing.Trust(id, tvName, shared);
                     Log.W($"TV '{tvName}' {ip} paired");
-                    secBase = SecureChannel.Base(shared, ex.PublicKey);
-                    return Secure();
+                    secBase = SecureChannel.Base(shared, nonce);
+                    return Secure(forceDown: false);
                 }
             }
             catch (Exception e) { Log.W("Handshake failed: " + e.Message); return false; }
+            finally { deadline.Dispose(); }
         }
+        volatile bool approving;      // waiting for the person at the PC: the handshake deadline does not apply
 
         /// <summary>
-        /// Authenticated TV: switch the connection to encryption if its app can (sec=1). [11][bits] tells it what is
-        /// encrypted; it answers "SEC" in clear and only sends encrypted records after it. What the TV sends is always
-        /// encrypted (a few bytes); the picture and the sound follow Settings.Crypt (auto: if the TV is fast enough).
+        /// Authenticated TV: switch the connection to encryption. [11][bits] tells it what is encrypted; it answers
+        /// "SEC" in clear and only sends encrypted records after it. What the TV sends is always encrypted (a few
+        /// bytes); the picture and the sound follow Settings.Crypt (auto: if the TV is fast enough), or always
+        /// (forceDown) for a TV app whose answer could have been relayed.
         /// </summary>
-        bool Secure()
+        bool Secure(bool forceDown)
         {
-            if (Int(hello, "sec", 0) != 1) { Stats.Crypt = "non (application TV ancienne)"; return true; }
             int aes = Int(hello, "aes", 0);
             bool wifi = hello.TryGetValue("net", out var net) && net == "wifi";
             string mode = Settings.Crypt;
-            bool down = mode == "on" || (mode == "auto" && SecureChannel.AutoDown(aes, wifi));
+            bool down = forceDown || mode == "on" || (mode == "auto" && SecureChannel.AutoDown(aes, wifi));
             Send(0x08, new byte[] { 11, (byte)(SecureChannel.UpBit | (down ? SecureChannel.DownBit : 0)) });
             ReadReply("SEC");
             ns = new SecureStream(ns, down ? SecureChannel.Key(secBase, "down") : null, SecureChannel.Key(secBase, "up"));
             secureUp = true; secureDown = down;
             if (down) udpSeal = new SecureDatagrams(SecureChannel.Key(secBase, "udp"));
-            Stats.Crypt = down ? "image, son et commandes (AES-256-GCM)"
-                               : "commandes seulement" + (mode == "off" ? " (image et son : réglage Jamais)" : $" (TV trop lente pour l'image : {aes} Mo/s)");
-            Log.W($"Encryption: commands{(down ? " + picture and sound" : "")} (setting {mode}, TV AES {aes} MB/s, {(wifi ? "Wi-Fi" : "wired")})");
+            Stats.Crypt = forceDown ? "image, son et commandes (AES-256-GCM, application TV à mettre à jour)"
+                        : down ? "image, son et commandes (AES-256-GCM)"
+                        : "commandes seulement" + (mode == "off" ? " (image et son : réglage Jamais)" : $" (TV trop lente pour l'image : {aes} Mo/s)");
+            Log.W($"Encryption: commands{(down ? " + picture and sound" : "")} (setting {mode}{(forceDown ? ", forced: TV app 1.2.4" : "")}, TV AES {aes} MB/s, {(wifi ? "Wi-Fi" : "wired")})");
+            // Diagnostic lines the TV sent before it was authenticated are only written now.
+            foreach (var l in preAuthLog) TvLog(l);
+            preAuthLog.Clear();
             return true;
         }
 
@@ -504,6 +565,9 @@ namespace TVScreenPlus
             TvText(key);
         }
 
+        /// <summary>The TV's LOG lines received during the handshake (logged once it is authenticated).</summary>
+        readonly List<string> preAuthLog = new List<string>();
+
         /// <summary>Next line starting with prefix (the TV's diagnostic LOG lines may come first).</summary>
         string ReadReply(string prefix)
         {
@@ -511,7 +575,7 @@ namespace TVScreenPlus
             {
                 string l = ReadLine(ns, true) ?? throw new IOException("TV disconnected");
                 if (l.StartsWith(prefix)) return l.Substring(prefix.Length).Trim();
-                if (l.StartsWith("LOG;")) TvLog(l.Substring(4));
+                if (l.StartsWith("LOG;") && preAuthLog.Count < 40) preAuthLog.Add(l.Substring(4, Math.Min(l.Length - 4, 400)));
             }
             throw new IOException("no answer from the TV");
         }
@@ -1059,6 +1123,17 @@ namespace TVScreenPlus
                 if (i < 0) d[p.Trim()] = ""; else d[p.Substring(0, i).Trim()] = p.Substring(i + 1).Trim();
             }
             return d;
+        }
+
+        /// <summary>The TV's first line, as sent (the auth2 answer covers these exact bytes).</summary>
+        static byte[] ReadHello(Stream s)
+        {
+            var bytes = new List<byte>();
+            int c;
+            while ((c = s.ReadByte()) >= 0 && c != '\n')
+                if (bytes.Count < 8192) bytes.Add((byte)c); else throw new IOException("hello too long");
+            if (bytes.Count > 0 && bytes[bytes.Count - 1] == '\r') bytes.RemoveAt(bytes.Count - 1);
+            return bytes.ToArray();
         }
 
         static string ReadLine(Stream s, bool nullOnEof = false)

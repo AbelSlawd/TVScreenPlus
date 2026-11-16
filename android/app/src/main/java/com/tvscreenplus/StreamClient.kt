@@ -54,6 +54,10 @@ class StreamClient(
         fun onApps(text: String) {}
         fun onAppIcons(text: String) {}
         fun onRemoteMessage(text: String) {}
+        /** Network thread: a PC asks to pair with this TV (code also shown on the PC). [answer] once the person decided. */
+        fun onPairRequest(code: String, answer: (Boolean) -> Unit) = answer(false)
+        /** The pairing request is over (decided on the PC, or the connection ended): close its question. */
+        fun onPairEnd() {}
     }
 
     @Volatile private var running = true
@@ -66,6 +70,12 @@ class StreamClient(
     @Volatile private var streaming = false
     private var pairPc: ByteArray? = null
     private var pairKey: ByteArray? = null
+    /** Our pairing key for this connection: its hash goes in the hello (commit=), before we see the PC's key. */
+    private val pairEx by lazy { Pairing.Exchange() }
+    /** The person's answer on the TV to a pairing request (null = not yet). */
+    private val pairAnswer = java.util.concurrent.LinkedBlockingQueue<Boolean>()
+    /** Our hello line as sent: the auth2 answer covers it. */
+    private var sentHello = ByteArray(0)
     private var socket: Socket? = null
     private var out: OutputStream? = null
     /** All writes go under this lock: the switch to encryption must not interleave with a line being sent. */
@@ -324,7 +334,11 @@ class StreamClient(
             renderThread = HandlerThread("frame-rendered").apply { start() }
             // ts=1: frames carry their capture time; cursor=1: we draw the cursor.
             // sec=1: we can encrypt (aes = our AES-GCM speed, MB/s); remote=1: we can drive the PC.
-            send((if (port > 0) "$hello;audioudp=$port" else hello) + ";ts=1;cursor=1;sec=1;aes=${SecureChannel.speedMBps};remote=1")
+            // auth2=1: our challenge answers cover this line and the PC's address; commit = hash of our pairing key.
+            val line = (if (port > 0) "$hello;audioudp=$port" else hello) +
+                ";ts=1;cursor=1;sec=1;aes=${SecureChannel.speedMBps};remote=1;auth2=1;commit=" + Pairing.hex(Pairing.sha256(pairEx.publicKey))
+            sentHello = line.toByteArray()
+            send(line)
             diagnostics.forEach { log(it) }
             log("crypto: AES-GCM ${SecureChannel.speedMBps} MB/s")
             var input = DataInputStream(BufferedInputStream(s.getInputStream(), 256 shl 10))
@@ -340,7 +354,7 @@ class StreamClient(
             while (running) {
                 val len = input.readInt()
                 val flags = input.readUnsignedByte()
-                if (len < 0 || len > (64 shl 20)) throw Exception(L.t("corrupt"))
+                if (len < 0 || len > (16 shl 20)) throw Exception(L.t("corrupt"))
                 if (len > buf.size) buf = ByteArray(maxOf(len, minOf(len * 2, 16 shl 20)))
                 input.readFully(buf, 0, len)
                 bytesWindow += len + 5
@@ -378,6 +392,7 @@ class StreamClient(
             synchronized(feedLock) { decoder?.release() }
             synchronized(audioLock) { audio?.release(); audio = null }
             synchronized(vLock) { vq.clear(); vLock.notifyAll() }
+            listener.onPairEnd()
             listener.onEnded(error)
         }
     }
@@ -396,6 +411,7 @@ class StreamClient(
         }
         synchronized(vLock) {
             if (videoDelayMs > 0 || appliedDelayNs > 0 || vq.isNotEmpty() || feeding) {
+                if (vq.size >= 240) vq.clear() // never more than ~4 s of waiting frames (memory)
                 vq.addLast(VFrame(buf.copyOf(len), key, System.nanoTime(), cap))
                 vLock.notifyAll()
                 return
@@ -493,7 +509,9 @@ class StreamClient(
             late = soundMs - imageMs - userOffsetMs // > 0: sound behind the image
         }
         val newVideo = if (syncImage) late.coerceIn(0, 150) else 0
-        val newExtra = (-late).coerceIn(0, 200)
+        // Game mode: the image is never delayed, and the sound is not delayed to wait for it either (a sound a
+        // few ms ahead goes unnoticed); only the user's own correction still delays it.
+        val newExtra = (if (syncImage) -late else userOffsetMs).coerceIn(0, 200)
         if (Math.abs(newVideo - videoDelayMs) >= 4) videoDelayMs = newVideo
         if (Math.abs(newExtra - a.extraDelayMs) >= 4) a.extraDelayMs = newExtra
     }
@@ -506,6 +524,15 @@ class StreamClient(
             3, 4 -> cursorPacket(b, len)
             2 -> if (len >= 4) listener.onRumble(b[1].toInt() and 0xFF, b[2].toInt() and 0xFF, b[3].toInt() and 0xFF)
             // Authentication (see Pairing): challenge from a PC we may know, then pairing request and result.
+            // auth2: the answer also covers our hello line and the address we connected to, so a fake PC that relays
+            // a real PC's challenge gets an answer the real PC refuses (it sees its own address, not the fake one's).
+            13 -> if (len >= 49) {
+                val key = pairing.keyFor(b.copyOfRange(1, 17))
+                val nonce = b.copyOfRange(17, 49)
+                if (key != null) secBase = SecureChannel.base(key, nonce)
+                val pcAddress = socket?.inetAddress?.address ?: ByteArray(0)
+                send("AUTH;" + (key?.let { Pairing.hex(Pairing.proof2(it, nonce, Pairing.sha256(sentHello), pcAddress)) } ?: "none"))
+            }
             5 -> if (len >= 49) {
                 val key = pairing.keyFor(b.copyOfRange(1, 17))
                 val nonce = b.copyOfRange(17, 49)
@@ -513,19 +540,29 @@ class StreamClient(
                 send("AUTH;" + (key?.let { Pairing.hex(Pairing.proof(it, nonce)) } ?: "none"))
             }
             6 -> if (len >= 81) {
-                val ex = Pairing.Exchange()
+                val ex = pairEx
                 val pcPublic = b.copyOfRange(17, 81)
                 val key = ex.key(pcPublic)
                 pairPc = b.copyOfRange(1, 17); pairKey = key
                 secBase = SecureChannel.base(key, pcPublic)
                 send("PAIR;" + Pairing.hex(ex.publicKey))
                 val code = Pairing.code(key, pcPublic, ex.publicKey)
-                listener.onStatus(L.t("pair_code", code.substring(0, 3) + " " + code.substring(3)))
+                val shown = code.substring(0, 3) + " " + code.substring(3)
+                listener.onStatus(L.t("pair_code", shown))
+                pairAnswer.clear()
+                listener.onPairRequest(shown) { pairAnswer.offer(it) }
             }
+            // The PC accepted (1) or refused (0). We keep its key only if the person also accepted it here: otherwise
+            // any device answering our search could pair itself and receive what we type.
             7 -> if (len >= 2) {
                 val pc = pairPc; val key = pairKey
-                if (b[1].toInt() == 1 && pc != null && key != null) pairing.trust(pc, key) else refused = true
                 pairKey = null
+                if (b[1].toInt() == 1 && pc != null && key != null) {
+                    val ok = pairAnswer.poll(3, java.util.concurrent.TimeUnit.MINUTES) == true
+                    listener.onPairEnd()
+                    if (!ok) { refused = true; throw java.io.IOException(L.t("pair_refused_tv")) }
+                    pairing.trust(pc, key)
+                } else { refused = true; listener.onPairEnd() }
             }
             // Switch to encryption: "SEC" in clear, then every line we send is an encrypted record.
             11 -> if (len >= 2) {

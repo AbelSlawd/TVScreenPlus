@@ -186,7 +186,8 @@ namespace TVScreenPlus
                 p[4] = (byte)(rate >> 24); p[5] = (byte)(rate >> 16); p[6] = (byte)(rate >> 8); p[7] = (byte)rate;
                 // Capture time on the same clock as the video frames and pings (ms since 1970 mod 2^31):
                 // the TV measures the real capture -> speaker delay with it.
-                uint pts = (uint)((DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (frames - o) * 1000L / rate) & 0x7FFFFFFF);
+                // WallClock, not DateTime.UtcNow: that one ticks in up to 16 ms steps on .NET Framework.
+                uint pts = (uint)((WallClock.Ms(Stopwatch.GetTimestamp()) - (frames - o) * 1000L / rate) & 0x7FFFFFFF);
                 p[8] = (byte)(pts >> 24); p[9] = (byte)(pts >> 16); p[10] = (byte)(pts >> 8); p[11] = (byte)pts;
                 Buffer.BlockCopy(pcm, (startFrame + o) * 4, p, 12, c * 4);
                 Interlocked.Add(ref bytes, p.Length + 5);

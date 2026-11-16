@@ -93,7 +93,7 @@ class SecureIn(private val inner: InputStream, key: ByteArray) : InputStream() {
         do {
             if (!fill(head, 4)) return false
             val c = StreamClient.u32(head, 0).toInt()
-            if (c < SecureChannel.TAG || c > (64 shl 20)) throw IOException("encrypted record: bad length")
+            if (c < SecureChannel.TAG || c > (16 shl 20)) throw IOException("encrypted record: bad length")
             if (rec.size < c) rec = ByteArray(c)
             if (!fill(rec, c)) throw IOException("encrypted record cut")
             val n = c - SecureChannel.TAG

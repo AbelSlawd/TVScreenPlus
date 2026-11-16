@@ -35,6 +35,9 @@ namespace TVScreenPlus
         {
             Directory.CreateDirectory(DataDir);
             LockDown(DataDir);
+            // A settings.txt we did not write (created by a standard user before our first run, when the folder was
+            // still open) could hold the key of a TV of theirs: it is not used.
+            DropUnlessAdminOwned(Path.Combine(DataDir, "settings.txt"));
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             if (args.Contains("--uninstall")) { Installer.Uninstall(); return; }
@@ -57,7 +60,7 @@ namespace TVScreenPlus
         /// administrators and SYSTEM may write there; users may still read (the log). settings.txt, which holds the
         /// TV pairing keys, is closed to users too (see Settings).
         /// </summary>
-        static void LockDown(string dir)
+        public static void LockDown(string dir)
         {
             try
             {
@@ -67,8 +70,10 @@ namespace TVScreenPlus
                 var all = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
                 foreach (var sid in new[] { Admins, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null) })
                     sec.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, all, PropagationFlags.None, AccessControlType.Allow));
-                sec.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
-                    FileSystemRights.ReadAndExecute, all, PropagationFlags.None, AccessControlType.Allow));
+                // Readers: users (the log) and the services that may read a folder of ours (display driver host).
+                foreach (var t in new[] { WellKnownSidType.BuiltinUsersSid, WellKnownSidType.AuthenticatedUserSid, WellKnownSidType.LocalServiceSid })
+                    sec.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(t, null),
+                        FileSystemRights.ReadAndExecute, all, PropagationFlags.None, AccessControlType.Allow));
                 Directory.SetAccessControl(dir, sec);
             }
             catch (Exception e) { Log.W("Data folder permissions: " + e.Message); }
@@ -79,16 +84,34 @@ namespace TVScreenPlus
         /// <summary>Administrators and SYSTEM only, nothing inherited.</summary>
         public static void AdminsOnly(string file)
         {
+            try { File.SetAccessControl(file, AdminsOnlySecurity()); }
+            catch (Exception e) { Log.W("Settings permissions: " + e.Message); }
+        }
+
+        /// <summary>Administrators and SYSTEM only (given at creation: no moment where a user could open the file).</summary>
+        public static FileSecurity AdminsOnlySecurity()
+        {
+            var sec = new FileSecurity();
+            sec.SetOwner(Admins);
+            sec.SetAccessRuleProtection(true, false);
+            foreach (var sid in new[] { Admins, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null) })
+                sec.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, AccessControlType.Allow));
+            return sec;
+        }
+
+        /// <summary>Deletes a file (or link) whose owner is neither the administrators nor SYSTEM: a user planted it.</summary>
+        public static void DropUnlessAdminOwned(string path)
+        {
             try
             {
-                var sec = new FileSecurity();
-                sec.SetOwner(Admins);
-                sec.SetAccessRuleProtection(true, false);
-                foreach (var sid in new[] { Admins, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null) })
-                    sec.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, AccessControlType.Allow));
-                File.SetAccessControl(file, sec);
+                if (!File.Exists(path) && !Directory.Exists(path)) return;
+                bool link = (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+                var owner = File.GetAccessControl(path).GetOwner(typeof(SecurityIdentifier)) as SecurityIdentifier;
+                if (!link && owner != null && (owner == Admins || owner.IsWellKnown(WellKnownSidType.LocalSystemSid))) return;
+                Log.W($"Removed {path}: not created by TVScreenPlus (owner {owner}{(link ? ", link" : "")})");
+                if (Directory.Exists(path)) Directory.Delete(path); else File.Delete(path);
             }
-            catch (Exception e) { Log.W("Settings permissions: " + e.Message); }
+            catch (Exception e) { Log.W($"Check of {path}: {e.Message}"); }
         }
     }
 
@@ -136,8 +159,8 @@ namespace TVScreenPlus
                 if (v == null) D.Remove(k); else D[k] = v;
                 if (!restricted)
                 {
-                    // Created empty and restricted first: it would inherit the folder's read access with the keys in it.
-                    try { if (!File.Exists(F)) File.WriteAllText(F, ""); } catch { }
+                    // Created restricted: it would inherit the folder's read access with the keys in it.
+                    try { if (!File.Exists(F)) using (new FileStream(F, FileMode.CreateNew, FileSystemRights.Write, FileShare.None, 4096, FileOptions.None, Program.AdminsOnlySecurity())) { } } catch { }
                     Program.AdminsOnly(F); restricted = true;
                 }
                 try { File.WriteAllLines(F, D.Select(p => p.Key + "=" + p.Value)); } catch { }

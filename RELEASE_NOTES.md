@@ -1,3 +1,18 @@
+**Nouveau en 1.2.5 : sécurité renforcée, son** — mettez à jour le PC **et** l'application TV.
+
+Sécurité
+- **Jumelage renforcé** : un nouveau PC doit aussi être accepté sur la TV (fenêtre *Associer ce PC ?* avec le même code), et la preuve que la TV donne à chaque connexion est liée à cette connexion.
+- Les applications TV antérieures à la 1.2.4 ne peuvent plus se connecter. Avec l'application TV 1.2.4, l'image et le son sont toujours chiffrés, et un nouveau jumelage demande la 1.2.5.
+- PC : limite des connexions en attente, fichier de réglages et dossier du pilote d'écran virtuel réservés aux administrateurs, composants de la version vérifiés à la construction.
+
+Son
+- La sortie du son par défaut devient **Qualité TV** (avec les effets sonores de la TV). Pour jouer, choisissez *Rapide* dans les Paramètres de la TV. Un réglage déjà choisi est conservé.
+- Mode jeu : le son n'est plus retardé pour attendre l'image (~15 ms de moins avec la sortie *Rapide*).
+- Synchronisation image / son plus précise (horloge du son alignée sur celle de l'image).
+
+TV
+- Aide de l'écran d'accueil mise à jour : OK long = menu rapide (souris, clavier, fenêtres et applications du PC, statistiques).
+
 **Nouveau en 1.2.4 : piloter le PC depuis la TV, chiffrement** — mettez à jour le PC **et** l'application TV.
 
 Piloter le PC (menu rapide : **OK** pendant la diffusion ; les statistiques se trouvent désormais dans ce menu)

@@ -14,7 +14,7 @@
 
 - [ ] Both apps build (`dotnet build windows/TVScreenPlus -c Release`, `cd android && ./gradlew assembleRelease`).
 - [ ] An older TV app and an older PC program still work with this change (protocol compatibility).
-- [ ] No extra work per frame on the video path, no new dependency; the TV APK stays under 150 KB.
+- [ ] No extra work per frame on the video path, no new dependency; the TV APK stays about 150 KB.
 - [ ] New TV texts are in all four languages of `L.kt` (or I asked for help with them).
 - [ ] `README.md` and `README.fr.md` are updated if the behaviour changed.
 - [ ] `VERSION`, the CI workflow and the signing setup are untouched.

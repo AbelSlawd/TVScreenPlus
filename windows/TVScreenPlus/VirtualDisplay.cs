@@ -112,13 +112,19 @@ namespace TVScreenPlus
 
         static void WriteSettings(int w, int h, int fps)
         {
+            // The driver reads its settings from C:\VirtualDisplayDriver, where every signed-in user may write by
+            // default (C:\ lets them modify what is created there): only administrators may change it.
+            Program.DropUnlessAdminOwned(ConfDir);
             Directory.CreateDirectory(ConfDir);
+            Program.LockDown(ConfDir);
+            var file = Path.Combine(ConfDir, "vdd_settings.xml");
+            Program.DropUnlessAdminOwned(file);
             var modes = new List<(int, int)> { (w, h), (1920, 1080), (2560, 1440), (3840, 2160), (1600, 900), (1280, 720) }.Distinct();
             var sb = new StringBuilder("<?xml version='1.0' encoding='utf-8'?>\n<vdd_settings>\n<monitors><count>1</count></monitors>\n<gpu><friendlyname>default</friendlyname></gpu>\n");
             sb.Append($"<global><g_refresh_rate>{fps}</g_refresh_rate></global>\n<resolutions>\n");
             foreach (var (mw, mh) in modes) sb.Append($"<resolution><width>{mw}</width><height>{mh}</height><refresh_rate>{fps}</refresh_rate></resolution>\n");
             sb.Append("</resolutions>\n<logging><SendLogsThroughPipe>false</SendLogsThroughPipe><logging>false</logging><debuglogging>false</debuglogging></logging>\n</vdd_settings>\n");
-            File.WriteAllText(Path.Combine(ConfDir, "vdd_settings.xml"), sb.ToString());
+            File.WriteAllText(file, sb.ToString());
         }
 
         // ---------- attach / detach ----------

@@ -51,7 +51,7 @@ La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenê
 - **Réglage automatique** : le réseau, le PC et la TV sont mesurés à chaque connexion pour choisir la meilleure résolution et le meilleur débit. Le débit s'adapte en continu si le réseau faiblit.
 - **Le son du PC sur la TV** : ce que joue Windows sort par les haut-parleurs de la TV, avec très peu de retard et calé sur l'image.
 - **Manettes sur la TV = manettes du PC** : les manettes Bluetooth ou USB connectées à la TV sont vues par Windows comme des manettes Xbox (jusqu'à 4), vibrations comprises. Les jeux PC les reconnaissent directement.
-- **Léger** : le programme PC pèse quelques centaines de Ko (hors ffmpeg) et l'application TV moins de 150 Ko. Aucun runtime à installer.
+- **Léger** : le programme PC pèse quelques centaines de Ko (hors ffmpeg) et l'application TV environ 150 Ko. Aucun runtime à installer.
 - **Mises à jour automatiques** sur le PC et proposées sur la TV.
 
 ## Configuration requise
@@ -106,7 +106,7 @@ L'application n'est pas sur le Play Store : il faut installer le fichier APK.
 2. Ouvrez **TVScreenPlus** sur la TV : les PC du réseau s'affichent.
    - S'il n'y a qu'un PC, ou si c'est le dernier utilisé, la connexion est **automatique**.
    - Sinon, choisissez le PC avec la télécommande.
-3. **Première connexion d'une TV** : la TV affiche un code à 6 chiffres et le PC ouvre une fenêtre *« nouvelle TV »* avec le même code. Cliquez **Autoriser** si les deux codes sont identiques (sans réponse, la demande est refusée au bout de 60 s). Ensuite, cette TV se connecte toute seule.
+3. **Première connexion d'une TV** : la TV et le PC affichent le même code à 6 chiffres. Cliquez **Autoriser** sur le PC, puis **Associer** sur la TV, si les deux codes sont identiques (sans réponse, la demande est refusée). Ensuite, cette TV se connecte toute seule.
 4. La première connexion prend quelques secondes de plus (calibrage). Le nouvel écran apparaît ensuite dans Windows.
 
 **Télécommande pendant la diffusion**
@@ -184,7 +184,7 @@ Activées par défaut. Connectez vos manettes à la TV (*Paramètres de la TV �
 | **Connexion automatique** | Se connecter seule au dernier PC utilisé |
 | **Statistiques pendant la diffusion** | Les afficher d'office (sinon : touche OK) |
 | **Son de l'ordinateur sur la TV** | Jouer le son du PC sur la TV (activé par défaut) |
-| **Sortie du son** | *Rapide* (latence minimale, par défaut ; sans les effets sonores de la TV sur les TV où ce chemin va droit aux haut-parleurs), *Stable* (pareil avec plus de marge : plus de micro-coupures, ~30 ms de plus) ou *Qualité TV* (passe par les effets sonores de la TV comme le Dolby, ~200 ms : idéal en mode fluide, où l'image attend le son ; en mode jeu le son arrive en retard). Appliqué à la prochaine connexion |
+| **Sortie du son** | *Rapide* (latence minimale ; sans les effets sonores de la TV sur les TV où ce chemin va droit aux haut-parleurs), *Stable* (pareil avec plus de marge : plus de micro-coupures, ~30 ms de plus) ou *Qualité TV* (par défaut : passe par les effets sonores de la TV comme le Dolby, ~200 ms ; idéal en mode fluide, où l'image attend le son ; en mode jeu le son arrive en retard, choisissez alors *Rapide*). Appliqué à la prochaine connexion |
 | **Manettes** | Ouvre la page Manettes (ci-dessus), qui contient aussi les deux réglages suivants |
 | **Manettes de la TV utilisées par l'ordinateur** | Envoyer les manettes de la TV au PC (activé par défaut). Désactivé, elles pilotent la TV comme avant |
 | **Manettes Switch 2 (Bluetooth)** | Chercher les Joy-Con 2 / manettes Pro 2 / GameCube dont on appuie sur SYNC (désactivé par défaut) |
@@ -281,13 +281,13 @@ PC Windows                                                       TV Google TV
 **Ports réseau** : UDP 47801 (découverte), TCP 47800 (flux). La règle de pare-feu est ajoutée automatiquement, limitée à ces deux ports et au réseau local.
 
 **Sécurité**
-- Seules les TV acceptées sur le PC reçoivent son écran. Le jumelage utilise un échange de clés ECDH P-256 : la TV et le PC affichent le même code à 6 chiffres, qu'un appareil intercalé ne peut pas reproduire. À chaque connexion, la TV prouve ensuite qu'elle détient la clé (HMAC-SHA256 d'un défi aléatoire). *Oublier les TV autorisées* (PC) ou *Oublier les ordinateurs mémorisés* (TV) annule les jumelages.
+- Seules les TV acceptées sur le PC reçoivent son écran. Le jumelage utilise un échange de clés ECDH P-256 : la TV et le PC affichent le même code à 6 chiffres, qu'un appareil intercalé ne peut pas reproduire. Un nouveau jumelage doit aussi être accepté sur la TV, et la TV s'engage sur sa clé avant l'affichage du code. À chaque connexion, la TV prouve ensuite qu'elle détient la clé (HMAC-SHA256 d'un défi aléatoire, lié à cette connexion). Les applications TV antérieures à la 1.2.4 sont refusées ; une application TV 1.2.4 se connecte encore à un PC autorisé, avec l'image et le son toujours chiffrés, mais doit être mise à jour pour se jumeler. *Oublier les TV autorisées* (PC) ou *Oublier les ordinateurs mémorisés* (TV) annule les jumelages.
 - Le PC ne répond qu'aux adresses du réseau local (privées ou link-local). Une nouvelle TV n'interrompt jamais la diffusion en cours avant d'être authentifiée.
 - **Chiffrement** (PC et TV 1.2.4 ou plus récents) : AES-256-GCM, avec des clés tirées de la clé de jumelage et d'un défi propre à chaque connexion. Un paquet modifié, rejoué ou envoyé par un autre appareil coupe la connexion.
   - Ce que la TV envoie (manettes, souris, clavier) est **toujours** chiffré : quelques octets, aucun coût.
   - L'image et le son suivent le réglage *Chiffrement de l'image et du son* du PC. **Automatique** (par défaut) les chiffre si la TV est assez rapide pour que le surcoût reste sous ~1 ms par image (elle mesure sa vitesse à chaque connexion : 267 Mo/s sur une TCL de 2024, soit ~0,4 ms par image). **Toujours** ou **Jamais** forcent le choix. Appliqué à la connexion suivante.
   - Les statistiques de la TV (OK) et la fenêtre du mode debug indiquent ce qui est chiffré (🔒).
-- Les mises à jour ne viennent que des releases GitHub du projet ; l'APK de la TV doit en plus être signé avec la même clé. Sur le PC, rien n'est téléchargé puis exécuté en dehors des mises à jour : ffmpeg, le pilote d'écran et le pilote de manettes sont dans le zip. Le dossier `C:\ProgramData\TVScreenPlus` n'est modifiable que par les administrateurs, et `settings.txt` (clés de jumelage) n'est lisible que par eux.
+- Les mises à jour ne viennent que des releases GitHub du projet ; l'APK de la TV doit en plus être signé avec la même clé. Sur le PC, rien n'est téléchargé puis exécuté en dehors des mises à jour : ffmpeg, le pilote d'écran et le pilote de manettes sont dans le zip. Le dossier `C:\ProgramData\TVScreenPlus` et le dossier du pilote d'écran virtuel `C:\VirtualDisplayDriver` ne sont modifiables que par les administrateurs, et `settings.txt` (clés de jumelage) n'est lisible que par eux.
 
 <details>
 <summary>Protocole</summary>

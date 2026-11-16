@@ -134,7 +134,7 @@ namespace TVScreenPlus
     /// </summary>
     sealed class SecureStream : Stream
     {
-        const int MaxRecord = 64 << 20;
+        const int MaxRecord = 1 << 20; // the TV only sends short lines
         readonly Stream inner;
         readonly Gcm writer, reader;
         ulong sent, received;

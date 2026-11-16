@@ -50,7 +50,7 @@ The TV becomes a real second monitor (*extend* mode): you drag windows onto it a
 - **Automatic tuning**: the network, the PC and the TV are measured at every connection to pick the best resolution and bitrate. The bitrate keeps adapting if the network weakens.
 - **PC sound on the TV**: whatever Windows plays comes out of the TV's speakers, with very little delay and in sync with the picture.
 - **TV gamepads = PC gamepads**: Bluetooth or USB gamepads connected to the TV are seen by Windows as Xbox controllers (up to 4), rumble included. PC games recognize them directly.
-- **Lightweight**: the PC program is a few hundred KB (excluding ffmpeg) and the TV app is under 150 KB. No runtime to install.
+- **Lightweight**: the PC program is a few hundred KB (excluding ffmpeg) and the TV app about 150 KB. No runtime to install.
 - **Automatic updates** on the PC, offered on the TV.
 
 ## Requirements
@@ -105,7 +105,7 @@ The app is not on the Play Store: you need to install the APK file.
 2. Open **TVScreenPlus** on the TV: the PCs on the network are listed.
    - If there is only one PC, or if it is the last one used, the connection is **automatic**.
    - Otherwise, pick the PC with the remote.
-3. **First connection of a TV**: the TV shows a 6-digit code and the PC opens a *"new TV"* window with the same code. Click **Allow** if both codes match (without an answer the request is refused after 60 s). From then on, this TV connects by itself.
+3. **First connection of a TV**: the TV and the PC show the same 6-digit code. Click **Allow** on the PC, then **Pair** on the TV, if both codes match (without an answer the request is refused). From then on, this TV connects by itself.
 4. The first connection takes a few extra seconds (calibration). The new display then appears in Windows.
 
 **Remote control while streaming**
@@ -183,7 +183,7 @@ Enabled by default. Connect your gamepads to the TV (*TV settings › Remotes & 
 | **Automatic connection** | Connect by itself to the last PC used |
 | **Statistics while streaming** | Show them by default (otherwise: OK key) |
 | **Computer sound on the TV** | Play PC sound on the TV (enabled by default) |
-| **Sound output** | *Fast* (lowest latency, default; skips the TV's sound effects on TVs where the fast path goes straight to the speakers), *Steady* (same with more margin: no tiny cuts, ~30 ms more) or *TV quality* (through the TV's sound effects such as Dolby, ~200 ms: best in fluid mode, where the image waits for the sound; in game mode the sound lags). Applied at the next connection |
+| **Sound output** | *Fast* (lowest latency; skips the TV's sound effects on TVs where the fast path goes straight to the speakers), *Steady* (same with more margin: no tiny cuts, ~30 ms more) or *TV quality* (default: through the TV's sound effects such as Dolby, ~200 ms; best in fluid mode, where the image waits for the sound; in game mode the sound lags, so choose *Fast*). Applied at the next connection |
 | **Gamepads** | Opens the Gamepads page (above), which also holds the next two settings |
 | **TV gamepads used by the computer** | Send the TV's gamepads to the PC (enabled by default). When off, they control the TV as before |
 | **Switch 2 controllers (Bluetooth)** | Look for Joy-Con 2 / Pro Controller 2 / GameCube controllers whose SYNC button is pressed (off by default) |
@@ -280,13 +280,13 @@ Windows PC                                                       Google TV
 **Network ports**: UDP 47801 (discovery), TCP 47800 (stream). The firewall rule is added automatically, limited to these two ports and the local network.
 
 **Security**
-- Only TVs accepted on the PC receive its screen. Pairing uses an ECDH P-256 key exchange: the TV and the PC show the same 6-digit code, which a device in the middle cannot reproduce. On every connection the TV then proves it holds the key (HMAC-SHA256 of a random challenge). *Forget the allowed TVs* (PC) or *Forget saved computers* (TV) cancels the pairings.
+- Only TVs accepted on the PC receive its screen. Pairing uses an ECDH P-256 key exchange: the TV and the PC show the same 6-digit code, which a device in the middle cannot reproduce. A new pairing must also be accepted on the TV, and the TV commits to its key before the code is shown. On every connection the TV then proves it holds the key (HMAC-SHA256 of a random challenge, bound to that connection). TV apps older than 1.2.4 are refused; a 1.2.4 TV app still connects to an allowed PC, with the picture and the sound always encrypted, but must be updated to pair. *Forget the allowed TVs* (PC) or *Forget saved computers* (TV) cancels the pairings.
 - The PC only answers local network addresses (private or link-local). A new TV never interrupts the current stream before it is authenticated.
 - **Encryption** (PC and TV 1.2.4 or newer): AES-256-GCM, with keys derived from the pairing key and a challenge unique to each connection. A packet that is changed, replayed or sent by another device ends the connection.
   - What the TV sends (gamepads, mouse, keyboard) is **always** encrypted: a few bytes, no cost.
   - The picture and the sound follow the PC setting *Picture and sound encryption*. **Automatic** (default) encrypts them when the TV is fast enough to keep the extra cost under ~1 ms per frame (it measures its speed at every connection: 267 MB/s on a 2024 TCL, ~0.4 ms per frame). **Always** or **Never** force the choice. Applied at the next connection.
   - The TV statistics (OK) and the debug window show what is encrypted (🔒).
-- Updates only come from the project's GitHub releases; the TV APK must also be signed with the same key. On the PC nothing is downloaded and run outside updates: ffmpeg, the display driver and the gamepad driver are in the zip. `C:\ProgramData\TVScreenPlus` can only be modified by administrators, and `settings.txt` (pairing keys) can only be read by them.
+- Updates only come from the project's GitHub releases; the TV APK must also be signed with the same key. On the PC nothing is downloaded and run outside updates: ffmpeg, the display driver and the gamepad driver are in the zip. `C:\ProgramData\TVScreenPlus` and the virtual display driver's folder `C:\VirtualDisplayDriver` can only be modified by administrators, and `settings.txt` (pairing keys) can only be read by them.
 
 <details>
 <summary>Protocol</summary>

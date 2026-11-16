@@ -57,6 +57,10 @@ class Pairing(private val prefs: SharedPreferences) {
         fun proof(key: ByteArray, nonce: ByteArray): ByteArray =
             Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, "HmacSHA256")) }.doFinal("tvsp-auth".toByteArray() + nonce)
 
+        /** auth2 answer: also covers our hello line (its SHA-256) and the PC address we connected to (see Pairing.cs). */
+        fun proof2(key: ByteArray, nonce: ByteArray, helloHash: ByteArray, pcAddress: ByteArray): ByteArray =
+            Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(key, "HmacSHA256")) }.doFinal("tvsp-auth2".toByteArray() + nonce + helloHash + pcAddress)
+
         /** The 6 digits shown on both screens: depend on the key and both public keys. */
         fun code(key: ByteArray, pcPublic: ByteArray, tvPublic: ByteArray): String {
             val h = sha256("tvsp-code".toByteArray() + key + pcPublic + tvPublic)
@@ -67,7 +71,7 @@ class Pairing(private val prefs: SharedPreferences) {
         fun hex(b: ByteArray) = b.joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it) }
 
         private fun random(n: Int) = ByteArray(n).also { SecureRandom().nextBytes(it) }
-        private fun sha256(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b)
+        fun sha256(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b)
 
         /** Big-endian, exactly 32 bytes (BigInteger adds a sign byte or drops leading zeros). */
         private fun fixed32(v: BigInteger): ByteArray {

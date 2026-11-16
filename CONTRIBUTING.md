@@ -61,7 +61,7 @@ The architecture and the network protocol are described in the README ([How it w
 
 - **Keep compatibility**: a newer PC program must keep working with an older TV app, and the reverse. New features are announced by the TV at connection and accepted by the PC (see the protocol).
 - **Mind the latency**: no extra work per frame on the video path.
-- **No new dependencies** unless really needed. The TV app must stay under 150 KB.
+- **No new dependencies** unless really needed. The TV app must stay small (about 150 KB).
 - **Text and docs**: add new TV texts in all four languages of `L.kt` (ask for help if you do not speak them). Update `README.md` and `README.fr.md` together when behaviour changes.
 - **Do not change** `VERSION`, the CI workflow or the signing setup in a pull request: the maintainer handles releases.
 - Code comments and commit messages are in English. Commit subjects are short and in the imperative.

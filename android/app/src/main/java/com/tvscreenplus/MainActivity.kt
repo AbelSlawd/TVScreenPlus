@@ -92,6 +92,7 @@ class MainActivity : Activity() {
     private var moveRestY = 0f
     /** Panel over the video: "keyboard", "windows" or "apps" (null when none). */
     private var remotePanel: View? = null
+    private var pairDialog: android.app.Dialog? = null
     private var remoteKind = ""
     private var remoteBody: LinearLayout? = null
     private class AppItem(val id: String, val name: String, var fav: Boolean)
@@ -538,7 +539,7 @@ class MainActivity : Activity() {
         toggle(L.t("audio"), "audio", true)
         var sync: Button? = null
         choice(L.t("sound_out"), listOf(AudioPlayer.FAST, AudioPlayer.STABLE, AudioPlayer.QUALITY),
-            listOf(L.t("snd_fast"), L.t("snd_stable"), L.t("snd_quality")), "sound", AudioPlayer.FAST) {
+            listOf(L.t("snd_fast"), L.t("snd_stable"), L.t("snd_quality")), "sound", AudioPlayer.QUALITY) {
             sync?.text = L.t("av_offset", prefs.getInt(offsetKey(), 0)) // each output keeps its own correction
         }
         note(L.t("sound_note"))
@@ -613,7 +614,7 @@ class MainActivity : Activity() {
      * Sound sync correction, kept per sound output: the TV's own sound processing (QUALITY) can add a delay its
      * timestamps don't show (86 ms on a TCL/MediaTek TV), which the other outputs don't have.
      */
-    private fun offsetKey() = if (prefs.getString("sound", AudioPlayer.FAST) == AudioPlayer.QUALITY) "av_offset_q" else "av_offset"
+    private fun offsetKey() = if (prefs.getString("sound", AudioPlayer.QUALITY) == AudioPlayer.QUALITY) "av_offset_q" else "av_offset"
 
     private fun hwSummary(): String {
         if (prefs.getInt("hw_ver", 0) == 0) return L.t("hwtest_never")
@@ -890,7 +891,7 @@ class MainActivity : Activity() {
         )
         // TV settings (for the PC's "Copy for a report"): nothing private, no pairing data.
         lines += "settings language=${prefs.getString("lang", "system")} priority=${prefs.getString("pref", "auto")} max-resolution=${prefs.getString("maxh", "0")}" +
-            " sound=${if (prefs.getBoolean("audio", true)) prefs.getString("sound", AudioPlayer.FAST) else "off"} sync=${prefs.getInt(offsetKey(), 0)}ms" +
+            " sound=${if (prefs.getBoolean("audio", true)) prefs.getString("sound", AudioPlayer.QUALITY) else "off"} sync=${prefs.getInt(offsetKey(), 0)}ms" +
             " picture-size=${prefs.getString("zoom", "100")}% gamepads=${prefs.getBoolean("pads", true)} switch2=${prefs.getBoolean("switch2", false)}" +
             " autoconnect=${prefs.getBoolean("autoconnect", true)} stats=${prefs.getBoolean("showstats", false)} gamepads-connected=${gamepads.count}"
         lines += DisplayCaps.report(this) // display modes + 120 fps decoding: is 120 Hz streaming possible?
@@ -978,6 +979,27 @@ class MainActivity : Activity() {
                 }
             }
 
+            // A new PC: the person accepts it here too (same code on both screens), else it is not remembered.
+            override fun onPairRequest(code: String, answer: (Boolean) -> Unit) {
+                ui.post {
+                    if (client !== c) { answer(false); return@post }
+                    pairDialog?.dismiss()
+                    var answered = false
+                    fun reply(ok: Boolean) { if (!answered) { answered = true; answer(ok) } }
+                    pairDialog = android.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle(L.t("pair_ask_title"))
+                        .setMessage(L.t("pair_ask", name, code))
+                        .setPositiveButton(L.t("pair_accept")) { _, _ -> reply(true) }
+                        .setNegativeButton(L.t("pair_decline")) { _, _ -> reply(false) }
+                        .setOnDismissListener { reply(false) }
+                        .show()
+                }
+            }
+
+            override fun onPairEnd() {
+                ui.post { if (client === c || client == null) { pairDialog?.dismiss(); pairDialog = null } }
+            }
+
             override fun onRemoteMessage(text: String) {
                 ui.post {
                     if (client !== c) return@post
@@ -1017,7 +1039,7 @@ class MainActivity : Activity() {
             }
         }, pairing)
         c.userOffsetMs = prefs.getInt(offsetKey(), 0)
-        c.soundMode = prefs.getString("sound", AudioPlayer.FAST) ?: AudioPlayer.FAST
+        c.soundMode = prefs.getString("sound", AudioPlayer.QUALITY) ?: AudioPlayer.QUALITY
         client = c
         c.start()
     }

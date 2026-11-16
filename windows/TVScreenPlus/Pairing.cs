@@ -55,6 +55,19 @@ namespace TVScreenPlus
             using (var h = new HMACSHA256(key)) return h.ComputeHash(Encoding.ASCII.GetBytes("tvsp-auth").Concat(nonce).ToArray());
         }
 
+        /// <summary>
+        /// Answer of a TV app that announces auth2=1: also covers its hello line (no field can be changed on the way)
+        /// and the PC address it connected to. A fake PC relaying our challenge to the TV gets an answer for ITS address,
+        /// which this PC refuses: the TV only proves itself to the PC it really reached.
+        /// </summary>
+        public static byte[] Proof2(byte[] key, byte[] nonce, byte[] helloHash, byte[] pcAddress)
+        {
+            using (var h = new HMACSHA256(key))
+                return h.ComputeHash(Encoding.ASCII.GetBytes("tvsp-auth2").Concat(nonce).Concat(helloHash).Concat(pcAddress).ToArray());
+        }
+
+        public static byte[] Sha256(byte[] data) { using (var s = SHA256.Create()) return s.ComputeHash(data); }
+
         /// <summary>Constant-time comparison (no timing hint on how many bytes matched).</summary>
         public static bool Same(byte[] a, byte[] b)
         {
