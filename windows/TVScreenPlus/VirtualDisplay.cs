@@ -71,7 +71,7 @@ namespace TVScreenPlus
             Log.W("Driver installed");
         }
 
-        static Exception Err(string what) => new Exception(what + " a échoué (0x" + Marshal.GetLastWin32Error().ToString("X") + ")");
+        static Exception Err(string what) => new Exception(L.T("failed", what, Marshal.GetLastWin32Error().ToString("X")));
 
         public static void SetEnabled(bool on)
         {
@@ -142,7 +142,7 @@ namespace TVScreenPlus
                 Thread.Sleep(200);
                 name = FindGdiName();
             }
-            if (name == null) throw new Exception("L'écran virtuel n'est pas apparu");
+            if (name == null) throw new Exception(L.T("vd_missing"));
 
             return SetMode(name, w, h, fps);
         }
@@ -162,7 +162,7 @@ namespace TVScreenPlus
                 if (t != null && (t.Width == w || i > 10)) { Log.W("Target " + t); return t; }
                 Thread.Sleep(200);
             }
-            throw new Exception("Sortie DXGI introuvable pour " + name);
+            throw new Exception(L.T("no_dxgi", name));
         }
 
         public static void Detach() { try { SetEnabled(false); } catch (Exception e) { Log.W("detach: " + e.Message); } }

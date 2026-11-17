@@ -29,7 +29,7 @@ namespace TVScreenPlus
             return r;
         }
         public static void* TryQI(void* p, Guid iid) { void* r = null; return C(p, 0, (nint)(&iid), (nint)(&r)) >= 0 ? r : null; }
-        public static void Check(int hr, string what) { if (hr < 0) throw new COMException($"{what} a échoué (0x{hr:X8})", hr); }
+        public static void Check(int hr, string what) { if (hr < 0) throw new COMException(L.T("failed", what, hr.ToString("X8")), hr); }
 
         // IMFAttributes (also the base of IMFMediaType, IMFSample, IMFActivate)
         public static int SetU32(void* a, Guid k, uint v) => C(a, 21, (nint)(&k), (nint)v);
@@ -425,7 +425,7 @@ namespace TVScreenPlus
             {
                 // HARDWARE | ASYNCMFT | SORTANDFILTER
                 Com.Check(Native.MFTEnum2(MFT_CATEGORY_VIDEO_ENCODER, 0x4 | 0x2 | 0x40, &inT, &outT, attrs, &list, &count), "MFTEnum2");
-                if (count == 0) throw new NotSupportedException($"aucun encodeur matériel {(hevc ? "HEVC" : "H.264")} sur ce GPU");
+                if (count == 0) throw new NotSupportedException(L.T("no_hw_encoder", hevc ? "HEVC" : "H.264"));
                 activate = list[0];
                 for (uint i = 1; i < count; i++) { void* x = list[i]; Com.Release(ref x); }
             }
@@ -794,7 +794,7 @@ namespace TVScreenPlus
             }
             if (error is System.IO.IOException || error is ObjectDisposedException)
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw(); // the TV is gone
-            if (error != null) throw new Exception("encodeur : " + error.Message, error);
+            if (error != null) throw new Exception(L.T("encoder_error", error.Message), error);
         }
 
         public void Dispose()

@@ -131,7 +131,7 @@ namespace TVScreenPlus
                 var lt = lnk.GetType();
                 lt.InvokeMember("TargetPath", System.Reflection.BindingFlags.SetProperty, null, lnk, new object[] { Path.Combine(InstallDir, "TVScreenPlus.exe") });
                 lt.InvokeMember("WorkingDirectory", System.Reflection.BindingFlags.SetProperty, null, lnk, new object[] { InstallDir });
-                lt.InvokeMember("Description", System.Reflection.BindingFlags.SetProperty, null, lnk, new object[] { "Utiliser une TV Google TV comme écran secondaire" });
+                lt.InvokeMember("Description", System.Reflection.BindingFlags.SetProperty, null, lnk, new object[] { L.T("shortcut_desc") });
                 lt.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, lnk, null);
             }
             catch (Exception e) { Log.W("shortcut: " + e.Message); }
@@ -170,7 +170,7 @@ namespace TVScreenPlus
 
         public static void Uninstall()
         {
-            if (MessageBox.Show("Désinstaller TVScreenPlus ?", "TVScreenPlus", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            if (MessageBox.Show(L.T("uninstall_ask"), "TVScreenPlus", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             StopRunning(PreviousLocation());
             try { VirtualDisplay.Remove(); } catch (Exception e) { Log.W("driver remove: " + e.Message); }
             try { GamepadDriver.UninstallIfOurs(); } catch (Exception e) { Log.W("gamepad driver remove: " + e.Message); }
@@ -180,7 +180,7 @@ namespace TVScreenPlus
             try { Registry.LocalMachine.DeleteSubKeyTree(UninstallKey, false); } catch { }
             try { File.Delete(ShortcutPath); } catch { }
             try { Directory.Delete(Program.DataDir, true); } catch { }
-            MessageBox.Show("TVScreenPlus a été désinstallé.", "TVScreenPlus");
+            MessageBox.Show(L.T("uninstalled"), "TVScreenPlus");
             // Delete our own folder once this process has exited, and only if it is the installation folder.
             if (string.Equals(Program.Dir.TrimEnd('\\'), InstallDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
                 Process.Start(new ProcessStartInfo("cmd.exe", $"/c ping 127.0.0.1 -n 3 >nul & rmdir /s /q \"{InstallDir.TrimEnd('\\')}\"")

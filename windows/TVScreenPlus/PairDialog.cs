@@ -30,7 +30,7 @@ namespace TVScreenPlus
         PairDialog(string tv, string ip, string code)
         {
             this.code = code;
-            Text = "TVScreenPlus – nouvelle TV";
+            Text = L.T("pair_title");
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = MinimizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
@@ -43,15 +43,15 @@ namespace TVScreenPlus
             DoubleBuffered = true;
 
             Controls.Add(new PictureBox { Image = Theme.Glyph('', Theme.Accent, 40), Location = new Point(28, 26), Size = new Size(40, 40) });
-            Controls.Add(new Label { Text = "Nouvelle TV", Font = new Font("Segoe UI Semibold", 16f), AutoSize = true, Location = new Point(80, 22) });
+            Controls.Add(new Label { Text = L.T("pair_head"), Font = new Font("Segoe UI Semibold", 16f), AutoSize = true, Location = new Point(80, 22) });
             Controls.Add(new Label
             {
-                Text = $"« {tv} » ({ip}) demande à afficher l'écran de ce PC.", ForeColor = Theme.Muted,
+                Text = L.T("pair_asks", tv, ip), ForeColor = Theme.Muted,
                 AutoSize = false, Location = new Point(82, 56), Size = new Size(400, 40),
             });
             Controls.Add(new Label
             {
-                Text = "Autorisez-la seulement si la TV affiche le même code :", AutoSize = false,
+                Text = L.T("pair_check"), AutoSize = false,
                 Location = new Point(28, 112), Size = new Size(444, 24),
             });
             // The code itself is drawn in OnPaint: six digit boxes.
@@ -62,8 +62,8 @@ namespace TVScreenPlus
             track.Controls.Add(bar);
             Controls.Add(track);
 
-            var no = FlatButton("Refuser", Theme.Surface, Theme.SurfaceHover, new Point(232, 312));
-            var yes = FlatButton("Autoriser", Theme.Accent, Theme.AccentHover, new Point(356, 312));
+            var no = FlatButton(L.T("pair_decline"), Theme.Surface, Theme.SurfaceHover, new Point(232, 312));
+            var yes = FlatButton(L.T("pair_allow"), Theme.Accent, Theme.AccentHover, new Point(356, 312));
             no.Click += (s, e) => Close();
             yes.Click += (s, e) => { accepted = true; Close(); };
             Controls.Add(no);
@@ -76,7 +76,7 @@ namespace TVScreenPlus
                 double rest = (until - DateTime.UtcNow).TotalSeconds;
                 if (rest <= 0) { tick.Stop(); Close(); return; }
                 bar.Width = (int)(track.Width * rest / Seconds);
-                left.Text = $"Refus automatique dans {Math.Ceiling(rest):0} s";
+                left.Text = L.T("pair_left", Math.Ceiling(rest));
             };
             tick.Start();
             FormClosed += (s, e) => tick.Dispose();

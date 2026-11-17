@@ -43,7 +43,7 @@ namespace TVScreenPlus
             if (args.Contains("--uninstall")) { Installer.Uninstall(); return; }
             if (args.Length > 0 && args[0] == "--bench-encoder") { EncoderBench.Run(args); return; }
             try { if (!Installer.EnsureInstalled()) return; }
-            catch (Exception e) { Log.W("Install failed: " + e); MessageBox.Show("Installation impossible : " + e.Message, "TVScreenPlus"); return; }
+            catch (Exception e) { Log.W("Install failed: " + e); MessageBox.Show(L.T("install_failed", e.Message), "TVScreenPlus"); return; }
 
             using (var mtx = new Mutex(false, "Global\\TVScreenPlus_single"))
             {
@@ -226,22 +226,22 @@ namespace TVScreenPlus
             {
                 Enabled = false, ForeColor = Theme.Text, Font = new Font("Segoe UI Semibold", 11f), Padding = new Padding(0, 6, 0, 0)
             });
-            status = new ToolStripMenuItem("Démarrage…") { Enabled = false, ForeColor = Theme.AccentLight, Padding = new Padding(0, 0, 0, 4) };
+            status = new ToolStripMenuItem(L.T("starting")) { Enabled = false, ForeColor = Theme.AccentLight, Padding = new Padding(0, 0, 0, 4) };
             menu.Items.Add(status);
-            menu.Items.Add(Item("Redémarrer la connexion", '', () => Task.Run(RestartConnection)));
+            menu.Items.Add(Item(L.T("restart_conn"), '', () => Task.Run(RestartConnection)));
 
-            menu.Items.Add(Section("IMAGE"));
-            var res = Submenu("Résolution", '');
-            foreach (var (label, v) in new[] { ("Automatique (recommandé)", -1), ("1080p", 1080), ("1440p", 1440), ("4K", 2160), ("Native de la TV", 0) })
+            menu.Items.Add(Section(L.T("sec_image")));
+            var res = Submenu(L.T("resolution"), '');
+            foreach (var (label, v) in new[] { (L.T("auto_rec"), -1), ("1080p", 1080), ("1440p", 1440), ("4K", 2160), (L.T("res_native"), 0) })
                 res.DropDownItems.Add(Radio(label, () => Settings.Res == v, () => Settings.Res = v));
             menu.Items.Add(res);
 
-            var q = Submenu("Qualité / débit", '');
-            foreach (var (label, v) in new[] { ("Automatique selon le réseau (recommandé)", 0.0), ("Wi-Fi faible", 0.6), ("Haute", 1.0), ("Maximale (Ethernet / Wi-Fi 6)", 2.0) })
+            var q = Submenu(L.T("quality"), '');
+            foreach (var (label, v) in new[] { (L.T("q_auto"), 0.0), (L.T("q_low"), 0.6), (L.T("q_high"), 1.0), (L.T("q_max"), 2.0) })
                 q.DropDownItems.Add(Radio(label, () => Math.Abs(Settings.Quality - v) < 0.01, () => Settings.Quality = v));
             menu.Items.Add(q);
 
-            var game = Switch("Mode jeu (latence minimale)", '', Settings.GameMode);
+            var game = Switch(L.T("game_mode"), '', Settings.GameMode);
             game.CheckedChanged += (s, e) =>
             {
                 if (Settings.GameMode == game.Checked) return; // changed from the TV remote: already applied
@@ -249,14 +249,13 @@ namespace TVScreenPlus
                 Log.W("Game mode " + (game.Checked ? "on" : "off"));
                 // Applied to the running stream at once (encoder restart, the TV stays connected).
                 if (server != null && server.Busy) server.SwitchMode();
-                else Notify("TVScreenPlus", game.Checked ? "Mode jeu activé : latence minimale, quelques images peuvent être sautées."
-                                                         : "Mode fluide : 60 images/s régulières, latence légèrement plus élevée.");
+                else Notify("TVScreenPlus", L.T(game.Checked ? "game_on" : "game_off"));
             };
             // The TV remote (up / down) can switch the mode too: keep the tick in sync.
             Settings.GameModeChanged += () => ui.Post(_ => game.Checked = Settings.GameMode, null);
             menu.Items.Add(game);
-            var encoder = Submenu("Encodeur vidéo", '');
-            foreach (var (label, v) in new[] { ("TVScreenPlus (latence minimale, 60 i/s)", true), ("ffmpeg (version 1.0, secours)", false) })
+            var encoder = Submenu(L.T("encoder"), '');
+            foreach (var (label, v) in new[] { (L.T("enc_native"), true), (L.T("enc_ffmpeg"), false) })
                 encoder.DropDownItems.Add(Radio(label, () => Settings.NativeEncoder == v, () =>
                 {
                     if (Settings.NativeEncoder == v) return;
@@ -266,47 +265,47 @@ namespace TVScreenPlus
                 }));
             menu.Items.Add(encoder);
 
-            menu.Items.Add(Section("SON ET MANETTES"));
-            var sound = Switch("Son sur la TV", '', Settings.Audio);
+            menu.Items.Add(Section(L.T("sec_sound")));
+            var sound = Switch(L.T("sound_tv"), '', Settings.Audio);
             sound.CheckedChanged += (s, e) => { Settings.Audio = sound.Checked; server?.SetAudio(sound.Checked); };
             menu.Items.Add(sound);
-            var mute = Switch("Couper le son du PC pendant la diffusion", '', Settings.MutePc);
+            var mute = Switch(L.T("mute_pc"), '', Settings.MutePc);
             mute.CheckedChanged += (s, e) => Settings.MutePc = mute.Checked;
             menu.Items.Add(mute);
-            var pads = Switch("Manettes de la TV (à la prochaine connexion)", '', Settings.Pads);
+            var pads = Switch(L.T("pads_tv"), '', Settings.Pads);
             pads.CheckedChanged += (s, e) => Settings.Pads = pads.Checked;
             menu.Items.Add(pads);
 
-            menu.Items.Add(Section("CONTRÔLE ET SÉCURITÉ"));
-            var remote = Switch("Contrôle du PC depuis la TV (souris, clavier, applications)", '', Settings.RemoteControl);
+            menu.Items.Add(Section(L.T("sec_control")));
+            var remote = Switch(L.T("remote"), '', Settings.RemoteControl);
             remote.CheckedChanged += (s, e) => Settings.RemoteControl = remote.Checked;
             menu.Items.Add(remote);
-            var crypt = Submenu("Chiffrement de l'image et du son", '');
-            foreach (var (label, v) in new[] { ("Automatique (si la TV est assez rapide)", "auto"), ("Toujours", "on"), ("Jamais (les commandes restent chiffrées)", "off") })
+            var crypt = Submenu(L.T("crypt"), '');
+            foreach (var (label, v) in new[] { (L.T("crypt_auto"), "auto"), (L.T("crypt_on"), "on"), (L.T("crypt_off"), "off") })
                 crypt.DropDownItems.Add(Radio(label, () => Settings.Crypt == v, () => Settings.Crypt = v));
             menu.Items.Add(crypt);
 
-            menu.Items.Add(Section("APPLICATION"));
-            var auto = Switch("Lancer au démarrage de Windows", '', Settings.AutoStart);
+            menu.Items.Add(Section(L.T("sec_app")));
+            var auto = Switch(L.T("autostart"), '', Settings.AutoStart);
             auto.CheckedChanged += (s, e) => { Settings.AutoStart = auto.Checked; Setup.SetAutoStart(auto.Checked); };
             menu.Items.Add(auto);
-            var upd = Switch("Mises à jour automatiques", '', Settings.AutoUpdate);
+            var upd = Switch(L.T("autoupdate"), '', Settings.AutoUpdate);
             upd.CheckedChanged += (s, e) => Settings.AutoUpdate = upd.Checked;
             menu.Items.Add(upd);
-            menu.Items.Add(Item("Rechercher une mise à jour", '', UpdateClicked));
-            menu.Items.Add(Item("Recalibrer (nouveau matériel)", '', () => { Settings.ResetCalibration(); Notify("TVScreenPlus", "Le calibrage sera refait à la prochaine connexion."); }));
-            menu.Items.Add(Item("Oublier les TV autorisées", '', () =>
+            menu.Items.Add(Item(L.T("check_update"), '', UpdateClicked));
+            menu.Items.Add(Item(L.T("recalibrate"), '', () => { Settings.ResetCalibration(); Notify("TVScreenPlus", L.T("recalibrated")); }));
+            menu.Items.Add(Item(L.T("forget"), '', () =>
             {
-                if (MessageBox.Show($"Oublier les {Pairing.Count} TV autorisées ? Chacune devra être acceptée à nouveau sur ce PC.",
+                if (MessageBox.Show(L.T("forget_ask", Pairing.Count),
                                     "TVScreenPlus", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
                 Pairing.ForgetAll();
                 Log.W("Paired TVs forgotten");
                 Task.Run(RestartConnection); // the connected TV, if any, must pair again too
             }));
-            menu.Items.Add(Item("Mode debug (statistiques en direct)", '', () => DebugWindow.Toggle(() => server)));
-            menu.Items.Add(Item("Ouvrir le journal", '', () => Process.Start("notepad.exe", Log.FilePath)));
+            menu.Items.Add(Item(L.T("debug_mode"), '', () => DebugWindow.Toggle(() => server)));
+            menu.Items.Add(Item(L.T("open_log"), '', () => Process.Start("notepad.exe", Log.FilePath)));
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(Item("Quitter", '', Quit));
+            menu.Items.Add(Item(L.T("quit"), '', Quit));
 
             icon = new NotifyIcon { Icon = MakeIcon(), Text = "TVScreenPlus", ContextMenuStrip = menu, Visible = true };
             // A newer copy being installed asks us to quit.
@@ -344,20 +343,19 @@ namespace TVScreenPlus
                 var t = Updater.Latest(true);
                 if (t == null || !Updater.Newer(t.Item1))
                 {
-                    Notify("TVScreenPlus", "Aucune version de test plus récente que " + Program.DisplayVersion + ".");
+                    Notify("TVScreenPlus", L.T("no_test", Program.DisplayVersion));
                     return;
                 }
-                if (MessageBox.Show("Installer la version de test " + t.Item1.ToString(3) + " ?\n\nElle peut contenir des bugs. Ce PC suivra ensuite " +
-                                    "les versions de test, jusqu'à la prochaine version officielle.", "TVScreenPlus – version de test",
+                if (MessageBox.Show(L.T("test_ask", t.Item1.ToString(3)), L.T("test_title"),
                                     MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
                 Log.W("Test version requested: " + t.Item1);
-                Notify("TVScreenPlus", "Installation de la version de test " + t.Item1.ToString(3) + "…");
+                Notify("TVScreenPlus", L.T("test_installing", t.Item1.ToString(3)));
                 Updater.Install(t.Item2);
             }
             catch (Exception e)
             {
                 Log.W("Test version: " + e.Message);
-                Notify("TVScreenPlus", "Version de test impossible : " + e.Message);
+                Notify("TVScreenPlus", L.T("test_failed", e.Message));
             }
             finally { Interlocked.Exchange(ref updating, 0); }
         }
@@ -377,7 +375,7 @@ namespace TVScreenPlus
                 Log.W("Latest release: " + (latest?.Item1?.ToString() ?? "?"));
                 if (latest == null || !Updater.Newer(latest.Item1))
                 {
-                    if (manual) Notify("TVScreenPlus", "Vous avez la dernière version (" + Program.DisplayVersion + ").");
+                    if (manual) Notify("TVScreenPlus", L.T("uptodate", Program.DisplayVersion));
                     return;
                 }
                 if (server != null && server.Busy && !manual && !Updater.TestChannel)
@@ -385,13 +383,13 @@ namespace TVScreenPlus
                     lastCheck = DateTime.MinValue; // retry at next tick, once the TV is disconnected
                     return;
                 }
-                Notify("TVScreenPlus", "Mise à jour vers la version " + latest.Item1.ToString(3) + "…");
+                Notify("TVScreenPlus", L.T("updating", latest.Item1.ToString(3)));
                 Updater.Install(latest.Item2);
             }
             catch (Exception e)
             {
                 Log.W("Update check failed: " + e.Message);
-                if (manual) Notify("TVScreenPlus", "Mise à jour impossible : " + e.Message);
+                if (manual) Notify("TVScreenPlus", L.T("update_failed", e.Message));
             }
             finally { Interlocked.Exchange(ref updating, 0); }
         }
@@ -443,7 +441,7 @@ namespace TVScreenPlus
         {
             try
             {
-                SetStatus("Installation des composants…");
+                SetStatus(L.T("installing_parts"));
                 Setup.EnsureAll();
                 VirtualDisplay.Detach(); // in case a previous instance was killed while streaming
                 AudioLoopback.RestoreMuteAfterCrash();
@@ -452,13 +450,13 @@ namespace TVScreenPlus
                 Task.Delay(15000).ContinueWith(_ => Installer.CleanupTemp());
                 server = new Server(SetStatus, Notify, ApproveTv);
                 server.Start();
-                SetStatus("Prêt – en attente d'une TV (" + Environment.MachineName + ")");
+                SetStatus(L.T("ready", Environment.MachineName));
             }
             catch (Exception e)
             {
                 Log.W("Startup failed: " + e);
-                SetStatus("Erreur : " + e.Message);
-                Notify("TVScreenPlus – erreur", e.Message);
+                SetStatus(L.T("error", e.Message));
+                Notify(L.T("error_title"), e.Message);
             }
         }
 
@@ -468,15 +466,15 @@ namespace TVScreenPlus
             {
                 bool hadTv = server != null && server.Busy;
                 if (server == null) { Start(); return; }
-                SetStatus("Redémarrage de la connexion…");
+                SetStatus(L.T("restarting"));
                 server.Restart();
-                SetStatus("Prêt – en attente d'une TV (" + Environment.MachineName + ")");
-                Notify("TVScreenPlus", hadTv ? "Connexion redémarrée : la TV va se reconnecter automatiquement." : "Connexion redémarrée.");
+                SetStatus(L.T("ready", Environment.MachineName));
+                Notify("TVScreenPlus", L.T(hadTv ? "restarted_tv" : "restarted"));
             }
             catch (Exception e)
             {
                 Log.W("Restart failed: " + e);
-                SetStatus("Erreur : " + e.Message);
+                SetStatus(L.T("error", e.Message));
             }
         }
 
@@ -505,7 +503,7 @@ namespace TVScreenPlus
             {
                 var answer = new TaskCompletionSource<bool>();
                 ui.Post(_ => PairDialog.Ask(tv, ip, code, answer), null);
-                Notify("TVScreenPlus", $"Nouvelle TV : « {tv} » demande l'accès à ce PC.");
+                Notify("TVScreenPlus", L.T("new_tv_notify", tv));
                 return answer.Task.Wait(TimeSpan.FromSeconds(65)) && answer.Task.Result;
             }
             finally { pairing.Release(); }
@@ -550,7 +548,7 @@ namespace TVScreenPlus
             if (!File.Exists(FFmpeg)) Log.W("ffmpeg.exe missing: only the in-house encoder is available");
             if (!VirtualDisplay.IsInstalled())
             {
-                string inf = FindInf(Program.Dir) ?? throw new Exception("Pilote d'écran virtuel introuvable : réinstallez TVScreenPlus depuis TVScreenPlus-PC.zip");
+                string inf = FindInf(Program.Dir) ?? throw new Exception(L.T("vdd_missing"));
                 VirtualDisplay.Install(inf);
             }
             Firewall();

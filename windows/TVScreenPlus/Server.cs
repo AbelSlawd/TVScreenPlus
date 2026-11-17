@@ -78,7 +78,7 @@ namespace TVScreenPlus
                     try { tcp?.Stop(); } catch { }
                     Log.W($"Port busy (try {i + 1}): {e.Message}");
                     if (i == 2) Installer.KillStrayFfmpeg();
-                    if (i >= 20) throw new Exception($"Les ports {TcpPort}/{UdpPort} sont utilisés par une autre application. Redémarrez le PC.");
+                    if (i >= 20) throw new Exception(L.T("ports_busy", TcpPort, UdpPort));
                     Thread.Sleep(1000);
                 }
             }
@@ -232,7 +232,7 @@ namespace TVScreenPlus
                         finally
                         {
                             current = null;
-                            status("Prêt – en attente d'une TV (" + Environment.MachineName + ")");
+                            status(L.T("ready", Environment.MachineName));
                         }
                     }
                 }) { IsBackground = true, Name = "session" }.Start();
@@ -361,7 +361,7 @@ namespace TVScreenPlus
                 else if (!on && audio != null)
                 {
                     audio.Dispose(); audio = null;
-                    if (!closed) Stats.Audio = "désactivé sur le PC";
+                    if (!closed) Stats.Audio = L.T("au_off_pc");
                     Stats.AudioKbps = 0;
                     Log.W("Audio to TV: off");
                 }
@@ -387,7 +387,7 @@ namespace TVScreenPlus
         string lang = "fr";
         void TvStatus(string key, params object[] a)
         {
-            status(string.Format(Tr("fr", key), a));
+            status(string.Format(Tr(L.Lang, key), a));
             TvText(key, a);
         }
 
@@ -548,9 +548,9 @@ namespace TVScreenPlus
             ns = new SecureStream(ns, down ? SecureChannel.Key(secBase, "down") : null, SecureChannel.Key(secBase, "up"));
             secureUp = true; secureDown = down;
             if (down) udpSeal = new SecureDatagrams(SecureChannel.Key(secBase, "udp"));
-            Stats.Crypt = forceDown ? "image, son et commandes (AES-256-GCM, application TV à mettre à jour)"
-                        : down ? "image, son et commandes (AES-256-GCM)"
-                        : "commandes seulement" + (mode == "off" ? " (image et son : réglage Jamais)" : $" (TV trop lente pour l'image : {aes} Mo/s)");
+            Stats.Crypt = forceDown ? L.T("crypt_all_old")
+                        : down ? L.T("crypt_all")
+                        : L.T("crypt_cmd") + (mode == "off" ? L.T("crypt_cmd_never") : L.T("crypt_cmd_slow", aes));
             Log.W($"Encryption: commands{(down ? " + picture and sound" : "")} (setting {mode}{(forceDown ? ", forced: TV app 1.2.4" : "")}, TV AES {aes} MB/s, {(wifi ? "Wi-Fi" : "wired")})");
             // Diagnostic lines the TV sent before it was authenticated are only written now.
             foreach (var l in preAuthLog) TvLog(l);
@@ -622,7 +622,7 @@ namespace TVScreenPlus
                 string net = hello.TryGetValue("net", out var nt) ? nt : "?";
                 string band = hello.TryGetValue("band", out var bd) ? bd : "0";
                 Stats.Tv = tv; Stats.TvLatencyMs = Int(hello, "lat", -1);
-                Stats.Network = net == "eth" ? "Ethernet" : net == "wifi" ? $"Wi-Fi {band} GHz, lien {Int(hello, "link", 0)} Mb/s" : "?";
+                Stats.Network = net == "eth" ? "Ethernet" : net == "wifi" ? L.T("wifi", band, Int(hello, "link", 0)) : "?";
                 // Optional features: only what this TV announced (older TV apps announce nothing).
                 int helloAudio = Int(hello, "audio", -1), helloPads = Int(hello, "pads", -1);
                 tvAudio = helloAudio == 1;
@@ -632,8 +632,8 @@ namespace TVScreenPlus
                 tvStamp = Int(hello, "ts", 0) == 1;
                 tvCursor = Int(hello, "cursor", 0) == 1;
                 bool padsOn = helloPads == 1 && Settings.Pads;
-                Stats.Audio = helloAudio < 0 ? "non pris en charge par l'app TV" : !tvAudio ? "désactivé sur la TV" : Settings.Audio ? "en attente de la diffusion" : "désactivé sur le PC";
-                Stats.Pads = helloPads < 0 ? "non prises en charge par l'app TV" : helloPads == 0 ? "désactivées sur la TV" : padsOn ? "aucune manette détectée sur la TV" : "désactivées sur le PC";
+                Stats.Audio = L.T(helloAudio < 0 ? "au_unsupported" : !tvAudio ? "au_off_tv" : Settings.Audio ? "au_waiting" : "au_off_pc");
+                Stats.Pads = L.T(helloPads < 0 ? "pads_unsupported" : helloPads == 0 ? "pads_off_tv" : padsOn ? "pads_none" : "pads_off_pc");
                 if (padsOn) pads = new PadHub(SendRumble, notify, Stats);
                 Log.W($"TV '{tv}' {client.Client.RemoteEndPoint} {tvW}x{tvH}@{hz} hevc≤{hevcMax} avc≤{avcMax} " +
                       $"tested={Int(hello, "tested", 0)} lat={Stats.TvLatencyMs}ms net={Stats.Network} pref={pref} maxh={tvMaxH} audio={helloAudio} pads={helloPads}");
@@ -771,9 +771,9 @@ namespace TVScreenPlus
                            (remote != null ? ";remote=1" : "") + (secureUp ? ";sec=" + (secureDown ? 3 : 1) : "");
                 }
                 Send(0x20, ConfigPacket());
-                string info = $"{target.Width}x{target.Height} {plan.Fps} i/s {enc.Codec.ToUpper()} {kbps / 1000} Mb/s";
-                status($"Diffusion vers {tv} – {info}");
-                notify("TVScreenPlus", $"{tv} connectée : {info}");
+                string info = $"{target.Width}x{target.Height} {plan.Fps} {L.T("fps")} {enc.Codec.ToUpper()} {kbps / 1000} Mb/s";
+                status(L.T("streaming", tv, info));
+                notify("TVScreenPlus", L.T("tv_connected", tv, info));
                 streaming = true;
                 SetAudio(Settings.Audio);
                 if (tvCursor)
@@ -936,7 +936,7 @@ namespace TVScreenPlus
                     if (change)
                     {
                         Stats.TargetKbps = kbps;
-                        status($"Diffusion vers {tv} – {target.Width}x{target.Height} {kbps / 1000} Mb/s");
+                        status(L.T("streaming", tv, $"{target.Width}x{target.Height} {kbps / 1000} Mb/s"));
                         // In-house encoder: new bitrate applied live, no new encoder (no keyframe, no switch).
                         Streamer live;
                         lock (genLock) live = nextSt == null ? activeSt : null;
@@ -1003,7 +1003,7 @@ namespace TVScreenPlus
             catch (Exception e)
             {
                 Log.W("Session ended: " + e.Message);
-                if (!closed) notify("TVScreenPlus", "Erreur : " + e.Message);
+                if (!closed) notify("TVScreenPlus", L.T("error", e.Message));
             }
             finally
             {
@@ -1023,14 +1023,14 @@ namespace TVScreenPlus
         {
             var sw = Stopwatch.StartNew();
             Send(0x40, PingPayload());
-            if (!ack.WaitOne(3000)) throw new Exception("La TV ne répond pas");
+            if (!ack.WaitOne(3000)) throw new Exception(L.T("tv_no_answer"));
             rttMs = sw.Elapsed.TotalMilliseconds;
             var filler = new byte[256 * 1024];
             long sent = 0;
             sw.Restart();
             while (sw.ElapsedMilliseconds < 1000 && sent < (96L << 20)) { Send(0x80, filler); sent += filler.Length + 5; }
             Send(0x40, PingPayload());
-            if (!ack.WaitOne(10000)) throw new Exception("Réseau trop lent");
+            if (!ack.WaitOne(10000)) throw new Exception(L.T("net_too_slow"));
             double secs = Math.Max(0.05, sw.Elapsed.TotalSeconds - rttMs / 2000);
             return Math.Min(800, sent * 8 / secs / 1e6);
         }
@@ -1211,9 +1211,13 @@ namespace TVScreenPlus
         }
 
         string AudioLine => Audio + (AudioKbps > 0 ? FormattableString.Invariant($" · {AudioKbps / 1000:0.0} Mb/s") : "") +
-            (TvAudioMs >= 0 ? $"\r\n  côté TV             tampon {TvAudioMs} ms · coupures {TvAudioUnderruns} · paquets jetés {TvAudioDrops}" +
-                              (TvAudioJitter >= 0 ? $" · gigue {TvAudioJitter} ms" : "") : "") +
-            (TvAudioOutMs >= 0 ? $"\r\n  synchro image/son   sortie du son {TvAudioOutMs} ms · image retardée {TvVideoDelayMs} ms · son retardé {TvAudioExtraMs} ms · réglage {TvAvOffsetMs:+0;-0;0} ms" : "");
+            (TvAudioMs >= 0 ? "\r\n" + Sub("st_tv_side") + L.T("st_tv_side_v", TvAudioMs, TvAudioUnderruns, TvAudioDrops) +
+                              (TvAudioJitter >= 0 ? L.T("st_jitter_v", TvAudioJitter) : "") : "") +
+            (TvAudioOutMs >= 0 ? "\r\n" + Sub("st_avsync") + L.T("st_avsync_v", TvAudioOutMs, TvVideoDelayMs, TvAudioExtraMs, TvAvOffsetMs) : "");
+
+        /// <summary>Debug window columns: labels padded to 22 characters, indented ones to 2 + 20.</summary>
+        static string Top(string key) => L.Col(key, 22);
+        static string Sub(string key) => "  " + L.Col(key, 20);
 
         /// <summary>Decoder latency used for estimates: live measurement first, then the TV hardware test.</summary>
         public int DecodeMs => TvDecMs >= 0 ? TvDecMs : TvLatencyMs;
@@ -1271,34 +1275,34 @@ namespace TVScreenPlus
         public string Describe()
         {
             int st = Stability;
-            string q = st >= 85 ? "excellente" : st >= 65 ? "bonne" : st >= 40 ? "moyenne" : "faible";
+            string q = L.T(st >= 85 ? "q_excellent" : st >= 65 ? "q_good" : st >= 40 ? "q_average" : "q_weak");
             var up = DateTime.Now - Since;
             return
-                $"TV                    {Tv}\r\n" +
-                $"Réseau                {Network}, débit mesuré {MeasuredMbps:0} Mb/s\r\n" +
-                $"\r\n" +
-                $"Stabilité du signal   {st} % ({q})\r\n" +
-                $"  saturation réseau   {Blocked:P0}\r\n" +
-                $"  gigue latence       {Jitter:0.0} ms\r\n" +
-                $"  images perdues TV   {TvDrops} (+{TvDropsDelta})\r\n" +
-                (TvWaitPct >= 0 ? $"  décodeur TV saturé  {TvWaitPct} % du temps\r\n" : "") +
-                $"  baisses de débit    {BitrateDown}\r\n" +
-                $"\r\n" +
-                $"Images par seconde    envoyées {SentFps:0} · affichées TV {TvFps} · cible {TargetFps}\r\n" +
-                $"Résolution            {Width} x {Height} · {Codec}\r\n" +
-                $"Encodeur              {Encoder}\r\n" +
-                $"Débit                 envoyé {SentKbps / 1000:0.0} Mb/s · cible {TargetKbps / 1000.0:0.0} Mb/s\r\n" +
-                $"\r\n" +
-                $"Latence réseau (A/R)  {RttMs:0.0} ms\r\n" +
-                $"Latence décodage TV   {(TvDecMs >= 0 ? $"{TvDecMs} ms en direct (max {TvDecMaxMs} ms)" : TvLatencyMs >= 0 ? TvLatencyMs + " ms (test matériel)" : "inconnue (mettre à jour l'app TV)")}\r\n" +
-                (TvE2eMs >= 0 ? $"Latence capture → TV  {TvE2eMs} ms mesurés (max {TvE2eMaxMs} ms, PC {PcCaptureMs:0} ms), hors traitement d'image de la TV\r\n"
-                              : $"Latence PC → écran    ≈ {EndToEndMs:0} ms (estimation)\r\n") +
-                $"\r\n" +
-                $"Son sur la TV         {AudioLine}\r\n" +
-                $"Manettes              {Pads}\r\n" +
-                $"Chiffrement           {Crypt}\r\n" +
-                $"\r\n" +
-                $"Connectée depuis      {(int)up.TotalHours:00}:{up.Minutes:00}:{up.Seconds:00}";
+                Top("st_tv") + Tv + "\r\n" +
+                Top("st_network") + L.T("st_network_v", Network, MeasuredMbps) + "\r\n" +
+                "\r\n" +
+                Top("st_stability") + $"{st} % ({q})\r\n" +
+                Sub("st_blocked") + $"{Blocked:P0}\r\n" +
+                Sub("st_jitter") + $"{Jitter:0.0} ms\r\n" +
+                Sub("st_drops") + $"{TvDrops} (+{TvDropsDelta})\r\n" +
+                (TvWaitPct >= 0 ? Sub("st_decwait") + L.T("st_decwait_v", TvWaitPct) + "\r\n" : "") +
+                Sub("st_bitdown") + BitrateDown + "\r\n" +
+                "\r\n" +
+                Top("st_fps") + L.T("st_fps_v", SentFps, TvFps, TargetFps) + "\r\n" +
+                Top("resolution") + $"{Width} x {Height} · {Codec}\r\n" +
+                Top("st_encoder") + Encoder + "\r\n" +
+                Top("st_bitrate") + L.T("st_bitrate_v", SentKbps / 1000, TargetKbps / 1000.0) + "\r\n" +
+                "\r\n" +
+                Top("st_rtt") + $"{RttMs:0.0} ms\r\n" +
+                Top("st_dec") + (TvDecMs >= 0 ? L.T("st_dec_live", TvDecMs, TvDecMaxMs) : TvLatencyMs >= 0 ? L.T("st_dec_test", TvLatencyMs) : L.T("st_dec_unknown")) + "\r\n" +
+                (TvE2eMs >= 0 ? Top("st_e2e") + L.T("st_e2e_v", TvE2eMs, TvE2eMaxMs, PcCaptureMs) + "\r\n"
+                              : Top("st_est") + L.T("st_est_v", EndToEndMs) + "\r\n") +
+                "\r\n" +
+                Top("sound_tv") + AudioLine + "\r\n" +
+                Top("st_pads") + Pads + "\r\n" +
+                Top("st_crypt") + Crypt + "\r\n" +
+                "\r\n" +
+                Top("st_since") + $"{(int)up.TotalHours:00}:{up.Minutes:00}:{up.Seconds:00}";
         }
     }
 }

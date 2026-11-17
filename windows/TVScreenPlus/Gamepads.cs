@@ -35,7 +35,7 @@ namespace TVScreenPlus
         public PadHub(Action<int, int, int> rumble, Action<string, string> notify, SessionStats stats)
         {
             this.rumble = rumble; this.notify = notify; this.stats = stats;
-            stats.Pads = "aucune manette détectée sur la TV";
+            stats.Pads = L.T("pads_none");
         }
 
         public void OnLine(string line)
@@ -45,7 +45,7 @@ namespace TVScreenPlus
             switch (p[0])
             {
                 case "PADON":
-                    lock (l) names[slot] = p.Length > 2 && p[2].Length > 0 ? p[2] : "Manette";
+                    lock (l) names[slot] = p.Length > 2 && p[2].Length > 0 ? p[2] : L.T("pad_default");
                     Log.W($"Gamepad {slot + 1} connected on the TV: {names[slot]}");
                     if (bus == null) OpenBus(); else lock (l) Plug(slot);
                     break;
@@ -86,7 +86,7 @@ namespace TVScreenPlus
                 {
                     if (!ViGEmBus.IsInstalled())
                     {
-                        notify("TVScreenPlus", "Installation du pilote de manettes (ViGEmBus)…");
+                        notify("TVScreenPlus", L.T("pads_installing"));
                         GamepadDriver.Install();
                     }
                     var b = ViGEmBus.Open();
@@ -101,8 +101,8 @@ namespace TVScreenPlus
                 catch (Exception e)
                 {
                     Log.W("Gamepads unavailable: " + e.Message);
-                    stats.Pads = "indisponibles : " + e.Message;
-                    notify("TVScreenPlus", "Manettes indisponibles : " + e.Message);
+                    stats.Pads = L.T("pads_unavailable_st", e.Message);
+                    notify("TVScreenPlus", L.T("pads_unavailable", e.Message));
                     opening = 2;
                 }
                 UpdateStats();
@@ -127,9 +127,9 @@ namespace TVScreenPlus
         {
             lock (l)
             {
-                var on = Enumerable.Range(0, Slots).Where(i => names[i] != null).Select(i => $"{i + 1}: {names[i]}{(pads[i] != null ? "" : " (en attente du pilote)")}").ToList();
+                var on = Enumerable.Range(0, Slots).Where(i => names[i] != null).Select(i => $"{i + 1}: {names[i]}{(pads[i] != null ? "" : L.T("pads_wait_driver"))}").ToList();
                 if (opening == 2) return;
-                stats.Pads = on.Count == 0 ? "aucune manette détectée sur la TV" : string.Join(" · ", on);
+                stats.Pads = on.Count == 0 ? L.T("pads_none") : string.Join(" · ", on);
             }
         }
 
@@ -153,7 +153,7 @@ namespace TVScreenPlus
         public static void Install()
         {
             string exe = Path.Combine(Program.Dir, SetupName);
-            if (!File.Exists(exe)) throw new Exception("installation du pilote de manettes introuvable : réinstallez TVScreenPlus depuis TVScreenPlus-PC.zip");
+            if (!File.Exists(exe)) throw new Exception(L.T("vigem_no_setup"));
             Log.W("Installing ViGEmBus: " + exe);
             // Advanced Installer bootstrapper: no UI, silent MSI, never reboot by itself.
             int code = -1;
@@ -164,7 +164,7 @@ namespace TVScreenPlus
             Log.W("ViGEmBus setup exit code " + code);
             for (int i = 0; i < 20 && !ViGEmBus.IsInstalled(); i++) Thread.Sleep(500);
             if (!ViGEmBus.IsInstalled())
-                throw new Exception(code == 3010 ? "redémarrez le PC pour terminer l'installation du pilote" : "le pilote ViGEmBus n'a pas pu être installé (code " + code + ")");
+                throw new Exception(code == 3010 ? L.T("vigem_reboot") : L.T("vigem_failed", code));
             Settings.Set("vigem_ours", "1"); // uninstalled with TVScreenPlus (left alone if another app installed it)
             Log.W("ViGEmBus installed");
         }
@@ -216,15 +216,15 @@ namespace TVScreenPlus
 
         public static ViGEmBus Open()
         {
-            string path = DevicePath() ?? throw new Exception("pilote ViGEmBus introuvable");
+            string path = DevicePath() ?? throw new Exception(L.T("vigem_missing"));
             var fh = CreateFile(path, 0xC0000000 /*GENERIC_READ|WRITE*/, 3, IntPtr.Zero, 3 /*OPEN_EXISTING*/,
                                 0x80 | 0x20000000 | 0x80000000 | 0x40000000 /*NORMAL|NO_BUFFERING|WRITE_THROUGH|OVERLAPPED*/, IntPtr.Zero);
-            if (fh.IsInvalid) throw new Exception("accès au pilote ViGEmBus refusé (0x" + Marshal.GetLastWin32Error().ToString("X") + ")");
+            if (fh.IsInvalid) throw new Exception(L.T("vigem_denied", Marshal.GetLastWin32Error().ToString("X")));
             var bus = new ViGEmBus(fh);
             lock (bus.io)
             {
                 bus.io.Set(8, 1); // VIGEM_CHECK_VERSION { Size, VIGEM_COMMON_VERSION }
-                if (!bus.io.Call(fh, IoctlCheckVersion, 8, 0)) { bus.Dispose(); throw new Exception("version du pilote ViGEmBus incompatible"); }
+                if (!bus.io.Call(fh, IoctlCheckVersion, 8, 0)) { bus.Dispose(); throw new Exception(L.T("vigem_version")); }
             }
             return bus;
         }
@@ -243,12 +243,12 @@ namespace TVScreenPlus
                     if (!io.Call(h, IoctlWaitReady, 8, 0) && Marshal.GetLastWin32Error() != 87 /*pre-1.17 driver*/)
                     {
                         io.Set(8, serial); io.Call(h, IoctlUnplug, 8, 0);
-                        throw new Exception("la manette virtuelle n'a pas démarré");
+                        throw new Exception(L.T("vpad_failed"));
                     }
                     return new X360(this, serial, onRumble);
                 }
             }
-            throw new Exception("aucun emplacement libre sur le pilote ViGEmBus");
+            throw new Exception(L.T("vigem_full"));
         }
 
         public void Dispose()

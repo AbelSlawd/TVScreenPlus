@@ -70,7 +70,7 @@ namespace TVScreenPlus
                         // No playback device, device unplugged, exclusive mode…: retry quietly.
                         if (e.Message != lastError) Log.W("audio: " + e.Message);
                         lastError = e.Message;
-                        stats.Audio = "aucun périphérique de sortie utilisable";
+                        stats.Audio = L.T("au_no_device");
                     }
                     for (int i = 0; i < 20 && running; i++) Thread.Sleep(50);
                 }
@@ -106,7 +106,7 @@ namespace TVScreenPlus
             int outRate = f.Rate / decim;
             var conv = new Converter(f, decim);
             Log.W($"Audio loopback: {f} -> {outRate} Hz s16 stereo");
-            stats.Audio = $"actif · {outRate / 1000.0:0.#} kHz stéréo";
+            stats.Audio = L.T("au_active", outRate / 1000.0);
             Check(ac.Start(), "Start");
             var tick = Stopwatch.StartNew();
             var raw = new byte[0];
@@ -230,8 +230,8 @@ namespace TVScreenPlus
                     f.Float = new Guid(sub) == new Guid("00000003-0000-0010-8000-00aa00389b71");
                 }
                 else f.Float = tag == 3;
-                if (f.Float && f.Bits != 32) throw new Exception("format audio non pris en charge (" + f.Bits + " bits flottant)");
-                if (!f.Float && f.Bits != 16 && f.Bits != 24 && f.Bits != 32) throw new Exception("format audio non pris en charge (" + f.Bits + " bits)");
+                if (f.Float && f.Bits != 32) throw new Exception(L.T("audio_format", f.Bits + " bit float"));
+                if (!f.Float && f.Bits != 16 && f.Bits != 24 && f.Bits != 32) throw new Exception(L.T("audio_format", f.Bits + " bit"));
                 return f;
             }
             public override string ToString() => $"{Rate} Hz {Channels} ch {Bits} bits {(Float ? "float" : "int")} mask 0x{Mask:X}";

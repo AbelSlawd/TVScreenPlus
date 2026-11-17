@@ -92,7 +92,7 @@ namespace TVScreenPlus
             /// <summary>Shared key = SHA-256 of the ECDH secret (the TV computes the same). Throws on an invalid point.</summary>
             public byte[] Key(byte[] tvPublic)
             {
-                if (tvPublic == null || tvPublic.Length != 64) throw new CryptographicException("clé publique invalide");
+                if (tvPublic == null || tvPublic.Length != 64) throw new CryptographicException(L.T("bad_key"));
                 var p = new ECParameters
                 {
                     Curve = ECCurve.NamedCurves.nistP256,

@@ -1,3 +1,8 @@
+**Nouveau en 1.2.6 : le programme PC en quatre langues**
+
+PC
+- Le programme PC est disponible en **français, anglais, espagnol et allemand**, comme l'application TV : menu de l'icône, notifications, fenêtre de jumelage, mode debug, installation et mises à jour. Il suit la langue d'affichage de Windows, et passe en anglais si c'est une autre langue.
+
 **Nouveau en 1.2.5 : sécurité renforcée, son** — mettez à jour le PC **et** l'application TV.
 
 Sécurité

@@ -52,6 +52,7 @@ The TV becomes a real second monitor (*extend* mode): you drag windows onto it a
 - **TV gamepads = PC gamepads**: Bluetooth or USB gamepads connected to the TV are seen by Windows as Xbox controllers (up to 4), rumble included. PC games recognize them directly.
 - **Lightweight**: the PC program is a few hundred KB (excluding ffmpeg) and the TV app about 150 KB. No runtime to install.
 - **Automatic updates** on the PC, offered on the TV.
+- **Four languages**: French, English, Spanish and German, on the TV and on the PC. The PC program follows the Windows display language (English if it is another language); the TV app follows the TV's language, or the one chosen in its settings.
 
 ## Requirements
 | | Minimum | Recommended |

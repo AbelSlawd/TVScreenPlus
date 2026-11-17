@@ -53,6 +53,7 @@ La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenê
 - **Manettes sur la TV = manettes du PC** : les manettes Bluetooth ou USB connectées à la TV sont vues par Windows comme des manettes Xbox (jusqu'à 4), vibrations comprises. Les jeux PC les reconnaissent directement.
 - **Léger** : le programme PC pèse quelques centaines de Ko (hors ffmpeg) et l'application TV environ 150 Ko. Aucun runtime à installer.
 - **Mises à jour automatiques** sur le PC et proposées sur la TV.
+- **Quatre langues** : français, anglais, espagnol et allemand, sur la TV et sur le PC. Le programme PC suit la langue d'affichage de Windows (anglais si c'est une autre langue) ; l'application TV suit la langue de la TV, ou celle choisie dans ses paramètres.
 
 ## Configuration requise
 | | Minimum | Recommandé |

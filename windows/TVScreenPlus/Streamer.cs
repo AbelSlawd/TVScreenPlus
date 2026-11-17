@@ -66,9 +66,9 @@ namespace TVScreenPlus
     sealed class EncodePlan
     {
         public Encoder Enc; public bool Quality; public int Fps;
-        public override string ToString() => Enc.Native ? $"{Enc.Name} {Fps} i/s {(Settings.GameMode ? "mode jeu" : "fluide")}"
-                                           : Settings.GameMode && Enc.Name.Contains("nvenc") ? $"{Enc.Name} p1 {Fps} i/s mode jeu"
-                                                                                             : $"{Enc.Name} {(Quality ? "qualité" : "rapide")} {Fps} i/s {(Settings.GameMode ? "mode jeu" : "fluide")}";
+        public override string ToString() => Enc.Native ? $"{Enc.Name} {Fps} {L.T("fps")} {L.T(Settings.GameMode ? "m_game" : "m_fluid")}"
+                                           : Settings.GameMode && Enc.Name.Contains("nvenc") ? $"{Enc.Name} p1 {Fps} {L.T("fps")} {L.T("m_game")}"
+                                                                                             : $"{Enc.Name} {L.T(Quality ? "m_quality" : "m_fast")} {Fps} {L.T("fps")} {L.T(Settings.GameMode ? "m_game" : "m_fluid")}";
     }
 
     /// <summary>Runs ffmpeg and turns its FLV output into Annex-B access units (one per frame).</summary>
@@ -94,7 +94,7 @@ namespace TVScreenPlus
                 Log.W($"probe {e.Name}: {(ok ? "OK" : "fail")} ({sw.ElapsedMilliseconds} ms)");
                 if (ok) { Settings.Set(key, e.Name); return e; }
             }
-            throw new Exception("Aucun encodeur vidéo utilisable");
+            throw new Exception(L.T("no_encoder"));
         }
 
         public static void Forget(DisplayTarget t)
