@@ -263,9 +263,15 @@ namespace TVScreenPlus
         void MoveWindow(string id, string where)
         {
             if (!windows.TryGetValue(id, out var h) || !IsWindow(h)) { send(10, "gone"); return; }
+            if (Place(h, where)) send(10, where == "tv" ? "moved_tv" : where == "pc" ? "moved_pc" : "moved_half");
+        }
+
+        /// <summary>Puts window [h] on the TV (maximized), one half of it, or back on the PC's main screen.</summary>
+        bool Place(IntPtr h, string where)
+        {
             var mons = Monitors();
             var dest = where == "pc" ? mons.FirstOrDefault(m => m.Primary) : mons.FirstOrDefault(m => m.Device == tvDevice());
-            if (dest == null || (where != "tv" && where != "left" && where != "right" && where != "pc")) return;
+            if (dest == null || (where != "tv" && where != "left" && where != "right" && where != "pc")) return false;
             var wp = new WINDOWPLACEMENT { length = Marshal.SizeOf(typeof(WINDOWPLACEMENT)) };
             GetWindowPlacement(h, ref wp);
             bool max = wp.showCmd == 3 || (wp.showCmd == 2 && (wp.flags & 2) != 0); // maximized, or minimized from maximized
@@ -297,7 +303,7 @@ namespace TVScreenPlus
             // On the TV a window always fills the screen; back on the PC it keeps the state it had.
             if (where == "tv" || (where == "pc" && max)) ShowWindow(h, 3 /*MAXIMIZE*/);
             Front(h);
-            send(10, where == "tv" ? "moved_tv" : where == "pc" ? "moved_pc" : "moved_half");
+            return true;
         }
 
         /// <summary>
@@ -486,7 +492,32 @@ namespace TVScreenPlus
         {
             if (!apps.TryGetValue(id, out var a)) return;
             Log.W("TV launches " + a.Name);
-            send(10, LaunchUnelevated(a.Launch) ? "launched;" + Clean(a.Name) : "launch_failed;" + Clean(a.Name));
+            var before = new HashSet<IntPtr>();
+            EnumWindows((h, p) => { before.Add(h); return true; }, IntPtr.Zero);
+            bool ok = LaunchUnelevated(a.Launch);
+            send(10, (ok ? "launched;" : "launch_failed;") + Clean(a.Name));
+            if (ok) new Thread(() => ToTv(before)) { IsBackground = true, Name = "launch-to-tv" }.Start();
+        }
+
+        /// <summary>
+        /// Windows opens a new application on the PC's main screen: for 20 s, every new application window (splash,
+        /// launcher, then the main window) is moved to the TV, maximized. Each window is moved once.
+        /// </summary>
+        void ToTv(HashSet<IntPtr> before)
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 20000 && !work.IsAddingCompleted)
+            {
+                Thread.Sleep(250);
+                var fresh = new List<IntPtr>();
+                EnumWindows((h, p) => { if (!before.Contains(h) && AltTab(h)) fresh.Add(h); return true; }, IntPtr.Zero);
+                foreach (var h in fresh)
+                {
+                    before.Add(h);
+                    try { if (Place(h, "tv")) Log.W("launch: window moved to the TV: " + Title(h)); }
+                    catch (Exception e) { Log.W("launch: move " + e.Message); }
+                }
+            }
         }
 
         /// <summary>
@@ -505,9 +536,11 @@ namespace TVScreenPlus
                 if (proc == IntPtr.Zero || !OpenProcessToken(proc, 0x0002 /*DUPLICATE*/, out tok)) { Log.W("launch: shell token " + Marshal.GetLastWin32Error()); return false; }
                 if (!DuplicateTokenEx(tok, 0x018B, IntPtr.Zero, 2, 1, out primary)) { Log.W("launch: duplicate " + Marshal.GetLastWin32Error()); return false; }
                 EnablePrivilege("SeIncreaseQuotaPrivilege"); // as in Microsoft's "launch unelevated" sample
-                string rundll = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "rundll32.exe");
+                // explorer.exe, not rundll32's ShellExec_RunDLL: recent Windows builds silently ignore "shell:AppsFolder\…"
+                // items there (Store apps, most desktop apps), so nothing started.
+                string explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
                 var si = new STARTUPINFO { cb = Marshal.SizeOf(typeof(STARTUPINFO)) };
-                string cmd = $"\"{rundll}\" shell32.dll,ShellExec_RunDLL \"{target.Replace("\"", "")}\"";
+                string cmd = $"\"{explorer}\" \"{target.Replace("\"", "")}\"";
                 if (!CreateProcessWithTokenW(primary, 0, null, cmd, 0, IntPtr.Zero, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ref si, out var pi))
                 { Log.W("launch: " + Marshal.GetLastWin32Error()); return false; }
                 CloseHandle(pi.hProcess); CloseHandle(pi.hThread);

@@ -155,6 +155,7 @@ namespace TVScreenPlus
             var dm = new DEVMODE { dmSize = (short)Marshal.SizeOf(typeof(DEVMODE)), dmPelsWidth = w, dmPelsHeight = h, dmDisplayFrequency = fps, dmFields = 0x80000 | 0x100000 | 0x400000 };
             int r = ChangeDisplaySettingsEx(name, ref dm, IntPtr.Zero, 0x1 /*CDS_UPDATEREGISTRY*/, IntPtr.Zero);
             Log.W($"ChangeDisplaySettingsEx {name} {w}x{h}@{fps} -> {r}");
+            NoHdr(name);
 
             for (int i = 0; i < 25; i++)
             {
@@ -164,6 +165,34 @@ namespace TVScreenPlus
             }
             throw new Exception(L.T("no_dxgi", name));
         }
+
+        /// <summary>
+        /// The virtual monitor says it can do HDR, so Windows may switch it on (it remembers it per monitor, and may
+        /// copy the main screen's choice): the picture is then captured and encoded as SDR anyway, washed out. Off.
+        /// </summary>
+        static void NoHdr(string gdiName)
+        {
+            try
+            {
+                if (GetDisplayConfigBufferSizes(2 /*QDC_ONLY_ACTIVE_PATHS*/, out uint np, out uint nm) != 0) return;
+                var paths = new DC_PATH[np]; var modes = new DC_MODE[nm];
+                if (QueryDisplayConfig(2, ref np, paths, ref nm, modes, IntPtr.Zero) != 0) return;
+                for (int i = 0; i < np; i++)
+                {
+                    var src = new DC_SOURCE_NAME { h = Header(1 /*GET_SOURCE_NAME*/, typeof(DC_SOURCE_NAME), paths[i].srcAdapter, paths[i].srcId) };
+                    if (DisplayConfigGetDeviceInfo(ref src) != 0 || !string.Equals(src.name, gdiName, StringComparison.OrdinalIgnoreCase)) continue;
+                    var info = new DC_COLOR_INFO { h = Header(9 /*GET_ADVANCED_COLOR_INFO*/, typeof(DC_COLOR_INFO), paths[i].tgtAdapter, paths[i].tgtId) };
+                    if (DisplayConfigGetDeviceInfo(ref info) != 0 || (info.value & 2) == 0) return; // HDR already off
+                    var set = new DC_COLOR_STATE { h = Header(10 /*SET_ADVANCED_COLOR_STATE*/, typeof(DC_COLOR_STATE), paths[i].tgtAdapter, paths[i].tgtId), value = 0 };
+                    Log.W($"HDR on the TV display {gdiName}: turned off -> {DisplayConfigSetDeviceInfo(ref set)}");
+                    return;
+                }
+            }
+            catch (Exception e) { Log.W("HDR check: " + e.Message); }
+        }
+
+        static DC_HEADER Header(uint type, Type t, long adapter, uint id) =>
+            new DC_HEADER { type = type, size = (uint)Marshal.SizeOf(t), adapter = adapter, id = id };
 
         public static void Detach() { try { SetEnabled(false); } catch (Exception e) { Log.W("detach: " + e.Message); } }
 
@@ -231,6 +260,26 @@ namespace TVScreenPlus
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplayDevices(string dev, uint i, ref DISPLAY_DEVICE dd, int flags);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ChangeDisplaySettingsEx(string dev, ref DEVMODE dm, IntPtr hwnd, int flags, IntPtr p);
         [DllImport("user32.dll")] static extern int SetDisplayConfig(uint np, IntPtr p, uint nm, IntPtr m, uint flags);
+
+        // DISPLAYCONFIG_PATH_INFO (72 bytes) with only the fields used here; LUIDs read as one 64-bit value.
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        struct DC_PATH
+        {
+            public long srcAdapter; public uint srcId, srcModeIdx, srcFlags;
+            public long tgtAdapter; public uint tgtId, tgtModeIdx, tech, rotation, scaling, rrNum, rrDen, scanline; public int available; public uint tgtFlags;
+            public uint flags;
+        }
+        [StructLayout(LayoutKind.Sequential, Pack = 4, Size = 64)] struct DC_MODE { public uint type, id; public long adapter; }
+        [StructLayout(LayoutKind.Sequential, Pack = 4)] struct DC_HEADER { public uint type, size; public long adapter; public uint id; }
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct DC_SOURCE_NAME { public DC_HEADER h; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string name; }
+        [StructLayout(LayoutKind.Sequential)] struct DC_COLOR_INFO { public DC_HEADER h; public uint value, encoding, bits; }
+        [StructLayout(LayoutKind.Sequential)] struct DC_COLOR_STATE { public DC_HEADER h; public uint value; }
+        [DllImport("user32.dll")] static extern int GetDisplayConfigBufferSizes(uint flags, out uint np, out uint nm);
+        [DllImport("user32.dll")] static extern int QueryDisplayConfig(uint flags, ref uint np, [Out] DC_PATH[] p, ref uint nm, [Out] DC_MODE[] m, IntPtr topo);
+        [DllImport("user32.dll")] static extern int DisplayConfigGetDeviceInfo(ref DC_SOURCE_NAME r);
+        [DllImport("user32.dll")] static extern int DisplayConfigGetDeviceInfo(ref DC_COLOR_INFO r);
+        [DllImport("user32.dll")] static extern int DisplayConfigSetDeviceInfo(ref DC_COLOR_STATE r);
     }
 
     /// <summary>Minimal DXGI enumeration (same order as ffmpeg's d3d11va device index).</summary>

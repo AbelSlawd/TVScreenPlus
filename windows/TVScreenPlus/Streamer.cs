@@ -85,21 +85,35 @@ namespace TVScreenPlus
         {
             var all = Encoder.Candidates(hevc, native).ToList();
             string key = "enc_" + t.Adapter + "_" + (hevc ? "hevc" : "h264") + (native ? "_mf" : "");
+            // A native failure can be transient (display mode change: DXGI access lost): the ffmpeg fallback is only
+            // remembered once the in-house encoder has failed in 3 sessions, else one bad probe kept ffmpeg for good.
+            string failKey = key + "_fails";
+            int pastFails = int.TryParse(Settings.Get(failKey, "0"), out int pf) ? pf : 0;
             var cached = all.FirstOrDefault(e => e.Name == Settings.Get(key, ""));
-            if (cached != null) return cached;
+            if (cached != null && (cached.Native || !all.Any(e => e.Native) || pastFails >= 3)) return cached;
+            bool nativeFailed = false;
             foreach (var e in all)
             {
                 var sw = Stopwatch.StartNew();
                 bool ok = RunTest(e, t, 60, false, 5) >= 0;
                 Log.W($"probe {e.Name}: {(ok ? "OK" : "fail")} ({sw.ElapsedMilliseconds} ms)");
-                if (ok) { Settings.Set(key, e.Name); return e; }
+                if (!ok && e.Native) nativeFailed = true;
+                if (!ok) continue;
+                int fails = nativeFailed ? pastFails + 1 : 0;
+                Settings.Set(failKey, fails > 0 ? fails.ToString(CultureInfo.InvariantCulture) : null);
+                if (fails == 0 || fails >= 3) Settings.Set(key, e.Name);
+                return e;
             }
             throw new Exception(L.T("no_encoder"));
         }
 
         public static void Forget(DisplayTarget t)
         {
-            foreach (var c in new[] { "hevc", "h264", "hevc_mf", "h264_mf" }) Settings.Set("enc_" + t.Adapter + "_" + c, null);
+            foreach (var c in new[] { "hevc", "h264", "hevc_mf", "h264_mf" })
+            {
+                Settings.Set("enc_" + t.Adapter + "_" + c, null);
+                Settings.Set("enc_" + t.Adapter + "_" + c + "_fails", null);
+            }
         }
 
         /// <summary>

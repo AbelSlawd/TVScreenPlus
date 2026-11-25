@@ -324,6 +324,7 @@ class MainActivity : Activity() {
             if (focused) (padBar?.getChildAt(0) ?: list?.getChildAt(0))?.requestFocus()
         }
         if (padsPage && padsSignature() != padsShown) showPads(padSel, padFocusPlayer)
+        if (remoteKind == "pads") fillPadsPanel()
         padFocusPlayer = false
     }
 
@@ -1132,6 +1133,7 @@ class MainActivity : Activity() {
             ((v as LinearLayout).getChildAt(1) as TextView).text = L.t("qm_ms", ms)
             true
         }
+        compact(row(content, w, L.t("pads_title"), "›") { hideQuickMenu(); showPadsPanel() })
         fun statsName() = L.t(if (stats.visibility == View.VISIBLE) "on" else "off")
         compact(row(content, w, L.t("showstats"), statsName()) {
             stats.visibility = if (stats.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -1288,9 +1290,15 @@ class MainActivity : Activity() {
         val h = Math.round(curBmpH * sy).coerceAtLeast(1)
         val lp = cursorView.layoutParams
         if (lp.width != w || lp.height != h) { lp.width = w; lp.height = h; cursorView.layoutParams = lp }
-        cursorView.translationX = surfaceView.left + (curX - curHotX) * sx
-        cursorView.translationY = surfaceView.top + (curY - curHotY) * sy
+        val tx = surfaceView.left + (curX - curHotX) * sx
+        val ty = surfaceView.top + (curY - curHotY) * sy
+        val moved = tx != cursorView.translationX || ty != cursorView.translationY || cursorView.visibility != View.VISIBLE
+        cursorView.translationX = tx
+        cursorView.translationY = ty
         cursorView.visibility = View.VISIBLE
+        // Over the video the window is transparent except where views were at the last layout: a cursor moved by
+        // translation alone stayed visible only around where it started (the centre). Recompute that region.
+        if (moved) root.requestTransparentRegion(cursorView)
     }
 
     // ---------------- remote control of the PC ----------------
@@ -1440,6 +1448,29 @@ class MainActivity : Activity() {
         ui.postDelayed({
             (getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(field, 0)
         }, 150)
+    }
+
+    /** Controllers over the video: who is connected, and a fresh scan to bring back a Switch 2 controller that left. */
+    private fun showPadsPanel() {
+        remoteFrame("pads", L.t("pads_title"), L.t("sw2_press_sync"), dp(560), -2, Gravity.END or Gravity.CENTER_VERTICAL)
+        fillPadsPanel()
+    }
+
+    private fun fillPadsPanel() {
+        val body = remoteBody ?: return
+        body.removeAllViews()
+        val w = dp(500)
+        if (gamepads.pads.isEmpty()) note(body, w, L.t("pads_none"))
+        for (pad in gamepads.pads) body.addView(text(L.t("player", pad.slot + 1) + "  ·  " + displayName(pad), 17f, Color.WHITE).apply {
+            gravity = Gravity.START; setPadding(dp(12), dp(6), dp(12), dp(6))
+        }, LinearLayout.LayoutParams(w, -2))
+        row(body, w, L.t("sw2_reconnect"), "›") {
+            prefs.edit().putBoolean("switch2", true).apply()
+            val missing = switch2.missingPermissions()
+            if (missing.isNotEmpty()) { if (Build.VERSION.SDK_INT >= 23) requestPermissions(missing, PERM_SWITCH2); return@row }
+            switch2.stopScan(); switch2.startScan(byUser = true)
+            it.text = L.t("sw2_searching")
+        }.requestFocus()
     }
 
     private fun showWindows(c: StreamClient) {

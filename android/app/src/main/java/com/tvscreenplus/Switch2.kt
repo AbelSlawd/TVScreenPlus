@@ -60,14 +60,19 @@ class Switch2(private val context: Context, private val log: (String) -> Unit, p
             val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_POWER).build()
             scanner.startScan(listOf(filter), settings, scan)
             scanning = true
+            ui.postDelayed(renew, 25 * 60_000L)
         } catch (e: Exception) { log("switch2: scan failed: ${e.message}") }
     }
 
     fun stopScan() {
+        ui.removeCallbacks(renew)
         if (!scanning) return
         scanning = false
         try { adapter?.bluetoothLeScanner?.stopScan(scan) } catch (_: Exception) {}
     }
+
+    // Android turns a scan running over 30 min into an "opportunistic" one that finds nothing: start it again before.
+    private val renew = Runnable { if (scanning) { stopScan(); startScan() } }
 
     /** Scan off and every controller disconnected. */
     fun close() {
@@ -112,13 +117,13 @@ class Switch2(private val context: Context, private val log: (String) -> Unit, p
         fun connect() {
             gatt = if (Build.VERSION.SDK_INT >= 23) device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
                 else device.connectGatt(context, false, callback)
-            ui.postDelayed({ if (!ready) { log("switch2: ${model.name} init timeout"); drop() } }, 15000)
+            ui.postDelayed({ if (!ready && ctls[device.address] === this) { log("switch2: ${model.name} init timeout"); drop() } }, 15000)
         }
 
         fun drop() {
             if (ctls[device.address] !== this) return
             ctls.remove(device.address)
-            ops.clear(); ui.removeCallbacks(next); ui.removeCallbacks(rumbleTick)
+            ops.clear(); ui.removeCallbacks(next); ui.removeCallbacks(rumbleTick); ui.removeCallbacks(inputWatch)
             try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}
             gatt = null
             pads?.extRemove(this)
@@ -212,11 +217,8 @@ class Switch2(private val context: Context, private val log: (String) -> Unit, p
             write = w
             vibration = model.rumbleChar?.let { find(it) }
             find(RESPONSE)?.let { r -> enqueue { subscribe(r) } }
-            enqueue { subscribe(input) }
-            // Every feature (buttons, sticks, motion…): select, then enable. A controller misses a command sent
-            // too soon after the previous one.
-            enqueue(500) { writeCmd(w, command(0x0C, 0x02, byteArrayOf(0xFF.toByte(), 0, 0, 0))) }
-            enqueue(500) { writeCmd(w, command(0x0C, 0x04, byteArrayOf(0xFF.toByte(), 0, 0, 0))) }
+            input0 = input
+            startInput()
             enqueue(300) {
                 ready = true
                 g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH) // ~15 ms reports instead of ~30
@@ -224,12 +226,42 @@ class Switch2(private val context: Context, private val log: (String) -> Unit, p
                 notify(L.t("sw2_on", model.name))
                 pads?.let { join(it) }
                 if (slot < 0) led(-1)
+                ui.postDelayed(inputWatch, 2000)
                 false
+            }
+        }
+
+        private var input0: BluetoothGattCharacteristic? = null
+        private var reports = 0
+        private var restarts = 0
+
+        /** Input notifications on, then every feature (buttons, sticks, motion…): select, then enable. */
+        private fun startInput() {
+            val w = write ?: return; val input = input0 ?: return
+            enqueue { subscribe(input) }
+            // A controller misses a command sent too soon after the previous one.
+            enqueue(500) { writeCmd(w, command(0x0C, 0x02, byteArrayOf(0xFF.toByte(), 0, 0, 0))) }
+            enqueue(500) { writeCmd(w, command(0x0C, 0x04, byteArrayOf(0xFF.toByte(), 0, 0, 0))) }
+        }
+
+        /**
+         * The enable commands get no reply: with several controllers on the TV's radio one can be lost, and the
+         * controller then stays connected (it vibrates) but never sends its buttons. No report yet: send them again.
+         */
+        private val inputWatch = object : Runnable {
+            override fun run() {
+                if (gatt == null) return
+                if (reports > 0 || ctls[device.address] !== this@Ctl) return
+                if (restarts++ >= 5) { log("switch2: ${model.name}: no input reports"); return }
+                log("switch2: ${model.name}: no input reports yet, enabling again ($restarts)")
+                startInput()
+                ui.postDelayed(this, 2500)
             }
         }
 
         // ---- input ----
         private fun report(d: ByteArray) {
+            if (reports++ == 0) log("switch2: ${model.name}: first input report")
             val s = src ?: return
             if (d.size < 0x10 || ctls[device.address] !== this) return
             val b = (d[3].toInt() and 0xFF) or ((d[4].toInt() and 0xFF) shl 8) or ((d[5].toInt() and 0xFF) shl 16) or ((d[6].toInt() and 0xFF) shl 24)
@@ -259,9 +291,14 @@ class Switch2(private val context: Context, private val log: (String) -> Unit, p
             val right = if (model.side != Gamepads.JOYCON_L) raw(d, 0x0D) else null
             if (samples < CENTER_SAMPLES) {
                 // shortcut: assumes the sticks are at rest while the controller connects; SYNC again if one drifts.
+                // The first reports after the enable command can carry a 0 stick (not powered yet): not a rest position.
+                if ((left ?: right)?.let { it[0] == 0 || it[1] == 0 } == true) return
                 left?.let { center[0] += it[0]; center[1] += it[1] }
                 right?.let { center[2] += it[0]; center[3] += it[1] }
-                if (++samples == CENTER_SAMPLES) for (k in 0..3) center[k] /= CENTER_SAMPLES
+                if (++samples == CENTER_SAMPLES) {
+                    for (k in 0..3) center[k] /= CENTER_SAMPLES
+                    log("switch2: ${model.name} stick center ${if (left != null) "${center[0]},${center[1]}" else "${center[2]},${center[3]}"}")
+                }
             } else {
                 left?.let { s.lx = axis(it[0], 0); s.ly = axis(it[1], 1) }
                 right?.let { s.rx = axis(it[0], 2); s.ry = axis(it[1], 3) }
