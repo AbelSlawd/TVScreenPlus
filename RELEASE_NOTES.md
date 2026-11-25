@@ -1,3 +1,19 @@
+**Nouveau en 1.2.7 : manettes, lanceur d'applications, HDR** — mettez à jour le PC **et** l'application TV.
+
+Manettes (TV)
+- **Deux paires de Joy-Con 2** : la deuxième paire envoie bien ses boutons et ses sticks (elle se connectait et vibrait, sans rien envoyer).
+- Centre des sticks des manettes Switch 2 mieux mesuré à la connexion.
+- Menu rapide › **Manettes** : les manettes connectées, et *Reconnecter une manette Switch 2* (puis SYNC sur la manette), par exemple après une batterie vide.
+- Une manette Switch 2 se reconnecte avec SYNC même après une longue partie (la recherche Bluetooth n'est plus mise en sommeil par Android au bout de 30 minutes).
+
+TV
+- Le curseur de la souris du PC s'affiche sur toute l'image (il disparaissait hors d'un petit carré au centre).
+
+PC
+- **Lanceur d'applications** : les applications se lancent de nouveau (rien ne s'ouvrait sur les versions récentes de Windows) et s'ouvrent sur la TV.
+- Le **HDR** n'est plus activé sur l'écran de la TV (Windows l'allumait à chaque connexion).
+- Moins de saccades : l'encodeur de la carte graphique n'est plus remplacé par un encodeur plus lent après une seule erreur passagère.
+
 **Nouveau en 1.2.6 : le programme PC en quatre langues**
 
 PC
