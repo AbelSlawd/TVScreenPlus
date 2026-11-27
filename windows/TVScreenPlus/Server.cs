@@ -368,11 +368,20 @@ namespace TVScreenPlus
             }
         }
 
-        /// <summary>A game set the motors of a virtual controller: forward to the TV gamepad.</summary>
+        int rumbleSeq;
+
+        /// <summary>
+        /// A game set the motors of a virtual controller: forward to the TV gamepad. Over UDP first (in the TCP stream
+        /// it waits behind the video already queued), and over TCP too (a lost datagram must not leave a motor on);
+        /// the numbered copy that arrives second is ignored by the TV (TV apps before 1.2.10 only read the TCP one).
+        /// </summary>
         void SendRumble(int slot, int large, int small)
         {
             if (closed) return;
-            try { Send(0x08, new[] { PadHub.RumbleKind, (byte)slot, (byte)large, (byte)small }); } catch { }
+            var p = new[] { PadHub.RumbleKind, (byte)slot, (byte)large, (byte)small, (byte)Interlocked.Increment(ref rumbleSeq) };
+            var ep = audioUdp;
+            if (ep != null) try { SendUdp(Udp(), p, ep); } catch { }
+            try { Send(0x08, p); } catch { }
         }
 
         void Send(int flags, byte[] payload)
@@ -1108,7 +1117,7 @@ namespace TVScreenPlus
                 }
                 catch { }
                 Close();
-            }) { IsBackground = true, Name = "tv-reader" }.Start();
+            }) { IsBackground = true, Name = "tv-reader", Priority = ThreadPriority.Highest }.Start(); // gamepads: not behind a busy game
         }
 
         static readonly string[] RemoteCommands = { "MOUSE;", "BTN;", "WHEEL;", "KEY;", "TEXT;", "WINS?", "WIN;", "APPS?", "APP;", "FAV;" };

@@ -89,7 +89,8 @@ class Gamepads(context: Context, private val prefs: SharedPreferences) : InputMa
     }
 
     private val im = context.getSystemService(Context.INPUT_SERVICE) as InputManager
-    private val ui = Handler(Looper.getMainLooper())
+    // Asynchronous messages: rumble doesn't wait while the UI draws a frame.
+    private val ui = if (Build.VERSION.SDK_INT >= 28) Handler.createAsync(Looper.getMainLooper()) else Handler(Looper.getMainLooper())
     private val devs = HashMap<Int, Src>()     // Android InputDevice id -> source
     private val exts = HashMap<Any, Src>()     // external key -> source
     private val slots = arrayOfNulls<Pad>(MAX)

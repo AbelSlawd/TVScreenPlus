@@ -93,10 +93,22 @@ namespace TVScreenPlus
             var ac = (IAudioClient)o;
             Check(ac.GetMixFormat(out IntPtr pf), "GetMixFormat");
             Format f;
+            // Woken by Windows as soon as a packet of sound is there (event), instead of looking every 5 ms (2.5 ms
+            // later on average). Some drivers refuse events in loopback: then the 5 ms look as before.
+            var ready = new AutoResetEvent(false);
+            bool evented;
             try
             {
                 f = Format.Parse(pf);
-                Check(ac.Initialize(0 /*shared*/, 0x00020000 /*AUDCLNT_STREAMFLAGS_LOOPBACK*/, 2000000 /*200 ms*/, 0, pf, IntPtr.Zero), "Initialize");
+                evented = ac.Initialize(0 /*shared*/, 0x00020000 /*LOOPBACK*/ | 0x00040000 /*EVENTCALLBACK*/, 2000000 /*200 ms*/, 0, pf, IntPtr.Zero) >= 0
+                          && ac.SetEventHandle(ready.SafeWaitHandle.DangerousGetHandle()) >= 0;
+                if (!evented)
+                {
+                    Marshal.ReleaseComObject(ac); // a client whose Initialize failed is not used again
+                    Check(dev.Activate(ref iid, 0x17 /*CLSCTX_ALL*/, IntPtr.Zero, out o), "Activate");
+                    ac = (IAudioClient)o;
+                    Check(ac.Initialize(0 /*shared*/, 0x00020000 /*LOOPBACK*/, 2000000 /*200 ms*/, 0, pf, IntPtr.Zero), "Initialize");
+                }
             }
             finally { Marshal.FreeCoTaskMem(pf); }
             var iidc = IID_IAudioCaptureClient;
@@ -105,7 +117,7 @@ namespace TVScreenPlus
             int decim = f.Rate > 48000 && f.Rate % 2 == 0 ? (f.Rate % 48000 == 0 ? f.Rate / 48000 : f.Rate % 44100 == 0 ? f.Rate / 44100 : 1) : 1;
             int outRate = f.Rate / decim;
             var conv = new Converter(f, decim);
-            Log.W($"Audio loopback: {f} -> {outRate} Hz s16 stereo");
+            Log.W($"Audio loopback: {f} -> {outRate} Hz s16 stereo" + (evented ? ", event-driven" : ", polled"));
             stats.Audio = L.T("au_active", outRate / 1000.0);
             Check(ac.Start(), "Start");
             var tick = Stopwatch.StartNew();
@@ -115,7 +127,7 @@ namespace TVScreenPlus
             {
                 while (running)
                 {
-                    Thread.Sleep(5);
+                    if (evented) ready.WaitOne(5); else Thread.Sleep(5); // the 5 ms bound also covers silence (no events)
                     if (tick.ElapsedMilliseconds >= 1000)
                     {
                         tick.Restart();
@@ -169,7 +181,7 @@ namespace TVScreenPlus
             finally
             {
                 try { ac.Stop(); } catch { }
-                Marshal.ReleaseComObject(cc); Marshal.ReleaseComObject(ac);
+                Marshal.ReleaseComObject(cc); Marshal.ReleaseComObject(ac); ready.Dispose();
                 Marshal.ReleaseComObject(dev); Marshal.ReleaseComObject(en); // 'muted' holds its own reference
             }
         }

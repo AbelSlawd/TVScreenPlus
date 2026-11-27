@@ -29,7 +29,8 @@ import java.util.UUID
  */
 @SuppressLint("MissingPermission")
 class Switch2(private val context: Context, private val log: (String) -> Unit, private val notify: (String) -> Unit) {
-    private val ui = Handler(Looper.getMainLooper())
+    // Asynchronous messages: controller reports don't wait while the UI draws a frame (as Android's own input).
+    private val ui = if (Build.VERSION.SDK_INT >= 28) Handler.createAsync(Looper.getMainLooper()) else Handler(Looper.getMainLooper())
     private val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
     private val ctls = HashMap<String, Ctl>() // by Bluetooth address
     private var scanning = false

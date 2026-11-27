@@ -95,7 +95,8 @@ class StreamClient(
     @Volatile var audioOn = false
     @Volatile private var audio: AudioPlayer? = null
     /** Upstream writes from the UI thread (gamepads) must not touch the socket there. */
-    private val upstreamThread = Executors.newSingleThreadExecutor()
+    // High priority: gamepad states go out at once even when the TV is busy (decoding, drawing).
+    private val upstreamThread = Executors.newSingleThreadExecutor { r -> Thread({ boost(); r.run() }, "upstream") }
     private val padLines = arrayOfNulls<String>(Gamepads.MAX)
     private var padFlushQueued = false
     /** Delay of the TV audio buffer (ms), -1 when no sound is playing. */
@@ -471,6 +472,7 @@ class StreamClient(
                     if (n < 1) continue
                     when (p[0].toInt()) {
                         1 -> if (n > 12 && audioOn) audioPacket(p, n)
+                        2 -> rumblePacket(p, n)
                         3 -> cursorPacket(p, n)
                     }
                 }
@@ -517,12 +519,27 @@ class StreamClient(
     }
 
     /** Flag 0x08 packets: payload[0] = 1 PC sound, 2 gamepad rumble [slot][large motor][small motor]. */
+    private val rumbleLock = Any()
+    private var rumbleSeq = -1
+
+    /** Motors of a gamepad, sent over UDP and TCP with the same number: the first copy to arrive is used. */
+    private fun rumblePacket(b: ByteArray, len: Int) {
+        if (len < 4) return
+        if (len >= 5) synchronized(rumbleLock) {
+            val seq = b[4].toInt() and 0xFF
+            // Same number (the other copy) or an older one (behind by up to 127, with wrap-around): already handled.
+            if (rumbleSeq >= 0 && ((seq - rumbleSeq) and 0xFF).let { it == 0 || it >= 128 }) return
+            rumbleSeq = seq
+        }
+        listener.onRumble(b[1].toInt() and 0xFF, b[2].toInt() and 0xFF, b[3].toInt() and 0xFF)
+    }
+
     private fun extension(b: ByteArray, len: Int) {
         if (len < 1) return
         when (b[0].toInt()) {
             1 -> if (audioOn) audioPacket(b, len)
             3, 4 -> cursorPacket(b, len)
-            2 -> if (len >= 4) listener.onRumble(b[1].toInt() and 0xFF, b[2].toInt() and 0xFF, b[3].toInt() and 0xFF)
+            2 -> rumblePacket(b, len)
             // Authentication (see Pairing): challenge from a PC we may know, then pairing request and result.
             // auth2: the answer also covers our hello line and the address we connected to, so a fake PC that relays
             // a real PC's challenge gets an answer the real PC refuses (it sees its own address, not the fake one's).
