@@ -548,11 +548,12 @@ namespace TVScreenPlus
         /// launcher, then the main window) is moved to the TV, maximized. Each window is moved once.
         /// From a shortcut, the whole session: the windows of the processes started since (a game behind a launcher, an
         /// agreement to accept first, a long loading) also go to the TV, and these processes are the ones closed after
-        /// the TV leaves.
+        /// the TV leaves. Once they have all ended (the game was quit on the PC), the TV is told to go back to its home.
         /// </summary>
         void ToTv(HashSet<IntPtr> before, HashSet<int> pidsBefore, bool shortcut)
         {
             var sw = Stopwatch.StartNew();
+            bool tracked = false; long goneAt = -1;
             while (!work.IsAddingCompleted && (sw.ElapsedMilliseconds < 20000 || shortcut))
             {
                 bool early = sw.ElapsedMilliseconds < 20000;
@@ -568,6 +569,19 @@ namespace TVScreenPlus
                     if (shortcut && own) lock (closeLock) shortcutPids.Add(pid);
                     try { if (Place(h, "tv")) Log.W("launch: window moved to the TV: " + Title(h)); }
                     catch (Exception e) { Log.W("launch: move " + e.Message); }
+                }
+                if (!shortcut) continue;
+                bool any;
+                lock (closeLock) { shortcutPids.RemoveWhere(p => !Running(p)); any = shortcutPids.Count > 0; }
+                if (any) { tracked = true; goneAt = -1; continue; }
+                if (!tracked) continue;
+                // 10 s without any of its processes: not a launcher handing over to the game, it was quit.
+                if (goneAt < 0) goneAt = sw.ElapsedMilliseconds;
+                else if (sw.ElapsedMilliseconds - goneAt > 10000)
+                {
+                    Log.W("shortcut: application quit on the PC, the TV goes back to its home screen");
+                    send(10, "shortcut_done");
+                    return;
                 }
             }
         }

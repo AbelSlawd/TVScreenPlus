@@ -1,3 +1,11 @@
+**Nouveau en 1.2.9 : retour à l'accueil, manettes plus réactives** — mettez à jour le PC **et** l'application TV.
+
+Raccourcis
+- Quitter sur le PC le jeu ouvert par un raccourci ramène la TV sur son accueil (10 s après, le temps qu'un lanceur passe la main au jeu).
+
+Manettes
+- Les mouvements des sticks partent vers le PC dès qu'ils arrivent, au lieu d'être regroupés une fois par image (jusqu'à 16 ms de moins, Android 11 et plus).
+
 **Nouveau en 1.2.8 : raccourcis de jeux sur l'accueil de la TV** — mettez à jour le PC **et** l'application TV.
 
 Raccourcis

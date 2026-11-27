@@ -87,6 +87,8 @@ class MainActivity : Activity() {
     private var streamIp: String? = null
     /** Shortcut being made (package, application), waiting for the large icon from the PC. */
     private var shortcutWaiting: Pair<String, AppItem>? = null
+    /** Connection opened by a TV-home shortcut: when its application is quit on the PC, back to the TV's home. */
+    private var shortcutClient: StreamClient? = null
     // Remote control of the PC (encrypted connections to a PC that takes it): the arrows move its mouse.
     private var mouseMode = false
     private var autoMouse: StreamClient? = null // connection whose mouse mode was turned on automatically
@@ -153,6 +155,8 @@ class MainActivity : Activity() {
         }
         root.addView(stats, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(24), dp(24), 0, 0) })
         setContentView(root)
+        // Gamepad sticks as they come, not grouped once per frame (up to 16 ms later): less input delay.
+        if (Build.VERSION.SDK_INT >= 30) window.decorView.requestUnbufferedDispatch(android.view.InputDevice.SOURCE_CLASS_JOYSTICK)
         // Ask the TV for its "game" picture/sound path (ALLM): less processing, so less image and sound delay.
         if (Build.VERSION.SDK_INT >= 30) try { window.setPreferMinimalPostProcessing(true) } catch (_: Exception) {}
         gamepads.onChange = { padsChanged() }
@@ -195,6 +199,7 @@ class MainActivity : Activity() {
 
     /** The PC closes the application once the TV has been gone for the delay chosen in the settings. */
     private fun launchShortcut(c: StreamClient, appId: String) {
+        shortcutClient = c
         c.post("APP;$appId;${prefs.getString("sc_close", "120")}")
     }
 
@@ -1094,6 +1099,10 @@ class MainActivity : Activity() {
                         "gone" -> { c.post("WINS?"); L.t("rc_gone") }
                         "launched" -> L.t("rc_launched", f.getOrElse(1) { "" })
                         "launch_failed" -> L.t("rc_launch_failed", f.getOrElse(1) { "" })
+                        "shortcut_done" -> {
+                            if (shortcutClient === c) { autoConnect = false; disconnect(null); finish() }
+                            null
+                        }
                         else -> null
                     }
                     if (msg != null) Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
