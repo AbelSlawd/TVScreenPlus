@@ -1,3 +1,14 @@
+**Nouveau en 1.2.8 : raccourcis de jeux sur l'accueil de la TV** — mettez à jour le PC **et** l'application TV.
+
+Raccourcis
+- Applications du PC › **OK maintenu** sur un jeu › *Ajouter à l'accueil de la TV* : une icône au nom et à l'image du jeu s'ajoute aux applications de la TV (la TV demande de confirmer l'installation).
+- L'ouvrir démarre TVScreenPlus, connecte le PC qui l'a créé (réveillé si possible) et lance le jeu en plein écran sur la TV. Pendant la session, la TV est l'écran principal du PC : les jeux en plein écran exclusif s'y ouvrent aussi.
+- Quand TVScreenPlus se ferme, le PC ferme le jeu comme Alt+F4 après un délai réglable dans les Paramètres de la TV (2 min par défaut, ou tout de suite, 5 ou 15 min, jamais). Revenir à temps le garde ouvert et le remet sur la TV. Steam et les autres lanceurs ne sont jamais fermés.
+
+TV
+- Menus Applications et Fenêtres : la ligne d'aide ne passe plus par-dessus la dernière rangée.
+- Textes d'aide mis à jour (menu rapide, page Manettes).
+
 **Nouveau en 1.2.7 : manettes, lanceur d'applications, HDR** — mettez à jour le PC **et** l'application TV.
 
 Manettes (TV)

@@ -51,7 +51,7 @@ La TV devient un vrai deuxième écran (mode *étendre*) : on y glisse des fenê
 - **Réglage automatique** : le réseau, le PC et la TV sont mesurés à chaque connexion pour choisir la meilleure résolution et le meilleur débit. Le débit s'adapte en continu si le réseau faiblit.
 - **Le son du PC sur la TV** : ce que joue Windows sort par les haut-parleurs de la TV, avec très peu de retard et calé sur l'image.
 - **Manettes sur la TV = manettes du PC** : les manettes Bluetooth ou USB connectées à la TV sont vues par Windows comme des manettes Xbox (jusqu'à 4), vibrations comprises. Les jeux PC les reconnaissent directement.
-- **Léger** : le programme PC pèse quelques centaines de Ko (hors ffmpeg) et l'application TV environ 150 Ko. Aucun runtime à installer.
+- **Léger** : le programme PC pèse quelques centaines de Ko (hors ffmpeg) et l'application TV environ 220 Ko. Aucun runtime à installer.
 - **Mises à jour automatiques** sur le PC et proposées sur la TV.
 - **Quatre langues** : français, anglais, espagnol et allemand, sur la TV et sur le PC. Le programme PC suit la langue d'affichage de Windows (anglais si c'est une autre langue) ; l'application TV suit la langue de la TV, ou celle choisie dans ses paramètres.
 
@@ -127,7 +127,9 @@ Depuis le menu rapide (**OK**), avec TVScreenPlus PC 1.2.4 ou plus récent :
 - **Télécommande = souris** (activé dès la connexion) : les flèches déplacent le curseur du PC, lentement d'abord puis de plus en plus vite. **OK** = clic, **OK OK** (deux appuis rapides) = clic droit, **OK long** = menu rapide (glisser, quitter le mode souris…). **Retour** ne fait rien en mode souris, pour ne pas le quitter par erreur. Les touches Chaîne + / − (ou Page haut / bas) font défiler.
 - **Clavier** : ce que vous tapez avec le clavier de la TV (ou dictez avec le micro de la télécommande) s'écrit directement sur le PC. Il s'ouvre **tout seul** quand la souris clique dans un champ de texte, et reste dans le menu. Touches Entrée, Effacer, Échap, Tab, Windows et *Fermer la fenêtre* (Alt + F4).
 - **Fenêtres du PC** : la liste des fenêtres ouvertes, par écran. **OK** amène la fenêtre sur la TV en plein écran et la met au premier plan ; **◀ / ▶** la place sur la moitié gauche / droite de la TV (deux fenêtres côte à côte) ; **OK long** la renvoie sur l'écran principal du PC.
-- **Applications du PC** : toutes les applications du menu Démarrer (programmes, applications du Store, jeux Steam) et Steam Big Picture, avec leurs icônes. **OK** lance l'application, **OK long** l'ajoute aux favoris (affichés en premier). Un champ de recherche filtre la liste. Les applications démarrent sans droits administrateur, comme depuis le menu Démarrer.
+- **Applications du PC** : toutes les applications du menu Démarrer (programmes, applications du Store, jeux Steam) et Steam Big Picture, avec leurs icônes. **OK** lance l'application, **OK long** l'ajoute aux favoris (affichés en premier) ou à l'accueil de la TV (ci-dessous). Un champ de recherche filtre la liste. Les applications démarrent sans droits administrateur, comme depuis le menu Démarrer.
+
+- **Raccourcis sur l'accueil de la TV** (nouveau en 1.2.8) : Applications du PC › **OK long** sur un jeu › *Ajouter à l'accueil de la TV*. La TV propose d'installer une petite application au nom et à l'icône du jeu, rangée dans les applications de la TV. L'ouvrir démarre TVScreenPlus, connecte ce PC (en le réveillant si possible), fait de la TV l'écran principal du PC pendant la session (les jeux en plein écran exclusif s'y ouvrent) et lance le jeu sur la TV. Quand TVScreenPlus se ferme, le PC ferme le jeu comme Alt+F4 après le délai choisi dans les paramètres de la TV (2 min par défaut ; revenir à temps le garde ouvert ; les lanceurs comme Steam restent ouverts). Un raccourci se supprime comme n'importe quelle application de la TV.
 
 Ces commandes ne passent que par une connexion chiffrée. Menu de l'icône du PC › *Contrôle du PC depuis la TV* pour les désactiver (effet immédiat).
 
@@ -184,6 +186,7 @@ Activées par défaut. Connectez vos manettes à la TV (*Paramètres de la TV �
 | **Taille de l'image** | 100 % à 90 % : à réduire si la TV coupe les bords de l'image (barre des tâches invisible) |
 | **Connexion automatique** | Se connecter seule au dernier PC utilisé |
 | **Statistiques pendant la diffusion** | Les afficher d'office (sinon : touche OK) |
+| **Fermer le jeu d'un raccourci après la déconnexion** | Tout de suite (15 s), après 2 (par défaut), 5 ou 15 min, ou jamais |
 | **Son de l'ordinateur sur la TV** | Jouer le son du PC sur la TV (activé par défaut) |
 | **Sortie du son** | *Rapide* (latence minimale ; sans les effets sonores de la TV sur les TV où ce chemin va droit aux haut-parleurs), *Stable* (pareil avec plus de marge : plus de micro-coupures, ~30 ms de plus) ou *Qualité TV* (par défaut : passe par les effets sonores de la TV comme le Dolby, ~200 ms ; idéal en mode fluide, où l'image attend le son ; en mode jeu le son arrive en retard, choisissez alors *Rapide*). Appliqué à la prochaine connexion |
 | **Manettes** | Ouvre la page Manettes (ci-dessus), qui contient aussi les deux réglages suivants |

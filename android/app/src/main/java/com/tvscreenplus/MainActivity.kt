@@ -82,6 +82,11 @@ class MainActivity : Activity() {
     private val padMinis = HashMap<Int, PadView>()
     private var padBar: LinearLayout? = null
     private var autoConnect = true
+    /** Application to launch once connected (a TV-home shortcut was opened), and the PC streaming now. */
+    private var pendingApp: String? = null
+    private var streamIp: String? = null
+    /** Shortcut being made (package, application), waiting for the large icon from the PC. */
+    private var shortcutWaiting: Pair<String, AppItem>? = null
     // Remote control of the PC (encrypted connections to a PC that takes it): the arrows move its mouse.
     private var mouseMode = false
     private var autoMouse: StreamClient? = null // connection whose mouse mode was turned on automatically
@@ -155,16 +160,81 @@ class MainActivity : Activity() {
         gamepads.start()
         showMain()
         handleInstallIntent(intent)
+        openShortcut(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleInstallIntent(intent)
+        openShortcut(intent)
     }
 
     private fun handleInstallIntent(i: Intent?) {
+        if (i?.action == Shortcuts.ACTION_STATUS) Shortcuts.onStatus(this, i)?.let { Toast.makeText(this, it, Toast.LENGTH_LONG).show() }
         if (i?.action != Updater.ACTION_STATUS) return
         Updater.onStatus(this, i)?.let { setStatus(it) }
+    }
+
+    /** A TV-home shortcut was opened: connect to its PC (woken if asleep), then launch its application there. */
+    private fun openShortcut(i: Intent?) {
+        if (i?.action != Shortcuts.ACTION_OPEN) return
+        val f = prefs.getString("sc|" + i.getStringExtra(Shortcuts.EXTRA), null)?.split('	')
+        if (f == null || f.size < 4) { Toast.makeText(this, L.t("sc_unknown"), Toast.LENGTH_LONG).show(); return }
+        val (savedIp, name, appId) = f
+        Toast.makeText(this, L.t("rc_launching", f[3]), Toast.LENGTH_LONG).show()
+        // Connected anew even when already showing that PC: the PC then makes the TV its main screen (see hello).
+        pendingApp = appId
+        autoConnect = true
+        if (inSettings) showMain()
+        // The PC may have another address now: found under its name.
+        val ip = pcs.values.firstOrNull { it.ip == savedIp }?.ip ?: pcs.values.firstOrNull { it.name == name }?.ip
+        if (ip != null) { prefs.edit().putString("last", ip).apply(); if (surfaceReady) connect(ip, name); return }
+        prefs.edit().putString("last", savedIp).apply() // tryAutoConnect picks it as soon as it answers
+        prefs.getString("mac_$savedIp", null)?.substringBefore('|')?.let { wake(it); setStatus(L.t("waking", name), busy = true) }
+    }
+
+    /** The PC closes the application once the TV has been gone for the delay chosen in the settings. */
+    private fun launchShortcut(c: StreamClient, appId: String) {
+        c.post("APP;$appId;${prefs.getString("sc_close", "120")}")
+    }
+
+    /** Hold OK on an application: favorites, or a shortcut on the TV's home screen. */
+    private fun appMenu(c: StreamClient, a: AppItem) {
+        val items = arrayListOf(L.t(if (a.fav) "rc_fav_remove" else "rc_fav_add"))
+        if (Shortcuts.supported) items += L.t("sc_add")
+        android.app.AlertDialog.Builder(this).setTitle(a.name).setItems(items.toTypedArray()) { _, which ->
+            if (which == 0) {
+                a.fav = !a.fav
+                c.post("FAV;${a.id};${if (a.fav) 1 else 0}")
+                Toast.makeText(this, L.t(if (a.fav) "rc_fav_on" else "rc_fav_off", a.name), Toast.LENGTH_SHORT).show()
+                fillApps(c)
+            } else addShortcut(a)
+        }.show()
+    }
+
+    private fun addShortcut(a: AppItem) {
+        val ip = streamIp ?: return
+        val pc = pcs[ip]?.name ?: prefs.getString("mac_$ip", null)?.substringAfter('|') ?: ip
+        val pkg = Shortcuts.newPackage(packageName)
+        prefs.edit().putString("sc|$pkg", listOf(ip, pc, a.id, a.name).joinToString("	") { it.replace('	', ' ') }).apply()
+        Toast.makeText(this, L.t("sc_making", a.name), Toast.LENGTH_SHORT).show()
+        // A large icon first (an older PC doesn't answer: the list's small one after a few seconds).
+        shortcutWaiting = pkg to a
+        client?.post("APPICON;${a.id}")
+        ui.postDelayed({ makeShortcut(pkg, a) }, 4000)
+    }
+
+    private fun makeShortcut(pkg: String, a: AppItem) {
+        if (shortcutWaiting?.first != pkg) return
+        shortcutWaiting = null
+        val icon = appIcons[a.id]
+        Thread({
+            try { Shortcuts.install(this, pkg, a.name, icon) }
+            catch (e: Exception) {
+                android.util.Log.w(StreamClient.TAG, "shortcut", e)
+                ui.post { Toast.makeText(this, L.t("sc_failed", e.message ?: e.javaClass.simpleName), Toast.LENGTH_LONG).show() }
+            }
+        }, "shortcut").start()
     }
 
     /** [busy] shows the spinner next to the status (searching, connecting, downloading). */
@@ -536,6 +606,11 @@ class MainActivity : Activity() {
         toggle(L.t("autoconnect"), "autoconnect", true) { autoConnect = it }
         toggle(L.t("showstats"), "showstats", false)
 
+        section(L.t("sc_section"))
+        choice(L.t("sc_close"), listOf("0", "120", "300", "900", "-1"),
+            listOf(L.t("sc_close_now"), L.t("sc_close_min", 2), L.t("sc_close_min", 5), L.t("sc_close_min", 15), L.t("sc_close_never")), "sc_close", "120")
+        note(L.t("sc_close_note"))
+
         section(L.t("audio_pads"))
         toggle(L.t("audio"), "audio", true)
         var sync: Button? = null
@@ -577,7 +652,7 @@ class MainActivity : Activity() {
         p.addView(testBtn, LinearLayout.LayoutParams(w, -2))
 
         section(L.t("check_updates"))
-        val updNote = note("")
+        val updNote = note("").apply { visibility = View.GONE } // shown once there is something to say
         val taps = ArrayList<Long>()
         p.addView(button(L.t("check_updates")) {
             // Pressed 5 times within 10 s: the latest test version (pre-release of the test branch), hidden on purpose.
@@ -586,6 +661,7 @@ class MainActivity : Activity() {
             val test = taps.size >= 5
             if (test) taps.clear()
             updNote.text = L.t(if (test) "checking_test" else "checking")
+            updNote.visibility = View.VISIBLE
             Thread({
                 val r = try { Updater.latest(test) } catch (_: Exception) { null }
                 ui.post {
@@ -880,7 +956,8 @@ class MainActivity : Activity() {
         return "TVSP1;v=2;auth=1;id=${pairing.tvId};app=$versionCode;lang=${L.lang};name=${Build.MODEL.replace(';', ' ')};w=$w;h=$h;hz=${refreshHz()}" +
             ";hevc=$hevc;avc=$avc;tested=${if (tested) 1 else 0};lat=${prefs.getInt("hw_lat", -1)}" +
             ";net=$net;band=$band;link=$link;pref=${prefs.getString("pref", "auto")};maxh=${prefs.getString("maxh", "0")}" +
-            ";audio=${if (prefs.getBoolean("audio", true)) 1 else 0};pads=${if (prefs.getBoolean("pads", true)) 1 else 0}"
+            ";audio=${if (prefs.getBoolean("audio", true)) 1 else 0};pads=${if (prefs.getBoolean("pads", true)) 1 else 0}" +
+            ";sc=${if (pendingApp != null) 1 else 0}" // opened from a TV-home shortcut: the TV becomes the PC's main screen
     }
 
     /** Diagnostic lines written to the PC log on every connection (no ADB needed to see what the TV does). */
@@ -894,7 +971,7 @@ class MainActivity : Activity() {
         lines += "settings language=${prefs.getString("lang", "system")} priority=${prefs.getString("pref", "auto")} max-resolution=${prefs.getString("maxh", "0")}" +
             " sound=${if (prefs.getBoolean("audio", true)) prefs.getString("sound", AudioPlayer.QUALITY) else "off"} sync=${prefs.getInt(offsetKey(), 0)}ms" +
             " picture-size=${prefs.getString("zoom", "100")}% gamepads=${prefs.getBoolean("pads", true)} switch2=${prefs.getBoolean("switch2", false)}" +
-            " autoconnect=${prefs.getBoolean("autoconnect", true)} stats=${prefs.getBoolean("showstats", false)} gamepads-connected=${gamepads.count}"
+            " autoconnect=${prefs.getBoolean("autoconnect", true)} shortcut-close=${prefs.getString("sc_close", "120")} stats=${prefs.getBoolean("showstats", false)} gamepads-connected=${gamepads.count}"
         lines += DisplayCaps.report(this) // display modes + 120 fps decoding: is 120 Hz streaming possible?
         if (Build.VERSION.SDK_INT >= 30) lines += "display minimal post-processing (game mode) supported: ${try { windowManager.defaultDisplay.isMinimalPostProcessingSupported } catch (_: Exception) { "?" }}"
         val hwVer = prefs.getInt("hw_ver", 0)
@@ -915,6 +992,7 @@ class MainActivity : Activity() {
         if (inSettings) showMain()
         disconnect(null)
         setStatus(L.t("connecting", name), busy = true)
+        streamIp = ip
         val hz = refreshHz()
         lateinit var c: StreamClient
         c = StreamClient(ip, hello(), diagnostics(), surfaceView.holder.surface, object : StreamClient.Listener {
@@ -934,6 +1012,7 @@ class MainActivity : Activity() {
                     if (c.pads) gamepads.client = c
                     // A PC that takes the remote: mouse mode from the start (left from the quick menu), once per connection.
                     if (c.remote && autoMouse !== c) { autoMouse = c; if (!mouseMode) setMouseMode(true) }
+                    pendingApp?.let { if (c.remote) launchShortcut(c, it); pendingApp = null }
                     android.util.Log.i(StreamClient.TAG, "streaming $info from $name")
                 }
             }
@@ -977,6 +1056,7 @@ class MainActivity : Activity() {
                 ui.post {
                     if (client !== c) return@post
                     for ((id, b) in icons) { appIcons[id] = b; appTiles[id]?.setImageBitmap(b) }
+                    shortcutWaiting?.let { (pkg, a) -> if (icons.any { it.first == a.id && it.second.width >= 128 }) makeShortcut(pkg, a) }
                 }
             }
 
@@ -1377,18 +1457,20 @@ class MainActivity : Activity() {
         closeRemotePanel()
         window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING) // the search keyboard must not move the video
         val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false
-            background = rounded(Color.argb(240, 12, 24, 40), 20); setPadding(dp(20), dp(16), dp(20), dp(12))
+            // Clips its children: the scrolling list never draws over the title or the hint line.
+            orientation = LinearLayout.VERTICAL
+            background = rounded(Color.argb(240, 12, 24, 40), 20); setPadding(dp(10), dp(16), dp(10), dp(12))
         }
-        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, dp(10), 0) }
         top.addView(text(title.uppercase(), 14f, ACCENT).apply { typeface = MEDIUM; letterSpacing = 0.12f; gravity = Gravity.START },
             LinearLayout.LayoutParams(0, -2, 1f))
         header?.let { top.addView(it) }
         panel.addView(top)
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false; setPadding(dp(4), dp(6), dp(4), dp(6)) }
-        val scroll = ScrollView(this).apply { clipChildren = false; clipToPadding = false; isVerticalScrollBarEnabled = false; addView(body) }
+        // Its padding leaves room for the focused row's zoom and frame.
+        val scroll = ScrollView(this).apply { clipToPadding = false; setPadding(dp(10), dp(6), dp(10), dp(6)); isVerticalScrollBarEnabled = false; addView(body) }
         panel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        panel.addView(text(hint, 13f, MUTED).apply { gravity = Gravity.START })
+        panel.addView(text(hint, 13f, MUTED).apply { gravity = Gravity.START; setPadding(dp(10), 0, dp(10), 0) })
         root.addView(panel, FrameLayout.LayoutParams(width, height, place).apply { setMargins(dp(40), dp(32), dp(40), dp(32)) })
         panel.alpha = 0f; panel.animate().alpha(1f).setDuration(150).start()
         remotePanel = panel; remoteKind = kind; remoteBody = body
@@ -1563,13 +1645,7 @@ class MainActivity : Activity() {
                             Toast.makeText(this@MainActivity, L.t("rc_launching", a.name), Toast.LENGTH_SHORT).show()
                             closeRemotePanel()
                         }
-                        setOnLongClickListener {
-                            a.fav = !a.fav
-                            c.post("FAV;${a.id};${if (a.fav) 1 else 0}")
-                            Toast.makeText(this@MainActivity, L.t(if (a.fav) "rc_fav_on" else "rc_fav_off", a.name), Toast.LENGTH_SHORT).show()
-                            fillApps(c)
-                            true
-                        }
+                        setOnLongClickListener { appMenu(c, a); true }
                     }
                     val icon = ImageView(this).apply { appIcons[a.id]?.let { setImageBitmap(it) } }
                     appTiles[a.id] = icon

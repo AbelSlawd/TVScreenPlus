@@ -50,7 +50,7 @@ The TV becomes a real second monitor (*extend* mode): you drag windows onto it a
 - **Automatic tuning**: the network, the PC and the TV are measured at every connection to pick the best resolution and bitrate. The bitrate keeps adapting if the network weakens.
 - **PC sound on the TV**: whatever Windows plays comes out of the TV's speakers, with very little delay and in sync with the picture.
 - **TV gamepads = PC gamepads**: Bluetooth or USB gamepads connected to the TV are seen by Windows as Xbox controllers (up to 4), rumble included. PC games recognize them directly.
-- **Lightweight**: the PC program is a few hundred KB (excluding ffmpeg) and the TV app about 150 KB. No runtime to install.
+- **Lightweight**: the PC program is a few hundred KB (excluding ffmpeg) and the TV app about 220 KB. No runtime to install.
 - **Automatic updates** on the PC, offered on the TV.
 - **Four languages**: French, English, Spanish and German, on the TV and on the PC. The PC program follows the Windows display language (English if it is another language); the TV app follows the TV's language, or the one chosen in its settings.
 
@@ -126,7 +126,9 @@ From the quick menu (**OK**), with TVScreenPlus PC 1.2.4 or newer:
 - **Remote = mouse** (on as soon as the TV connects): the arrows move the PC's cursor, slowly at first, then faster and faster. **OK** = click, **OK OK** (two quick presses) = right click, **hold OK** = quick menu (drag, leave mouse mode…). **Back** does nothing in mouse mode, so it is never left by mistake. Channel + / − (or Page up / down) scroll.
 - **Keyboard**: what you type with the TV keyboard (or dictate with the remote's microphone) is typed on the PC at once. It opens **by itself** when the mouse clicks into a text field, and stays in the menu. Enter, Delete, Esc, Tab, Windows and *Close the window* (Alt + F4) keys.
 - **PC windows**: the open windows, by screen. **OK** brings the window to the TV, full screen, and to the front; **◀ / ▶** put it on the left / right half of the TV (two windows side by side); **hold OK** sends it back to the PC's main screen.
-- **PC applications**: every application of the Start menu (programs, Store apps, Steam games) and Steam Big Picture, with their icons. **OK** launches it, **hold OK** adds it to the favorites (shown first). A search field filters the list. Applications start without administrator rights, as from the Start menu.
+- **PC applications**: every application of the Start menu (programs, Store apps, Steam games) and Steam Big Picture, with their icons. **OK** launches it, **hold OK** adds it to the favorites (shown first) or to the TV home screen (below). A search field filters the list. Applications start without administrator rights, as from the Start menu.
+
+- **Shortcuts on the TV home screen** (new in 1.2.8): PC applications › **hold OK** on a game › *Add to the TV's home screen*. The TV asks to install a small app with the game's name and icon, found in the TV's apps. Opening it starts TVScreenPlus, connects to that PC (waking it if it can), makes the TV the PC's main screen for the session (games in exclusive full screen open there) and launches the game on the TV. When TVScreenPlus closes, the PC closes the game like Alt+F4 after the delay set in the TV settings (2 min by default; coming back in time keeps it; launchers such as Steam stay open). Remove a shortcut like any TV app.
 
 These commands only travel over an encrypted connection. PC tray menu › *Control of the PC from the TV* turns them off (immediately).
 
@@ -183,6 +185,7 @@ Enabled by default. Connect your gamepads to the TV (*TV settings › Remotes & 
 | **Picture size** | 100 % to 90 %: reduce it if the TV cuts the edges of the picture (taskbar not visible) |
 | **Automatic connection** | Connect by itself to the last PC used |
 | **Statistics while streaming** | Show them by default (otherwise: OK key) |
+| **Close a shortcut's game after disconnecting** | At once (15 s), after 2 (default), 5 or 15 min, or never |
 | **Computer sound on the TV** | Play PC sound on the TV (enabled by default) |
 | **Sound output** | *Fast* (lowest latency; skips the TV's sound effects on TVs where the fast path goes straight to the speakers), *Steady* (same with more margin: no tiny cuts, ~30 ms more) or *TV quality* (default: through the TV's sound effects such as Dolby, ~200 ms; best in fluid mode, where the image waits for the sound; in game mode the sound lags, so choose *Fast*). Applied at the next connection |
 | **Gamepads** | Opens the Gamepads page (above), which also holds the next two settings |

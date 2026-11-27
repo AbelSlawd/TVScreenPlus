@@ -25,7 +25,9 @@ namespace TVScreenPlus
     ///   "APPS?" or "APPS?;1" -> extension [9]: applications of the Start menu, "id\tfavorite 0|1\tname\t" per line;
     ///             with ";1" (the TV has no icons yet), extension [12] "id\tpng" lines follow in small, spaced batches
     ///   "APP;id" launches one (without administrator rights), "FAV;id;1|0" sets a favorite (kept on the PC)
-    /// Answers and messages for the user: extension [10] text. Only ids from the last list sent are accepted:
+    ///   "APP;id;seconds" (TV-home shortcut): its windows are closed that long after the TV leaves (unless it comes
+    ///             back); -1 = never. "APPICON;id" -> extension [12] "id\tpng" with a large icon (for the shortcut).
+    /// Answers and messages for the user: extension [10] text. Only ids from the PC's own list are accepted:
     /// the TV never names a file, a command or a window handle of its own.
     /// </summary>
     sealed class RemoteControl : IDisposable
@@ -47,9 +49,11 @@ namespace TVScreenPlus
         public RemoteControl(Action<byte, string> send, Func<string> tvDevice)
         {
             this.send = send; this.tvDevice = tvDevice;
+            KeepShortcutApps(); // a TV is back in time
             // Shell objects (applications, icons) want a single-threaded apartment; the network thread stays free.
             worker = Sta(work, "remote");
             Sta(iconWork, "remote-icons");
+            Queue(ResumeShortcutApps);
         }
 
         static Thread Sta(BlockingCollection<Action> q, string name)
@@ -64,9 +68,12 @@ namespace TVScreenPlus
             return t;
         }
 
+        int disposed;
+
         public void Dispose()
         {
             iconRun++;
+            if (Interlocked.Exchange(ref disposed, 1) == 0) CloseShortcutAppsLater(); // once per session (Dispose can come twice)
             try { work.CompleteAdding(); } catch { }
             try { iconWork.CompleteAdding(); } catch { }
         }
@@ -100,7 +107,8 @@ namespace TVScreenPlus
                 case "WINS?": Queue(SendWindows); break;
                 case "WIN": if (a.Length == 2) Queue(() => MoveWindow(a[0], a[1])); break;
                 case "APPS?": Queue(() => SendApps(arg == "1")); break;
-                case "APP": Queue(() => Launch(arg)); break;
+                case "APP": Queue(() => Launch(a[0], a.Length > 1, a.Length > 1 && int.TryParse(a[1], out int close) ? close : -1)); break;
+                case "APPICON": Queue(() => { var x = Find(arg); if (x != null) send(12, x.Id + "\t" + ShellIcon(x.IconPath, 256)); }); break;
                 case "FAV": if (a.Length == 2) Queue(() => Favorite(a[0], a[1] == "1")); break;
             }
         }
@@ -190,7 +198,9 @@ namespace TVScreenPlus
             {
                 var mi = new MONITORINFOEX { cbSize = Marshal.SizeOf(typeof(MONITORINFOEX)) };
                 if (GetMonitorInfo(h, ref mi))
-                    list.Add(new Monitor { Device = mi.szDevice, Bounds = mi.rcMonitor.R, Work = mi.rcWork.R, Primary = (mi.dwFlags & 1) != 0 });
+                    // "main" stays the PC's own screen while the TV stands in as main screen (shortcut).
+                    list.Add(new Monitor { Device = mi.szDevice, Bounds = mi.rcMonitor.R, Work = mi.rcWork.R,
+                        Primary = VirtualDisplay.PcPrimary is string pc ? mi.szDevice == pc : (mi.dwFlags & 1) != 0 });
                 return true;
             }, IntPtr.Zero);
             return list;
@@ -488,36 +498,169 @@ namespace TVScreenPlus
             Settings.Set("fav_apps", string.Join(",", favs.Take(100)));
         }
 
-        void Launch(string id)
+        /// <summary>An application of the PC's list; a shortcut launches before any list was asked for: listed then.</summary>
+        App Find(string id)
         {
-            if (!apps.TryGetValue(id, out var a)) return;
-            Log.W("TV launches " + a.Name);
+            if (!apps.ContainsKey(id)) { var found = new Dictionary<string, App>(); foreach (var a in ListApps()) found[a.Id] = a; apps = found; }
+            return apps.TryGetValue(id, out var x) ? x : null;
+        }
+
+        /// <param name="shortcut">From a TV-home shortcut, whose application is closed closeAfter seconds after the TV
+        /// leaves (-1: never).</param>
+        void Launch(string id, bool shortcut, int closeAfter)
+        {
+            var a = Find(id);
+            if (a == null) { send(10, "launch_failed;"); return; }
+            if (shortcut)
+            {
+                bool running;
+                lock (closeLock) { shortcutPids.RemoveWhere(p => !Running(p)); closeDelay = closeAfter; running = shortcutApp == id && shortcutPids.Count > 0; shortcutApp = id; }
+                // Opened again while it still runs (the TV came back): not a second copy, it is on the TV already.
+                if (running) { Log.W("TV shortcut: " + a.Name + " already running"); send(10, "launched;" + Clean(a.Name)); return; }
+            }
+            Log.W("TV launches " + a.Name + (shortcut ? " (shortcut, closed " + (closeAfter < 0 ? "never" : closeAfter + " s after the TV leaves") + ")" : ""));
             var before = new HashSet<IntPtr>();
             EnumWindows((h, p) => { before.Add(h); return true; }, IntPtr.Zero);
+            var pidsBefore = new HashSet<int>(Process.GetProcesses().Select(x => x.Id));
             bool ok = LaunchUnelevated(a.Launch);
             send(10, (ok ? "launched;" : "launch_failed;") + Clean(a.Name));
-            if (ok) new Thread(() => ToTv(before)) { IsBackground = true, Name = "launch-to-tv" }.Start();
+            if (ok) new Thread(() => ToTv(before, pidsBefore, shortcut)) { IsBackground = true, Name = "launch-to-tv" }.Start();
+        }
+
+        /// <summary>A TV back while a shortcut's application still runs: its windows come back to the TV, watched again.</summary>
+        void ResumeShortcutApps()
+        {
+            int[] pids;
+            lock (closeLock) { shortcutPids.RemoveWhere(p => !Running(p)); pids = shortcutPids.ToArray(); }
+            if (pids.Length == 0) return;
+            foreach (int pid in pids)
+                foreach (var h in VisibleWindows(pid))
+                    if (AltTab(h)) try { if (Place(h, "tv")) Log.W("shortcut: window back on the TV: " + Title(h)); } catch { }
+            var before = new HashSet<IntPtr>();
+            EnumWindows((h, p) => { before.Add(h); return true; }, IntPtr.Zero);
+            var pidsBefore = new HashSet<int>(Process.GetProcesses().Select(x => x.Id));
+            pidsBefore.ExceptWith(pids); // the application's new windows count as its own
+            new Thread(() => ToTv(before, pidsBefore, true)) { IsBackground = true, Name = "launch-to-tv" }.Start();
         }
 
         /// <summary>
         /// Windows opens a new application on the PC's main screen: for 20 s, every new application window (splash,
         /// launcher, then the main window) is moved to the TV, maximized. Each window is moved once.
+        /// From a shortcut, the whole session: the windows of the processes started since (a game behind a launcher, an
+        /// agreement to accept first, a long loading) also go to the TV, and these processes are the ones closed after
+        /// the TV leaves.
         /// </summary>
-        void ToTv(HashSet<IntPtr> before)
+        void ToTv(HashSet<IntPtr> before, HashSet<int> pidsBefore, bool shortcut)
         {
             var sw = Stopwatch.StartNew();
-            while (sw.ElapsedMilliseconds < 20000 && !work.IsAddingCompleted)
+            while (!work.IsAddingCompleted && (sw.ElapsedMilliseconds < 20000 || shortcut))
             {
-                Thread.Sleep(250);
+                bool early = sw.ElapsedMilliseconds < 20000;
+                Thread.Sleep(early ? 250 : 1000);
                 var fresh = new List<IntPtr>();
                 EnumWindows((h, p) => { if (!before.Contains(h) && AltTab(h)) fresh.Add(h); return true; }, IntPtr.Zero);
                 foreach (var h in fresh)
                 {
                     before.Add(h);
+                    GetWindowThreadProcessId(h, out int pid);
+                    bool own = !pidsBefore.Contains(pid) && !Launcher(pid);
+                    if (!early && !own) continue; // later on, the PC's own windows stay where they open
+                    if (shortcut && own) lock (closeLock) shortcutPids.Add(pid);
                     try { if (Place(h, "tv")) Log.W("launch: window moved to the TV: " + Title(h)); }
                     catch (Exception e) { Log.W("launch: move " + e.Message); }
                 }
             }
+        }
+
+        // Stores and launchers stay open (a game may have started them): only the game's own processes are closed.
+        static readonly HashSet<string> Launchers = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            "explorer", "steam", "steamwebhelper", "steamservice", "EpicGamesLauncher", "EpicWebHelper", "EADesktop", "EABackgroundService",
+            "Origin", "upc", "UbisoftConnect", "UplayWebCore", "Battle.net", "Agent", "GalaxyClient", "GalaxyClient Helper",
+            "RockstarService", "XboxPcApp", "GamingServices", "ApplicationFrameHost", "SystemSettings",
+        };
+
+        static bool Launcher(int pid)
+        {
+            try { using (var p = Process.GetProcessById(pid)) return Launchers.Contains(p.ProcessName); } catch { return true; }
+        }
+
+        // ---------------- applications opened by a TV-home shortcut ----------------
+        // Once no TV has been connected for the delay the TV chose, their windows are closed as Alt+F4 would (a game
+        // may still ask to save); a process still running 30 s later without any window left is stopped. Kept across
+        // sessions: a TV coming back in time keeps them open.
+        static readonly object closeLock = new object();
+        static readonly HashSet<int> shortcutPids = new HashSet<int>();
+        static int closeDelay = -1;
+        static string shortcutApp;
+
+        /// <summary>A shortcut's application still runs (a TV coming back gets the main screen again).</summary>
+        public static bool ShortcutRunning { get { lock (closeLock) return shortcutPids.Any(Running); } }
+        static System.Threading.Timer closeTimer;
+
+        static void KeepShortcutApps()
+        {
+            lock (closeLock) { if (closeTimer != null) Log.W("shortcut: TV back, application kept"); closeTimer?.Dispose(); closeTimer = null; }
+        }
+
+        static void CloseShortcutAppsLater()
+        {
+            lock (closeLock)
+            {
+                shortcutPids.RemoveWhere(pid => !Running(pid));
+                if (shortcutPids.Count == 0 || closeDelay < 0) return;
+                // "At once" still waits a little: a stalled stream reconnects within seconds.
+                int s = Math.Max(closeDelay, 15);
+                Log.W("shortcut: TV gone, application closed in " + s + " s unless it comes back");
+                Later(s, () =>
+                {
+                    foreach (int pid in shortcutPids)
+                        foreach (var h in VisibleWindows(pid)) { Log.W("shortcut: closing " + Title(h)); PostMessage(h, 0x0010 /*WM_CLOSE*/, IntPtr.Zero, IntPtr.Zero); }
+                    Later(30, () =>
+                    {
+                        foreach (int pid in shortcutPids)
+                            try
+                            {
+                                using (var p = Process.GetProcessById(pid))
+                                {
+                                    if (p.HasExited) continue;
+                                    if (VisibleWindows(pid).Count > 0) Log.W("shortcut: " + p.ProcessName + " still has a window open (a question?), left as is");
+                                    else { Log.W("shortcut: " + p.ProcessName + " still running without a window, stopped"); p.Kill(); }
+                                }
+                            }
+                            catch { } // already gone
+                        shortcutPids.Clear();
+                    });
+                });
+            }
+        }
+
+        /// <summary>Runs under closeLock after s seconds, unless a TV came back meanwhile (KeepShortcutApps).</summary>
+        static void Later(int s, Action a)
+        {
+            closeTimer?.Dispose();
+            System.Threading.Timer t = null;
+            t = closeTimer = new System.Threading.Timer(_ =>
+            {
+                lock (closeLock)
+                {
+                    if (closeTimer != t) return; // kept meanwhile
+                    closeTimer = null; t.Dispose();
+                    try { a(); } catch (Exception e) { Log.W("shortcut: " + e.Message); }
+                }
+            }, null, Timeout.Infinite, Timeout.Infinite);
+            t.Change(s * 1000, Timeout.Infinite); // started once closeTimer is set
+        }
+
+        static bool Running(int pid)
+        {
+            try { using (var p = Process.GetProcessById(pid)) return !p.HasExited; } catch { return false; }
+        }
+
+        static List<IntPtr> VisibleWindows(int pid)
+        {
+            var list = new List<IntPtr>();
+            EnumWindows((h, l) => { GetWindowThreadProcessId(h, out int p); if (p == pid && IsWindowVisible(h)) list.Add(h); return true; }, IntPtr.Zero);
+            return list;
         }
 
         /// <summary>
@@ -659,6 +802,7 @@ namespace TVScreenPlus
         [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc cb, IntPtr p);
         [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
         [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+        [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
         [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextLength(IntPtr h);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);

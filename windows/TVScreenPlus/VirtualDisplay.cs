@@ -128,7 +128,9 @@ namespace TVScreenPlus
         }
 
         // ---------- attach / detach ----------
-        public static DisplayTarget Attach(int w, int h, int fps)
+        /// <param name="main">TV-home shortcut: the TV display is made the PC's main screen before the capture starts
+        /// (changing it during the capture loses it).</param>
+        public static DisplayTarget Attach(int w, int h, int fps, bool main = false)
         {
             WriteSettings(w, h, fps);
             SetEnabled(false);
@@ -144,7 +146,16 @@ namespace TVScreenPlus
             }
             if (name == null) throw new Exception(L.T("vd_missing"));
 
-            return SetMode(name, w, h, fps);
+            var t = SetMode(name, w, h, fps);
+            if (!main) return t;
+            SetTvPrimary(name);
+            for (int i = 0; i < 15; i++) // outputs are numbered again after the change
+            {
+                var n = Dxgi.Find(name);
+                if (n != null) { Log.W("Target " + n); return n; }
+                Thread.Sleep(200);
+            }
+            return t;
         }
 
         /// <summary>Change the virtual monitor resolution (stays attached).</summary>
@@ -194,7 +205,68 @@ namespace TVScreenPlus
         static DC_HEADER Header(uint type, Type t, long adapter, uint id) =>
             new DC_HEADER { type = type, size = (uint)Marshal.SizeOf(t), adapter = adapter, id = id };
 
-        public static void Detach() { try { SetEnabled(false); } catch (Exception e) { Log.W("detach: " + e.Message); } }
+        public static void Detach() { try { RestorePrimary(); SetEnabled(false); } catch (Exception e) { Log.W("detach: " + e.Message); } }
+
+        /// <summary>The PC's own main screen while the TV display stands in for it (TV-home shortcut), else null.</summary>
+        public static volatile string PcPrimary;
+
+        /// <summary>
+        /// A game launched from a TV-home shortcut: the TV display becomes the PC's main screen, since games in
+        /// exclusive full screen open on the main screen whatever their window's place. Undone before it detaches.
+        /// </summary>
+        public static void SetTvPrimary(string tv)
+        {
+            lock (primaryLock)
+            {
+                string main = Primary();
+                if (tv == null || main == null || main == tv) return;
+                if (SetPrimary(tv)) { PcPrimary = main; Log.W($"TV display {tv} is the main screen (was {main})"); }
+            }
+        }
+
+        public static void RestorePrimary()
+        {
+            lock (primaryLock)
+            {
+                string main = PcPrimary;
+                if (main == null) return;
+                PcPrimary = null;
+                Log.W($"Main screen back to {main}: " + SetPrimary(main));
+            }
+        }
+
+        static readonly object primaryLock = new object();
+
+        static string Primary()
+        {
+            var dd = new DISPLAY_DEVICE { cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE)) };
+            for (uint i = 0; EnumDisplayDevices(null, i, ref dd, 0); i++, dd.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE)))
+                if ((dd.StateFlags & 1 /*ATTACHED*/) != 0 && (dd.StateFlags & 4 /*PRIMARY*/) != 0) return dd.DeviceName;
+            return null;
+        }
+
+        /// <summary>
+        /// The main screen is the one at (0, 0): every screen's place is shifted by the new main screen's, and the whole
+        /// layout applied at once (ChangeDisplaySettingsEx refuses CDS_SET_PRIMARY for the virtual display).
+        /// </summary>
+        static bool SetPrimary(string name)
+        {
+            if (GetDisplayConfigBufferSizes(2 /*QDC_ONLY_ACTIVE_PATHS*/, out uint np, out uint nm) != 0) return false;
+            var paths = new DC_PATH[np]; var modes = new DC_MODE[nm];
+            if (QueryDisplayConfig(2, ref np, paths, ref nm, modes, IntPtr.Zero) != 0) return false;
+            int at = -1;
+            for (int i = 0; i < np; i++)
+            {
+                var src = new DC_SOURCE_NAME { h = Header(1 /*GET_SOURCE_NAME*/, typeof(DC_SOURCE_NAME), paths[i].srcAdapter, paths[i].srcId) };
+                if (DisplayConfigGetDeviceInfo(ref src) == 0 && string.Equals(src.name, name, StringComparison.OrdinalIgnoreCase)) at = (int)paths[i].srcModeIdx;
+            }
+            if (at < 0 || at >= nm || modes[at].type != 1 /*SOURCE*/) return false;
+            int ox = modes[at].x, oy = modes[at].y;
+            for (int i = 0; i < nm; i++) if (modes[i].type == 1) { modes[i].x -= ox; modes[i].y -= oy; }
+            int r = SetDisplayConfig(np, paths, nm, modes, 0x80 /*APPLY*/ | 0x20 /*USE_SUPPLIED*/ | 0x200 /*SAVE_TO_DATABASE*/ | 0x400 /*ALLOW_CHANGES*/);
+            if (r != 0) Log.W("main screen: SetDisplayConfig -> " + r);
+            return r == 0;
+        }
 
         /// <summary>GDI name (\\.\DISPLAYn) of the virtual monitor attached to the desktop.</summary>
         static string FindGdiName()
@@ -260,6 +332,7 @@ namespace TVScreenPlus
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplayDevices(string dev, uint i, ref DISPLAY_DEVICE dd, int flags);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ChangeDisplaySettingsEx(string dev, ref DEVMODE dm, IntPtr hwnd, int flags, IntPtr p);
         [DllImport("user32.dll")] static extern int SetDisplayConfig(uint np, IntPtr p, uint nm, IntPtr m, uint flags);
+        [DllImport("user32.dll")] static extern int SetDisplayConfig(uint np, [In] DC_PATH[] p, uint nm, [In] DC_MODE[] m, uint flags);
 
         // DISPLAYCONFIG_PATH_INFO (72 bytes) with only the fields used here; LUIDs read as one 64-bit value.
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
@@ -269,7 +342,8 @@ namespace TVScreenPlus
             public long tgtAdapter; public uint tgtId, tgtModeIdx, tech, rotation, scaling, rrNum, rrDen, scanline; public int available; public uint tgtFlags;
             public uint flags;
         }
-        [StructLayout(LayoutKind.Sequential, Pack = 4, Size = 64)] struct DC_MODE { public uint type, id; public long adapter; }
+        // DISPLAYCONFIG_MODE_INFO; for a source (type 1): width, height, pixel format, then its place on the desktop.
+        [StructLayout(LayoutKind.Sequential, Pack = 4, Size = 64)] struct DC_MODE { public uint type, id; public long adapter; public uint w, h, format; public int x, y; }
         [StructLayout(LayoutKind.Sequential, Pack = 4)] struct DC_HEADER { public uint type, size; public long adapter; public uint id; }
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         struct DC_SOURCE_NAME { public DC_HEADER h; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string name; }

@@ -645,7 +645,9 @@ namespace TVScreenPlus
                 bool hevcTv = hevcMax >= 720;
                 int decMax = Math.Max(hevcTv ? hevcMax : 0, avcMax);
                 var heights = Heights();
-                early = System.Threading.Tasks.Task.Run(() => VirtualDisplay.Attach(W(heights[0]), heights[0], fps));
+                // Opened from a TV-home shortcut, or its game still runs: the TV is the PC's main screen for the session.
+                bool tvMain = Int(hello, "sc", 0) == 1 || RemoteControl.ShortcutRunning;
+                early = System.Threading.Tasks.Task.Run(() => VirtualDisplay.Attach(W(heights[0]), heights[0], fps, tvMain));
 
                 // ---- 1. Network: latency + throughput ----
                 double mbps = 60, rtt = 0;
@@ -984,7 +986,7 @@ namespace TVScreenPlus
                     {
                         Log.W("Encoder keeps failing, re-probing");
                         Streamer.Forget(target);
-                        target = Dxgi.Find(target.GdiName) ?? VirtualDisplay.Attach(target.Width, target.Height, plan.Fps);
+                        target = Dxgi.Find(target.GdiName) ?? VirtualDisplay.Attach(target.Width, target.Height, plan.Fps, tvMain);
                         tvDevice = target.GdiName;
                         var e2 = Streamer.Pick(target, hevcTv, tvCursor && Settings.NativeEncoder);
                         plan = new EncodePlan { Enc = e2, Quality = false, Fps = plan.Fps };

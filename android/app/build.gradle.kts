@@ -46,4 +46,18 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    sourceSets { getByName("main") { assets.srcDir(layout.buildDirectory.dir("generated/shortcut")) } }
 }
+
+dependencies {
+    implementation("com.android.tools.build:apksig:8.7.3") // signs the TV-home shortcuts on the TV
+}
+
+// Template of the TV-home shortcuts (module :shortcut, unsigned), shipped in the assets: see Shortcuts.kt.
+val shortcutTemplate by tasks.registering(Copy::class) {
+    dependsOn(":shortcut:assembleRelease")
+    from(project(":shortcut").layout.buildDirectory.file("outputs/apk/release/shortcut-release-unsigned.apk"))
+    into(layout.buildDirectory.dir("generated/shortcut"))
+    rename { "shortcut.apk" }
+}
+tasks.named("preBuild") { dependsOn(shortcutTemplate) }

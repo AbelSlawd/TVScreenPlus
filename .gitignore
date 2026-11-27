@@ -1,6 +1,7 @@
 android/.gradle/
 android/build/
 android/app/build/
+android/shortcut/build/
 android/local.properties
 windows/**/bin/
 windows/**/obj/
