@@ -11,35 +11,45 @@ object Codecs {
     /** Name and settings of the last decoder created (for the PC log). */
     @Volatile var lastDecoder = ""
 
-    private class Variant(val label: String, val std: Boolean, val priority: Boolean, val rate: Boolean, val vendor: Boolean)
+    /** rate: operating rate asked (0 = none): the decoder's clock is raised for it. */
+    private class Variant(val label: String, val std: Boolean, val priority: Boolean, val rate: Int, val vendor: Boolean)
 
     private val VARIANTS = listOf(
-        Variant("all options", true, true, true, true),
-        Variant("no operating-rate", true, true, false, true),
-        Variant("no operating-rate/priority", true, false, false, true),
-        Variant("vendor keys only", false, false, false, true),
-        Variant("plain", true, false, false, false),
+        Variant("all options", true, true, Short.MAX_VALUE.toInt(), true),
+        Variant("no operating-rate", true, true, 0, true),
+        Variant("no operating-rate/priority", true, false, 0, true),
+        Variant("vendor keys only", false, false, 0, true),
+        Variant("plain", true, false, 0, false),
     )
 
     /** Hardware decoder configured for minimum latency (richest config first, progressively plainer fallbacks). */
     fun lowLatencyDecoder(mime: String, w: Int, h: Int, surface: Surface?): MediaCodec {
-        fun format(v: Variant) = MediaFormat.createVideoFormat(mime, w, h).apply {
+        fun format(v: Variant, name: String) = MediaFormat.createVideoFormat(mime, w, h).apply {
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, maxOf(w * h, 2 shl 20))
             if (v.std && Build.VERSION.SDK_INT >= 30) setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             if (Build.VERSION.SDK_INT >= 23) {
                 if (v.priority) setInteger(MediaFormat.KEY_PRIORITY, 0) // realtime
-                if (v.rate) setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE.toInt())
+                if (v.rate > 0) setInteger(MediaFormat.KEY_OPERATING_RATE, v.rate)
             }
             if (v.vendor) {
-                // Vendor low-latency switches (Qualcomm, MediaTek, HiSilicon, Amlogic/others).
-                setInteger("vendor.qti-ext-dec-low-latency.enable", 1)
-                setInteger("vendor.qti-ext-dec-picture-order.enable", 1)
-                setInteger("vendor.rtc-ext-dec-low-latency.enable", 1)
+                // Vendor low-latency switches: only the decoder's own maker (keys of another one can upset it).
+                val n = name.lowercase()
+                val mtk = "mtk" in n; val qti = "qti" in n || "qcom" in n; val hisi = "hisi" in n
+                val unknown = !mtk && !qti && !hisi
                 setInteger("vendor.low-latency.enable", 1)
-                setInteger("vendor.mtk.ext.dec.low-latency.enable", 1)
-                setInteger("vendor.mtk.vdec.lowlatency", 1)
-                setInteger("vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-req", 1)
-                setInteger("vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-rdy", -1)
+                if (qti || unknown) {
+                    setInteger("vendor.qti-ext-dec-low-latency.enable", 1)
+                    setInteger("vendor.qti-ext-dec-picture-order.enable", 1)
+                }
+                if (unknown) setInteger("vendor.rtc-ext-dec-low-latency.enable", 1)
+                if (mtk || unknown) {
+                    setInteger("vendor.mtk.ext.dec.low-latency.enable", 1)
+                    setInteger("vendor.mtk.vdec.lowlatency", 1)
+                }
+                if (hisi || unknown) {
+                    setInteger("vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-req", 1)
+                    setInteger("vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-rdy", -1)
+                }
             }
         }
         for ((i, v) in VARIANTS.withIndex()) {
@@ -50,7 +60,7 @@ object Codecs {
                 break
             }
             try {
-                dec.configure(format(v), surface, null, 0)
+                dec.configure(format(v, dec.name), surface, null, 0)
                 dec.start()
                 lastDecoder = "${dec.name} ${w}x$h low-latency=variant ${i + 1}/${VARIANTS.size} (${v.label})"
                 Log.i(StreamClient.TAG, "decoder $lastDecoder")

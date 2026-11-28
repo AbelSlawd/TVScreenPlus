@@ -372,6 +372,8 @@ namespace TVScreenPlus
         static readonly Guid CODECAPI_AVEncMPVDefaultBPictureCount = new Guid("8d390aac-dc5c-4200-b57f-814d04babab2");
         static readonly Guid CODECAPI_AVEncVideoForceKeyFrame = new Guid("398c1b98-8353-475a-9ef2-8f265d260345");
         static readonly Guid CODECAPI_AVEncCommonQualityVsSpeed = new Guid("98332df8-03cd-476b-89fa-3f9e442dec9f");
+        static readonly Guid CODECAPI_AVEncSliceControlMode = new Guid("e9e782ef-5f18-44c9-a90b-e9c3c2c17b0b");
+        static readonly Guid CODECAPI_AVEncSliceControlSize = new Guid("92f51df3-07a5-4172-aefe-c69ca3b60e35");
 
         const int METransformNeedInput = 601, METransformHaveOutput = 602;
         const int MF_E_TRANSFORM_STREAM_CHANGE = unchecked((int)0xC00D6D61);
@@ -456,6 +458,10 @@ namespace TVScreenPlus
             Com.SetCodec(codec, CODECAPI_AVEncMPVGOPSize, (uint)gop);
             Com.SetCodec(codec, CODECAPI_AVEncCommonRateControlMode, RateControl);
             Com.SetCodec(codec, CODECAPI_AVEncCommonQualityVsSpeed, qualityVsSpeed ?? QualityVsSpeed);
+            // 4 slices per picture (rows of 16-pixel units): the GPU encodes them in parallel. Measured on an RTX 5080 in
+            // 4K: encoding 11.0 -> 9.8 ms, capture -> TV screen ~4 ms sooner; more slices gain nothing and cost bitrate.
+            Com.SetCodec(codec, CODECAPI_AVEncSliceControlMode, 2);
+            Com.SetCodec(codec, CODECAPI_AVEncSliceControlSize, (uint)Math.Max(1, (height + 15) / 16 / 4));
             SetBitrate(kbps);
 
             void* ot = null;
