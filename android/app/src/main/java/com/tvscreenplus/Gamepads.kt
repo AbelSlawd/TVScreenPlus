@@ -114,6 +114,7 @@ class Gamepads(context: Context, private val prefs: SharedPreferences) : InputMa
     val count: Int get() = slots.count { it != null }
 
     fun start() {
+        ui.postDelayed(ageTick, 10_000)
         im.registerInputDeviceListener(this, ui)
         // Controllers already paired.
         for (id in InputDevice.getDeviceIds()) InputDevice.getDevice(id)?.let { if (isGamepad(it)) add(it) }
@@ -123,13 +124,35 @@ class Gamepads(context: Context, private val prefs: SharedPreferences) : InputMa
         client = null
         im.unregisterInputDeviceListener(this)
         ui.removeCallbacks(rumbleTick)
+        ui.removeCallbacks(ageTick)
     }
 
     // ---------------- Android input ----------------
 
     /** True when the event came from a gamepad (its state is updated; the caller decides whether to consume it). */
+    // Delay on the TV between the controller driver (Android's event time) and the state going out, for the PC log.
+    private var ageSum = 0L; private var ageN = 0; private var ageMax = 0L
+    private var keySum = 0L; private var keyN = 0
+
+    private fun age(eventTime: Long, key: Boolean = false) {
+        val a = android.os.SystemClock.uptimeMillis() - eventTime
+        if (a in 0..1000) { ageSum += a; ageN++; if (a > ageMax) ageMax = a; if (key) { keySum += a; keyN++ } }
+    }
+
+    private val ageTick = object : Runnable {
+        override fun run() {
+            val c = client
+            fun f(x: Double) = "%.1f".format(java.util.Locale.ROOT, x)
+            if (c != null && ageN > 0) c.post("LOG;gamepad input on the TV: $ageN events, driver -> sent avg ${f(ageSum.toDouble() / ageN)} ms, max $ageMax ms" +
+                (if (keyN > 0) ", buttons ${f(keySum.toDouble() / keyN)} ms ($keyN)" else ""))
+            ageSum = 0; ageN = 0; ageMax = 0; keySum = 0; keyN = 0
+            ui.postDelayed(this, 10_000)
+        }
+    }
+
     fun onKey(e: KeyEvent): Boolean {
         val s = srcFor(e.device) ?: return false
+        age(e.eventTime, true)
         val down = e.action == KeyEvent.ACTION_DOWN
         if (s.family == NINTENDO && s.side == FULL && e.scanCode == 0x135) {
             s.capture = down // Pro Controller Capture: Android's layout makes it "mode"; drawn as Capture, sent as Guide
@@ -156,6 +179,7 @@ class Gamepads(context: Context, private val prefs: SharedPreferences) : InputMa
         val dev = e.device ?: return false
         val s = srcFor(dev) ?: return false
         val a = s.axes ?: return false
+        age(e.eventTime)
         s.lx = stick(axis(e, dev, MotionEvent.AXIS_X))
         s.ly = stick(-axis(e, dev, MotionEvent.AXIS_Y))
         s.rx = stick(axis(e, dev, a.rightX))

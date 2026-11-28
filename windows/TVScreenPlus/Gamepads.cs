@@ -71,7 +71,7 @@ namespace TVScreenPlus
                     }
                     break;
             }
-            UpdateStats();
+            if (p[0] != "PAD") UpdateStats(); // the tray's list changes only when a gamepad comes or goes
         }
 
         static int Clamp(string s, int min, int max) => int.TryParse(s, out int v) ? Math.Max(min, Math.Min(max, v)) : 0;
