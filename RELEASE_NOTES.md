@@ -1,3 +1,17 @@
+**Nouveau en 1.2.10 : latence réduite** — mettez à jour le PC **et** l'application TV.
+
+Image
+- L'image est encodée en 4 tranches en parallèle : environ 4 ms de moins entre le PC et l'écran de la TV (mesuré en 4K, RTX 5080).
+
+Manettes
+- Vibrations plus réactives : elles ne passent plus derrière la vidéo en attente d'envoi (jusqu'à ~20 ms de moins).
+- Les manettes passent en priorité sur le PC et sur la TV, même quand un jeu charge le processeur.
+- Joy-Con 2 et manettes Switch 2 : leurs entrées n'attendent plus que l'interface de la TV ait fini une image.
+- Le journal du PC indique le délai des manettes sur la TV (diagnostic).
+
+Son
+- Capture du son du PC réveillée dès qu'un paquet arrive (environ 2,5 ms de moins en moyenne).
+
 **Nouveau en 1.2.9 : retour à l'accueil, manettes plus réactives** — mettez à jour le PC **et** l'application TV.
 
 Raccourcis
